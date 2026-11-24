@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
@@ -18,6 +20,14 @@ import (
 // 把这次的结果写进缓存。检索查询的嵌入不带这个头，未登录、同步关闭与自填 key
 // 直连的用户也不带，服务端因此不会给这些用户留下派生数据（ADR-0030 决定第 3 条）。
 const embeddingCacheHeader = "X-Zhixin-Embedding-Cache"
+
+// backgroundWorkload 报告这次请求是不是可以等的后台批次：客户端用请求头
+// X-Zhixin-Workload: batch 标明材料导入、索引重建与补算，其余取值与缺省都按前台
+// 处理，旧客户端因此不受限制。后台批次只能用没有留给前台的那部分并发名额与
+// 内存，占不到时返回 429，由客户端稍后重试。
+func backgroundWorkload(workload *string) bool {
+	return workload != nil && strings.EqualFold(strings.TrimSpace(*workload), "batch")
+}
 
 // embeddingCacheTimeout 是一次缓存读写的时限。缓存是派生数据，写失败只是下次
 // 重新嵌入，不该拖住请求。
@@ -40,9 +50,9 @@ type embeddingLookupVector struct {
 // EmbeddingLookup 回答客户端对一批文本哈希的向量查找。鉴权、未验证邮箱与并发
 // 上限与嵌入接口相同；查找不消耗额度，也不写 llm_usage。响应只含命中的条目，
 // 全部未命中不是错误，客户端据此只嵌入剩下的文本。
-func (p *Proxy) EmbeddingLookup(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) EmbeddingLookup(w http.ResponseWriter, r *http.Request, params api.PostV1LlmEmbeddingsLookupParams) {
 	userID := auth.MustPrincipal(r.Context()).UserID
-	done, ok := p.beginRequest(w, r, userID)
+	done, ok := p.beginRequest(w, r, userID, backgroundWorkload(params.XZhixinWorkload))
 	if !ok {
 		return
 	}

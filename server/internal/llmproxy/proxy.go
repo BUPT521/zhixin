@@ -59,11 +59,12 @@ type Proxy struct {
 	cache EmbeddingCache
 
 	// maxPerUser 是同一账号同时进行的托管请求上限，由 SetConcurrencyLimit 设置，
-	// 小于等于 0 表示不限制。inflight 记在途请求数，由 mu 保护；计数归零时删键，
-	// map 不随注册过的账号数增长。
+	// 小于等于 0 表示不限制。inflight 记在途请求数，background 记其中可以等的
+	// 后台请求数，两者由 mu 保护；计数归零时删键，map 不随注册过的账号数增长。
 	mu         sync.Mutex
 	maxPerUser int
 	inflight   map[string]int
+	background map[string]int
 
 	// mem 是整个实例同时在途的字节预算（ADR-0036）。账号并发上限只约束单个
 	// 账号，账号数量增加时实例总内存仍会跟着涨；请求体、非流式响应与嵌入批次都
@@ -103,8 +104,8 @@ func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *ti
 		// 不跟随重定向：同主机从 https 跳到 http 时标准库会带着 Authorization
 		// 再发一次，key 会以明文出现在网络上。来源的地址应当直接写对。
 		client: &http.Client{Transport: transport, CheckRedirect: noRedirect}, publicClient: publicClient,
-		loc: loc, now: time.Now, log: log, inflight: map[string]int{},
-		mem: newByteBudget(cfg.MaxInstanceBytes),
+		loc: loc, now: time.Now, log: log, inflight: map[string]int{}, background: map[string]int{},
+		mem: newByteBudget(cfg.MaxInstanceBytes).withBackgroundShare(cfg.BackgroundInstancePercent),
 	}
 }
 
@@ -133,8 +134,10 @@ func (p *Proxy) SetConcurrencyLimit(n int) {
 }
 
 // acquireConcurrency 给账号占一个并发名额；达到上限时返回 false。名额在请求
-// 结束时由 defer 归还，上游失败、超时与客户端断开都不例外。
-func (p *Proxy) acquireConcurrency(userID string) bool {
+// 结束时由 defer 归还，上游失败、超时与客户端断开都不例外。background 表示材料
+// 导入与索引补算这类可以等的请求，它们只能占用没有留给前台的名额，前台请求因此
+// 不会被后台批次挤掉。
+func (p *Proxy) acquireConcurrency(userID string, background bool) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.maxPerUser <= 0 {
@@ -143,12 +146,27 @@ func (p *Proxy) acquireConcurrency(userID string) bool {
 	if p.inflight[userID] >= p.maxPerUser {
 		return false
 	}
+	if background && p.background[userID] >= p.backgroundLimit() {
+		return false
+	}
 	p.inflight[userID]++
+	if background {
+		p.background[userID]++
+	}
 	return true
 }
 
+// backgroundLimit 是同一账号可以同时进行的后台请求数：并发上限减去给前台保留
+// 的名额，至少留一个，避免保留名额把后台完全挡住。
+func (p *Proxy) backgroundLimit() int {
+	if p.maxPerUser <= 0 {
+		return 0
+	}
+	return max(p.maxPerUser-p.cfg.ForegroundReserved, 1)
+}
+
 // releaseConcurrency 归还并发名额；计数归零时删除键，长时间运行也不会留下空项。
-func (p *Proxy) releaseConcurrency(userID string) {
+func (p *Proxy) releaseConcurrency(userID string, background bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.maxPerUser <= 0 {
@@ -157,6 +175,12 @@ func (p *Proxy) releaseConcurrency(userID string) {
 	p.inflight[userID]--
 	if p.inflight[userID] <= 0 {
 		delete(p.inflight, userID)
+	}
+	if background {
+		p.background[userID]--
+		if p.background[userID] <= 0 {
+			delete(p.background, userID)
+		}
 	}
 }
 
@@ -240,9 +264,10 @@ func (p *Proxy) readBody(w http.ResponseWriter, r *http.Request) (map[string]jso
 }
 
 // beginRequest 在读请求体之前核对邮箱状态、占用账号的并发名额与实例的内存预算。
-// 返回的 done 在请求结束时调用一次，归还并发名额与预算；返回 false 时已经写好
-// problem，调用方直接结束。
-func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID string) (done func(), ok bool) {
+// background 表示材料导入与索引补算这类可以等的请求，它们只能使用没有留给前台
+// 的并发名额与内存。返回的 done 在请求结束时调用一次，归还并发名额与预算；返回
+// false 时已经写好 problem，调用方直接结束。
+func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID string, background bool) (done func(), ok bool) {
 	if len(p.router.current().models) == 0 {
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "model proxy is not configured on this server")
 		return nil, false
@@ -263,22 +288,22 @@ func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID stri
 	}
 	// 并发上限同样在读取请求体之前检查：超出时回 429 与 Retry-After，不占请求体
 	// 读取、额度预留与上游连接。名额在请求结束（含流式转发）时由 defer 归还。
-	if !p.acquireConcurrency(userID) {
+	if !p.acquireConcurrency(userID, background) {
 		httpx.TooMany(w, r, 1)
 		return nil, false
 	}
 	// 实例预算按请求体大小预留：读到内存里的正文与替换模型名时重新编码的那一份
 	// 各占一份，长度未知（chunked）时按上限算。占不到时同样回 429，账号并发名额
 	// 立即归还。
-	release, reserved := p.mem.reserve(p.requestBytes(r))
+	release, reserved := p.mem.reserveWorkload(p.requestBytes(r), background)
 	if !reserved {
-		p.releaseConcurrency(userID)
+		p.releaseConcurrency(userID, background)
 		httpx.TooMany(w, r, 1)
 		return nil, false
 	}
 	return func() {
 		release()
-		p.releaseConcurrency(userID)
+		p.releaseConcurrency(userID, background)
 	}, true
 }
 
@@ -414,7 +439,7 @@ type RequestOptions struct {
 // 约束整段回答、空闲等待与首字等待，后者让同一讨论的追问落到同一条来源。
 func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOptions) {
 	userID := auth.MustPrincipal(r.Context()).UserID
-	done, ok := p.beginRequest(w, r, userID)
+	done, ok := p.beginRequest(w, r, userID, false)
 	if !ok {
 		return
 	}

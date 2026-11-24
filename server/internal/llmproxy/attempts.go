@@ -15,6 +15,8 @@ type attemptPlan struct {
 	reserve    attemptBudget
 	targeted   bool
 	trace      *[]api.AdminProbeAttempt
+	// background 表示这次请求可以等，只能用没有留给前台的内存与并发名额。
+	background bool
 
 	started     int
 	skipSources map[string]bool

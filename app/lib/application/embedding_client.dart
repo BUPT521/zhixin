@@ -195,6 +195,8 @@ class RemoteEmbeddingClient extends EmbeddingClient {
     final request = http.Request('POST', uri)
       ..followRedirects = false
       ..headers['Content-Type'] = 'application/json'
+      // 查找只出现在索引刷新与补算里，属于可以等的后台批次。
+      ..headers['X-Zhixin-Workload'] = 'batch'
       ..body = jsonEncode({'model': spec.id, 'hashes': hashes});
     if (target.apiKey.isNotEmpty) {
       request.headers['Authorization'] = 'Bearer ${target.apiKey}';
@@ -270,6 +272,9 @@ class RemoteEmbeddingClient extends EmbeddingClient {
     if (writeCache) {
       request.headers['X-Zhixin-Embedding-Cache'] = '1';
     }
+    // 索引刷新与补算可以等，标成后台批次；检索查询是用户正在等的，按前台处理。
+    // 服务端据此先压缩后台批次，前台请求不会被导入挤掉。
+    request.headers['X-Zhixin-Workload'] = writeCache ? 'batch' : 'query';
     final response = await _http
         .send(request)
         .then(http.Response.fromStream)

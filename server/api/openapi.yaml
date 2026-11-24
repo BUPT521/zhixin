@@ -825,6 +825,14 @@ paths:
           required: false
           description: 值为 `1` 时把这次嵌入的结果写入按账号隔离的向量缓存
           schema: { type: string }
+        - name: X-Zhixin-Workload
+          in: header
+          required: false
+          description: |
+            `query` 表示用户正在等待的检索查询，`batch` 表示材料导入、索引重建与补算
+            这类可以等的后台批次；后台批次在账号并发与实例内存上只能用前台之外的
+            剩余容量，占不到时返回 429，由客户端稍后重试。省略时按 `query` 处理。
+          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -855,6 +863,15 @@ paths:
         客户端解码之后按现有方式归一化。缓存属于派生数据，可以从业务库与嵌入服务
         重建：只在客户端带 `X-Zhixin-Embedding-Cache: 1` 的嵌入请求成功之后写入，
         随清除云端数据与删除账号一起删除，不进入数据包与整库备份（ADR-0030）。
+      parameters:
+        - name: X-Zhixin-Workload
+          in: header
+          required: false
+          description: |
+            `query` 表示用户正在等待的检索查询，`batch` 表示材料导入、索引重建与补算
+            这类可以等的后台批次；两者都只影响并发与内存的排队顺序，不改变返回内容。
+            省略时按 `query` 处理，旧客户端因此不受限制。
+          schema: { type: string }
       requestBody:
         required: true
         content:

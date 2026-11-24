@@ -176,7 +176,7 @@ func (Base) PostV1LlmResponses(w http.ResponseWriter, _ *http.Request, _ api.Pos
 func (Base) PostV1LlmEmbeddings(w http.ResponseWriter, _ *http.Request, _ api.PostV1LlmEmbeddingsParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
-func (Base) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, _ *http.Request) {
+func (Base) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, _ *http.Request, _ api.PostV1LlmEmbeddingsLookupParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
 func (Base) GetAdminV1Providers(w http.ResponseWriter, _ *http.Request) {

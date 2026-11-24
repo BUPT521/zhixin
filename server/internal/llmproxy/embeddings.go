@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
@@ -30,9 +31,10 @@ var embeddingFields = map[string]bool{"model": true, "input": true, "dimensions"
 // Embeddings 代理 OpenAI Embeddings。一次请求可以带多条输入；路由配置了
 // max_batch 时拆成几批并发发给同一个来源，再按原顺序合并。一批失败时整次请求
 // 换下一个来源重做，所以同一次请求的向量总是来自同一个来源。
-func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
+func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request, params api.PostV1LlmEmbeddingsParams) {
 	userID := auth.MustPrincipal(r.Context()).UserID
-	done, ok := p.beginRequest(w, r, userID)
+	background := backgroundWorkload(params.XZhixinWorkload)
+	done, ok := p.beginRequest(w, r, userID, background)
 	if !ok {
 		return
 	}
@@ -78,7 +80,10 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 	// 缓存代次必须在调用来源之前读：清除可能发生在嵌入进行中，那时请求已经
 	// 拿到旧代次，写回时对不上就丢弃这次写入（ADR-0037）。
 	generation, generationOK := p.embeddingCacheGeneration(ctx, r, userID)
-	plan := attemptPlan{model: m, candidates: p.router.candidates(m, ""), reserve: p.budget(r, userID, day, m)}
+	plan := attemptPlan{
+		model: m, candidates: p.router.candidates(m, ""), reserve: p.budget(r, userID, day, m),
+		background: background,
+	}
 	res := p.embed(ctx, &plan, fields, inputs)
 	var budgetError quotaReservationError
 	switch {
@@ -155,8 +160,9 @@ type embedResult struct {
 // 全部失败时的错误。
 func (p *Proxy) embed(ctx context.Context, plan *attemptPlan, fields map[string]json.RawMessage, inputs []string) embedResult {
 	// 一次嵌入请求的响应整段留在内存里：各批正文合起来不超过一个响应上限，合并后
-	// 的正文再有同样大小的一份。先从实例预算里预留，占不到时按实例繁忙结束。
-	release, reserved := p.mem.reserve(p.embedBytes())
+	// 的正文再有同样大小的一份。先从实例预算里预留，占不到时按实例繁忙结束；后台
+	// 批次只能占用没有留给前台的那一份。
+	release, reserved := p.mem.reserveWorkload(p.embedBytes(), plan.background)
 	if !reserved {
 		return embedResult{err: errInstanceBusy}
 	}

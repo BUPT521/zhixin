@@ -1020,6 +1020,19 @@ type DeleteV1CloudJSONBody struct {
 type PostV1LlmEmbeddingsParams struct {
 	// XZhixinEmbeddingCache 值为 `1` 时把这次嵌入的结果写入按账号隔离的向量缓存
 	XZhixinEmbeddingCache *string `json:"X-Zhixin-Embedding-Cache,omitempty"`
+
+	// XZhixinWorkload `query` 表示用户正在等待的检索查询，`batch` 表示材料导入、索引重建与补算
+	// 这类可以等的后台批次；后台批次在账号并发与实例内存上只能用前台之外的
+	// 剩余容量，占不到时返回 429，由客户端稍后重试。省略时按 `query` 处理。
+	XZhixinWorkload *string `json:"X-Zhixin-Workload,omitempty"`
+}
+
+// PostV1LlmEmbeddingsLookupParams defines parameters for PostV1LlmEmbeddingsLookup.
+type PostV1LlmEmbeddingsLookupParams struct {
+	// XZhixinWorkload `query` 表示用户正在等待的检索查询，`batch` 表示材料导入、索引重建与补算
+	// 这类可以等的后台批次；两者都只影响并发与内存的排队顺序，不改变返回内容。
+	// 省略时按 `query` 处理，旧客户端因此不受限制。
+	XZhixinWorkload *string `json:"X-Zhixin-Workload,omitempty"`
 }
 
 // PostV1LlmResponsesJSONBody defines parameters for PostV1LlmResponses.
@@ -1429,7 +1442,7 @@ type ServerInterface interface {
 	PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, params PostV1LlmEmbeddingsParams)
 	// PostV1LlmEmbeddingsLookup 批量查找已缓存的嵌入向量
 	// (POST /v1/llm/embeddings/lookup)
-	PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request)
+	PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request, params PostV1LlmEmbeddingsLookupParams)
 	// GetV1LlmModels 当前可用的模型，OpenAI 列表格式
 	// (GET /v1/llm/models)
 	GetV1LlmModels(w http.ResponseWriter, r *http.Request)
@@ -2198,6 +2211,25 @@ func (siw *ServerInterfaceWrapper) PostV1LlmEmbeddings(w http.ResponseWriter, r 
 
 	}
 
+	// ------------- Optional header parameter "X-Zhixin-Workload" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Zhixin-Workload")]; found {
+		var XZhixinWorkload string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Zhixin-Workload", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Zhixin-Workload", valueList[0], &XZhixinWorkload, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Zhixin-Workload", Err: err})
+			return
+		}
+
+		params.XZhixinWorkload = &XZhixinWorkload
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostV1LlmEmbeddings(w, r, params)
 	}))
@@ -2212,8 +2244,35 @@ func (siw *ServerInterfaceWrapper) PostV1LlmEmbeddings(w http.ResponseWriter, r 
 // PostV1LlmEmbeddingsLookup operation middleware
 func (siw *ServerInterfaceWrapper) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostV1LlmEmbeddingsLookupParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Zhixin-Workload" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Zhixin-Workload")]; found {
+		var XZhixinWorkload string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Zhixin-Workload", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Zhixin-Workload", valueList[0], &XZhixinWorkload, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Zhixin-Workload", Err: err})
+			return
+		}
+
+		params.XZhixinWorkload = &XZhixinWorkload
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1LlmEmbeddingsLookup(w, r)
+		siw.Handler.PostV1LlmEmbeddingsLookup(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

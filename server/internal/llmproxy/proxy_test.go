@@ -35,11 +35,11 @@ func (a testAPI) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { a.p.Qu
 func (a testAPI) PostV1LlmResponses(w http.ResponseWriter, r *http.Request, params api.PostV1LlmResponsesParams) {
 	a.p.Responses(w, r, RequestOptions{RoundBudgetMs: params.XZhixinRoundBudgetMs, SessionID: params.XZhixinSessionId})
 }
-func (a testAPI) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, _ api.PostV1LlmEmbeddingsParams) {
-	a.p.Embeddings(w, r)
+func (a testAPI) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, params api.PostV1LlmEmbeddingsParams) {
+	a.p.Embeddings(w, r, params)
 }
-func (a testAPI) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request) {
-	a.p.EmbeddingLookup(w, r)
+func (a testAPI) PostV1LlmEmbeddingsLookup(w http.ResponseWriter, r *http.Request, params api.PostV1LlmEmbeddingsLookupParams) {
+	a.p.EmbeddingLookup(w, r, params)
 }
 
 type testEnv struct {

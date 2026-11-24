@@ -238,6 +238,13 @@ type LLMConfig struct {
 	// RoundBudgetMax 是服务端接受的本轮预算上限：客户端在请求头里带本轮剩余
 	// 时间，值再大也只按这个上限执行，整段回答、空闲等待与首字等待都不超过它。
 	RoundBudgetMax time.Duration
+	// ForegroundReserved 是每个账号为聊天与检索查询保留的并发名额：材料导入与
+	// 索引补算只能使用其余名额，两者合计仍不超过 ConcurrentPerUser。后台至少
+	// 保留一个名额，所以设得等于并发上限也不会把后台完全挡住。
+	ForegroundReserved int
+	// BackgroundInstancePercent 是实例在途字节预算中后台批次最多占用的百分比，
+	// 其余留给前台。0 与 100 都表示不单独限制后台，具体比例按并发走查确定。
+	BackgroundInstancePercent int
 }
 
 // Load builds a Config from getenv (normally os.Getenv).
@@ -363,23 +370,25 @@ func Load(getenv func(string) string) (Config, error) {
 		ReleaseFile: get("ZHIXIN_RELEASE_FILE", ""),
 
 		LLM: LLMConfig{
-			RestrictProviders:      get("ZHIXIN_DATABASE_URL", "") != "",
-			DailyTokens:            num("ZHIXIN_LLM_DAILY_TOKENS", "200000"),
-			InstanceDailyTokens:    num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "20000000"),
-			MaxRequestBytes:        num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
-			RequireVerifiedContact: get("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1") == "1",
-			ConcurrentPerUser:      int(num("ZHIXIN_LLM_CONCURRENT_PER_USER", "4")),
-			MaxInstanceBytes:       num("ZHIXIN_LLM_MAX_INSTANCE_BYTES", "536870912"),
-			MaxResponseBytes:       num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
-			StreamIdleTimeout:      dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
-			StreamTotalTimeout:     dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
-			EmbeddingDailyTokens:   num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
-			EmbeddingMaxInputs:     int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
-			EmbeddingCacheBytes:    num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
-			MaxAttempts:            int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
-			HeaderTimeout:          dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
-			FirstOutputTimeout:     dur("ZHIXIN_LLM_FIRST_OUTPUT_TIMEOUT", "20s"),
-			RoundBudgetMax:         dur("ZHIXIN_LLM_ROUND_BUDGET_MAX", "5m"),
+			RestrictProviders:         get("ZHIXIN_DATABASE_URL", "") != "",
+			DailyTokens:               num("ZHIXIN_LLM_DAILY_TOKENS", "200000"),
+			InstanceDailyTokens:       num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "20000000"),
+			MaxRequestBytes:           num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
+			RequireVerifiedContact:    get("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1") == "1",
+			ConcurrentPerUser:         int(num("ZHIXIN_LLM_CONCURRENT_PER_USER", "4")),
+			MaxInstanceBytes:          num("ZHIXIN_LLM_MAX_INSTANCE_BYTES", "536870912"),
+			MaxResponseBytes:          num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
+			StreamIdleTimeout:         dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
+			StreamTotalTimeout:        dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
+			EmbeddingDailyTokens:      num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
+			EmbeddingMaxInputs:        int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
+			EmbeddingCacheBytes:       num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
+			MaxAttempts:               int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
+			HeaderTimeout:             dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
+			FirstOutputTimeout:        dur("ZHIXIN_LLM_FIRST_OUTPUT_TIMEOUT", "20s"),
+			RoundBudgetMax:            dur("ZHIXIN_LLM_ROUND_BUDGET_MAX", "5m"),
+			ForegroundReserved:        int(num("ZHIXIN_LLM_FOREGROUND_RESERVED", "2")),
+			BackgroundInstancePercent: int(num("ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT", "60")),
 		},
 
 		AdminToken:         get("ZHIXIN_ADMIN_TOKEN", ""),
@@ -388,6 +397,12 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.AdminToken != "" && len(cfg.AdminToken) < 32 {
 		errs = append(errs, errors.New("ZHIXIN_ADMIN_TOKEN: use at least 32 characters, e.g. `openssl rand -base64 32`"))
+	}
+	if cfg.LLM.ForegroundReserved < 0 {
+		errs = append(errs, errors.New("ZHIXIN_LLM_FOREGROUND_RESERVED: want a non-negative number"))
+	}
+	if cfg.LLM.BackgroundInstancePercent < 0 || cfg.LLM.BackgroundInstancePercent > 100 {
+		errs = append(errs, errors.New("ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT: want 0 to 100"))
 	}
 	if raw := get("ZHIXIN_SECRET_KEY", ""); raw != "" {
 		key, err := secretbox.ParseKey(raw)

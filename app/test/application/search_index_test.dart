@@ -1270,6 +1270,9 @@ void main() {
     await server.embed('乙');
     expect(seen[0].headers['X-Zhixin-Embedding-Cache'], '1');
     expect(seen[1].headers.containsKey('X-Zhixin-Embedding-Cache'), isFalse);
+    // 索引刷新标成后台批次，检索查询按前台处理。
+    expect(seen[0].headers['X-Zhixin-Workload'], 'batch');
+    expect(seen[1].headers['X-Zhixin-Workload'], 'query');
   });
 
   test('嵌入来源整个用不了时停下本次更新，不再逐条重试', () async {
