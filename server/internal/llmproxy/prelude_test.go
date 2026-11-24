@@ -63,6 +63,7 @@ func TestStreamSwitchesAfterOpeningEvents(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, sseEvent(`{"type":"response.created"}`))
 		fmt.Fprint(w, sseEvent(`{"type":"response.in_progress"}`))
+		fmt.Fprint(w, sseEvent(`{"type":"response.output_item.added","item":{"type":"message"}}`))
 		w.(http.Flusher).Flush()
 	})
 	env, primaryHits, backupHits := newPreludeTestServer(t, time.Second, primary, streamReply("备"))
@@ -79,6 +80,68 @@ func TestStreamSwitchesAfterOpeningEvents(t *testing.T) {
 	}
 	if primaryHits.Load() != 1 || backupHits.Load() != 1 {
 		t.Fatalf("每个来源应各尝试一次，得到 primary=%d backup=%d", primaryHits.Load(), backupHits.Load())
+	}
+}
+
+func TestStreamSwitchesBeforeCompleteOutput(t *testing.T) {
+	for _, tc := range []struct {
+		name, ending string
+		used         int64
+	}{
+		{"unfinished tool", sseEvent(`{"type":"response.function_call_arguments.delta","delta":"{"}`), 0},
+		{"failed", sseEvent(`{"type":"response.failed","response":{"usage":{"total_tokens":7}}}`), 7},
+		{"empty completion", sseEvent(`{"type":"response.completed","response":{"usage":{"total_tokens":7}}}`), 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			primary := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				fmt.Fprint(w, sseEvent(`{"type":"response.created"}`), tc.ending)
+			})
+			env, primaryHits, backupHits := newPreludeTestServer(t, time.Second, primary, streamReply("备用正文"))
+			usage := NewMemoryUsage()
+			env.proxy.SetUsageStore(usage)
+			token := signIn(t, env.authSvc, "complete-output@b.cn")
+			resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+				bytes.NewReader(chatBody(true)), roundBudgetHeaders(5000))
+			body := testutil.ReadBody(t, resp)
+			if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "备用正文") || strings.Contains(string(body), "response.created") {
+				t.Fatalf("应只交付备用来源，得到 %d %q", resp.StatusCode, body)
+			}
+			if primaryHits.Load() != 1 || backupHits.Load() != 1 {
+				t.Fatalf("每条来源应尝试一次，得到 primary=%d backup=%d", primaryHits.Load(), backupHits.Load())
+			}
+			if tc.used > 0 {
+				day := env.proxy.day()
+				rows, err := usage.RouteUsage(t.Context(), day, day)
+				if err != nil || len(rows) != 2 {
+					t.Fatalf("应保存两次尝试的用量，得到 %+v，%v", rows, err)
+				}
+				for _, row := range rows {
+					if row.ProviderID == "primary" && (row.Tokens != tc.used || row.FirstAttempts != 1 || row.Successes != 0) {
+						t.Fatalf("首发应按上游实际用量结算为失败，得到 %+v", row)
+					}
+					if row.ProviderID == "backup" && (row.FailoverAttempts != 1 || row.Successes != 1) {
+						t.Fatalf("备用尝试应记为切换成功，得到 %+v", row)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestStreamBindsRouteAfterCompleteToolCall(t *testing.T) {
+	primary := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseEvent(`{"type":"response.function_call_arguments.delta","delta":"{"}`))
+		fmt.Fprint(w, sseEvent(`{"type":"response.output_item.done","item":{"type":"function_call","name":"read_material","call_id":"c1","arguments":"{}"}}`))
+	})
+	env, _, backupHits := newPreludeTestServer(t, time.Second, primary, streamReply("备用正文"))
+	token := signIn(t, env.authSvc, "complete-tool@b.cn")
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		bytes.NewReader(chatBody(true)), roundBudgetHeaders(5000))
+	body := testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "read_material") || backupHits.Load() != 0 {
+		t.Fatalf("完整工具调用之后应沿用当前来源，得到 %d %q，备用尝试 %d 次", resp.StatusCode, body, backupHits.Load())
 	}
 }
 
@@ -163,8 +226,7 @@ func TestCandidatesExhaustedProblem(t *testing.T) {
 	}
 }
 
-// TestStreamPreludeIsBoundedByBytes 核对开场事件超过暂存上限时不再等首字，已经
-// 读到的内容照常转给客户端：上限之外的开场不占更多实例内存，也不丢事件。
+// TestStreamPreludeIsBoundedByBytes 核对开场事件达到暂存上限时换到备用来源。
 func TestStreamPreludeIsBoundedByBytes(t *testing.T) {
 	const padding = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
 	primary := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -183,10 +245,10 @@ func TestStreamPreludeIsBoundedByBytes(t *testing.T) {
 	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
 		bytes.NewReader(chatBody(true)), roundBudgetHeaders(5000))
 	body := testutil.ReadBody(t, resp)
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "正文") {
-		t.Fatalf("暂存达到上限后应照常转发，得到 %d %q", resp.StatusCode, body)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "备用") || strings.Contains(string(body), "response.created") {
+		t.Fatalf("暂存达到上限后应只交付备用来源，得到 %d %q", resp.StatusCode, body)
 	}
-	if primaryHits.Load() != 1 || backupHits.Load() != 0 {
-		t.Fatalf("达到上限后应绑定当前来源，得到 primary=%d backup=%d", primaryHits.Load(), backupHits.Load())
+	if primaryHits.Load() != 1 || backupHits.Load() != 1 {
+		t.Fatalf("达到上限后应尝试备用来源，得到 primary=%d backup=%d", primaryHits.Load(), backupHits.Load())
 	}
 }

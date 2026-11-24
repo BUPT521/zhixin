@@ -14,6 +14,7 @@ import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/ui/copy.dart';
@@ -161,6 +162,7 @@ Future<void> openApp(
   Size size = const Size(390, 844),
   BuddyAi? ai,
   Clock? clock,
+  ServerClient Function(String baseUrl)? serverClientFactory,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1;
@@ -170,7 +172,11 @@ Future<void> openApp(
     await tester.pumpWidget(
       RepaintBoundary(
         key: previewKey,
-        child: ZhixinApp(ai: ai, clock: clock),
+        child: ZhixinApp(
+          ai: ai,
+          clock: clock,
+          serverClientFactory: serverClientFactory,
+        ),
       ),
     );
     scope = tester.state<AppScopeState>(find.byType(AppScope));

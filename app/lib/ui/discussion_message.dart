@@ -96,12 +96,14 @@ class DiscussionMessage extends StatelessWidget {
             ? '已停止生成'
             : message.interrupted
             ? '生成中断'
+            : message.truncated
+            ? '回答被截断'
             : message.payload?.fromModel == false
             ? '本地规则'
             : null,
         statusTone: message.stopped
             ? TagTone.muted
-            : message.interrupted
+            : message.interrupted || message.truncated
             ? TagTone.attention
             : TagTone.neutral,
         children: [

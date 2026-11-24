@@ -858,8 +858,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				lastErr = errors.New("provider did not return a chat stream")
 				continue
 			}
-			// 首个有效输出之前先暂存：读到正文、工具调用或终止事件才算这一条
-			// 路由交付了回答，此前收到响应头、心跳与开场事件都还能换路。
+			// 首个有效输出之前先暂存，收到响应头、心跳与开场事件后仍能换路。
 			if firstOutput <= 0 {
 				reply.stream = resp.Body
 				return reply, nil
@@ -891,9 +890,24 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 						healthOutcome{reason: "请求已取消或超时"})
 					return reply, ctx.Err()
 				}
+				reason := "首个有效输出之前中断"
+				if errors.Is(gate.err, errPreludeTooLarge) {
+					reason = errPreludeTooLarge.Error()
+				}
 				p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, reply.status,
-					healthOutcome{reason: "首个有效输出之前中断", scope: routeFailure, sourceReached: true})
+					healthOutcome{reason: reason, scope: routeFailure, sourceReached: true})
 				lastErr = gate.err
+				continue
+			}
+			if gate.failure != nil {
+				resp.Body.Close()
+				result, status, outcome := preludeFailure(gate.failure, resp.Header.Get("Retry-After"))
+				p.finishAttempt(plan, attempt, result, reply.status, outcome)
+				lastErr = errors.New(outcome.reason)
+				if status != 0 {
+					reply.status, reply.retryAfter = status, outcome.retryAfter
+					lastErr = nil
+				}
 				continue
 			}
 			reply.stream = &prefixed{head: bytes.NewReader(gate.buf), body: resp.Body}

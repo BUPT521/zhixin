@@ -16,8 +16,14 @@ String? answerNoticeText(AnswerOutcome outcome) => _noticeText(
 );
 
 /// 重新打开讨论时，按保存下来的提示状态写同一条说明。
-String? savedAnswerNoticeText(SavedAnswerStatus status) =>
-    _noticeText(notices: status.notices, failure: status.failure);
+String? savedAnswerNoticeText(
+  SavedAnswerStatus status, {
+  bool keptPartial = false,
+}) => _noticeText(
+  notices: status.notices,
+  failure: status.failure,
+  keptPartial: keptPartial,
+);
 
 String? _noticeText({
   required List<Notice> notices,

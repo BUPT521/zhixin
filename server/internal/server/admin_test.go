@@ -165,6 +165,7 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if in.Stream {
 			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"答\"}\n\n")
 			fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"total_tokens\":6}}}\n\n")
 			return
 		}

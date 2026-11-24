@@ -734,8 +734,8 @@ paths:
         `model_not_allowed`（400）、`contact_unverified`（403）、
         `quota_exceeded`（429）、`unavailable`（503）、`upstream_failed`（502），
         本轮预算用完且没有任何来源交付有效输出时回 504 `upstream_failed`。
-        流式响应在首段有效输出（正文、工具调用或终止事件）之前仍可换来源，
-        先行事件由服务端暂存；交付首段有效输出之后，这次流绑定当前来源。
+        流式响应在交付正文、拒答或完整工具调用之前仍可换来源，先行事件由服务端暂存。
+        交付之后，这次流绑定当前来源。达到输出上限时保留截断结果。
       parameters:
         - name: X-Zhixin-Round-Budget-Ms
           in: header

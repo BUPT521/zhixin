@@ -29,6 +29,9 @@ func TestStreamCompletionControlsUsageAndProbeRecovery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "text/event-stream")
+				if !tc.cancel {
+					fmt.Fprint(w, sseEvent(`{"type":"response.output_text.delta","delta":"a"}`))
+				}
 				fmt.Fprintf(w, "data: %s\n\n", tc.event)
 				if tc.cancel {
 					w.(http.Flusher).Flush()
