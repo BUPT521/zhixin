@@ -220,10 +220,10 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	// 三次对话请求：流式那一次先被 primary 的故障页挡回来、由 backup 接住，
 	// 后两次探针各走一条指定路由。数位按各来源自己的用量核对，所以这里只核对
 	// 次数与「实际用量不低于估算」。
-	if day.Chat.Attempts != 3 ||
+	if day.Chat.Attempts != 3 || day.Chat.FirstAttempts != 2 || day.Chat.FailoverAttempts != 1 ||
 		day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
 		day.Chat.Tokens < day.Chat.EstimatedTokens || day.Embedding != (api.AdminUsageCounts{
-		Attempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3,
+		Attempts: 1, FirstAttempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3,
 	}) {
 		t.Fatalf("daily totals: %+v", day)
 	}
@@ -232,9 +232,9 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 			t.Fatalf("single-day route breakdown: %+v", route)
 		}
 		switch {
-		case route.ProviderId == "primary" && (route.Usage.Successes != 1 || route.Usage.Attempts != 2):
+		case route.ProviderId == "primary" && (route.Usage.Successes != 1 || route.Usage.FirstAttempts != 2 || route.Usage.FailoverAttempts != 0):
 			t.Fatalf("primary: %+v", route)
-		case route.UpstreamModel == backupModel && route.Usage.Successes != 1:
+		case route.UpstreamModel == backupModel && (route.Usage.Successes != 1 || route.Usage.FirstAttempts != 0 || route.Usage.FailoverAttempts != 1):
 			t.Fatalf("fallback: %+v", route)
 		}
 	}
@@ -244,7 +244,7 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		RouteUsageKey: llmproxy.RouteUsageKey{
 			Kind: llmproxy.KindChat, Model: "chat-test", ProviderID: "backup", UpstreamModel: backupModel,
 		},
-		UsageCounts: llmproxy.UsageCounts{Attempts: 1, Successes: 1, Tokens: 4},
+		UsageCounts: llmproxy.UsageCounts{Attempts: 1, FirstAttempts: 1, Successes: 1, Tokens: 4},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -254,7 +254,8 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	}
 	for _, route := range report.Routes {
 		if route.UpstreamModel == backupModel && (len(route.Daily) != 2 ||
-			route.Daily[yesterday].Tokens != 4 || route.Usage.Tokens != 10) {
+			route.Daily[yesterday].Tokens != 4 || route.Usage.Tokens != 10 ||
+			route.Usage.FirstAttempts != 1 || route.Usage.FailoverAttempts != 1) {
 			t.Fatalf("route breakdown across dates: %+v", route)
 		}
 	}

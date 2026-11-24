@@ -455,10 +455,22 @@ type AdminUsageCounts struct {
 	// Attempts 尝试路由的次数，嵌入拆批仍计一次
 	Attempts int64 `json:"attempts"`
 
+	// CanceledAttempts 客户端取消或断开时未完成的尝试
+	CanceledAttempts int64 `json:"canceled_attempts"`
+
 	// EstimatedTokens tokens 中按估算结算的部分
 	EstimatedTokens int64 `json:"estimated_tokens"`
-	Successes       int64 `json:"successes"`
-	Tokens          int64 `json:"tokens"`
+
+	// FailoverAttempts 同一请求内首次尝试失败后实际执行的路由尝试
+	FailoverAttempts int64 `json:"failover_attempts"`
+
+	// FirstAttempts 每次请求首次执行的路由尝试
+	FirstAttempts int64 `json:"first_attempts"`
+	Successes     int64 `json:"successes"`
+	Tokens        int64 `json:"tokens"`
+
+	// TruncatedAttempts 达到输出上限的尝试
+	TruncatedAttempts int64 `json:"truncated_attempts"`
 }
 
 // AdminUsageDay defines model for AdminUsageDay.

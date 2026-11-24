@@ -1280,10 +1280,14 @@ components:
         note: { type: string, maxLength: 200 }
     AdminUsageCounts:
       type: object
-      required: [attempts, successes, tokens, estimated_tokens]
+      required: [attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens]
       properties:
         attempts: { type: integer, format: int64, description: 尝试路由的次数，嵌入拆批仍计一次 }
+        first_attempts: { type: integer, format: int64, description: 每次请求首次执行的路由尝试 }
+        failover_attempts: { type: integer, format: int64, description: 同一请求内首次尝试失败后实际执行的路由尝试 }
         successes: { type: integer, format: int64 }
+        truncated_attempts: { type: integer, format: int64, description: 达到输出上限的尝试 }
+        canceled_attempts: { type: integer, format: int64, description: 客户端取消或断开时未完成的尝试 }
         tokens: { type: integer, format: int64 }
         estimated_tokens: { type: integer, format: int64, description: tokens 中按估算结算的部分 }
     AdminUsageDay:

@@ -1179,7 +1179,10 @@ let usageDay = null;
 const number = new Intl.NumberFormat('zh-CN');
 const axisNumber = new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 1 });
 const percent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 });
-const usagePart = () => ({ attempts: 0, successes: 0, tokens: 0, estimated_tokens: 0 });
+const usagePart = () => ({
+  attempts: 0, first_attempts: 0, failover_attempts: 0, successes: 0,
+  truncated_attempts: 0, canceled_attempts: 0, tokens: 0, estimated_tokens: 0,
+});
 function addUsage(total, part) {
   for (const field of Object.keys(total)) total[field] += part[field];
   return total;
@@ -1292,6 +1295,7 @@ function renderUsage() {
   $('#usage-tokens').textContent = number.format(totals.tokens);
   $('#usage-estimate').textContent = `含估算 ${number.format(totals.estimated_tokens)}`;
   $('#usage-attempts').textContent = number.format(totals.attempts);
+  $('#usage-attempt-detail').textContent = `${number.format(totals.first_attempts)} 次首次 · ${number.format(totals.failover_attempts)} 次故障切换`;
   $('#usage-unsuccessful').textContent = `${number.format(totals.attempts - totals.successes)} 次未成功`;
   $('#usage-success-rate').textContent = successRate(totals);
   $('#usage-successes').textContent = `${number.format(totals.successes)} 次成功`;
@@ -1341,7 +1345,7 @@ function updateUsageDay(date, routes, byDate) {
   const detail = $('#usage-day-detail');
   const total = day ? addUsage(addUsage(usagePart(), day.chat), day.embedding) : null;
   detail.textContent = total
-    ? `${date} · ${number.format(total.tokens)} Token（含估算 ${number.format(total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试 · ${number.format(total.attempts - total.successes)} 次未成功`
+    ? `${date} · ${number.format(total.tokens)} Token（含估算 ${number.format(total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试（${number.format(total.first_attempts)} 首次，${number.format(total.failover_attempts)} 故障切换） · ${number.format(total.attempts - total.successes)} 次未成功`
     : ($('#usage-chart-wrap').hidden ? '' : '选择日期查看当天明细。');
   renderUsageTable(routes, date);
 }
@@ -1361,14 +1365,20 @@ function renderUsageTable(routes, date) {
   const target = $('#usage-rows');
   target.replaceChildren();
   if (!rows.size) {
-    target.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, '没有符合条件的用量记录。')));
+    target.append(el('tr', {}, el('td', { colspan: 9, class: 'empty' }, '没有符合条件的用量记录。')));
     return;
   }
   const sorted = [...rows.values()].sort((a, b) => b.usage.tokens - a.usage.tokens || b.usage.attempts - a.usage.attempts || a.label.localeCompare(b.label));
   for (const { label, sub, kind, usage: u } of sorted) {
+    const incomplete = [
+      u.truncated_attempts ? `截断 ${number.format(u.truncated_attempts)}` : '',
+      u.canceled_attempts ? `取消 ${number.format(u.canceled_attempts)}` : '',
+    ].filter(Boolean).join(' · ');
     target.append(el('tr', {}, el('td', {}, el('span', { class: 'mono' }, label), sub ? el('div', { class: 'sub mono' }, sub) : null),
       el('td', { class: 'nowrap' }, kindName[kind]),
-      [u.tokens, u.estimated_tokens, u.attempts, u.attempts - u.successes].map((n) => el('td', { class: 'numeric' }, number.format(n))),
+      [u.tokens, u.estimated_tokens, u.attempts, u.first_attempts, u.failover_attempts]
+        .map((n) => el('td', { class: 'numeric' }, number.format(n))),
+      el('td', { class: 'numeric' }, number.format(u.attempts - u.successes), incomplete ? el('div', { class: 'sub' }, incomplete) : null),
       el('td', { class: 'numeric' }, successRate(u))));
   }
 }

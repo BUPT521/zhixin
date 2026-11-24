@@ -13,9 +13,12 @@ func TestPostgresRouteUsageMergesAttempts(t *testing.T) {
 		RouteUsageKey: llmproxy.RouteUsageKey{
 			Kind: llmproxy.KindChat, Model: "chat-model", ProviderID: "example", UpstreamModel: "upstream",
 		},
-		UsageCounts: llmproxy.UsageCounts{Attempts: 1, Tokens: 4, EstimatedTokens: 4},
+		UsageCounts: llmproxy.UsageCounts{Attempts: 1, FirstAttempts: 1, CanceledAttempts: 1, Tokens: 4, EstimatedTokens: 4},
 	}
-	for _, counts := range []llmproxy.UsageCounts{row.UsageCounts, {Attempts: 1, Successes: 1, Tokens: 12}} {
+	for _, counts := range []llmproxy.UsageCounts{row.UsageCounts,
+		{Attempts: 1, FailoverAttempts: 1, TruncatedAttempts: 1, Tokens: 12},
+		{Attempts: 1, FailoverAttempts: 1, Successes: 1, Tokens: 7},
+	} {
 		row.UsageCounts = counts
 		if err := s.AddRouteUsage(t.Context(), row); err != nil {
 			t.Fatal(err)
@@ -26,7 +29,10 @@ func TestPostgresRouteUsageMergesAttempts(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows, err := s.RouteUsage(t.Context(), "2026-11-19", "2026-11-19")
-	want := llmproxy.UsageCounts{Attempts: 2, Successes: 1, Tokens: 16, EstimatedTokens: 4}
+	want := llmproxy.UsageCounts{
+		Attempts: 3, FirstAttempts: 1, FailoverAttempts: 2, Successes: 1, TruncatedAttempts: 1,
+		CanceledAttempts: 1, Tokens: 23, EstimatedTokens: 4,
+	}
 	if err != nil || len(rows) != 1 || rows[0].UsageCounts != want || rows[0].RouteUsageKey != row.RouteUsageKey {
 		t.Fatalf("usage = %+v, err = %v", rows, err)
 	}

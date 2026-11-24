@@ -315,19 +315,21 @@ type attemptResult struct {
 	tokens, estimated int64
 	success           bool
 	notSent           bool
+	outputLimited     bool
+	clientCanceled    bool
 }
 
 type finishAttempt func(attemptResult)
 
 // attemptBudget reserves quota and supplies a completion function for a route.
 // A nil budget is used for admin probes.
-type attemptBudget func(liveRoute, int64) (finishAttempt, error)
+type attemptBudget func(liveRoute, int64, bool) (finishAttempt, error)
 
-func (budget attemptBudget) start(route liveRoute, estimate int64) (finishAttempt, error) {
+func (budget attemptBudget) start(route liveRoute, estimate int64, first bool) (finishAttempt, error) {
 	if budget == nil {
 		return func(attemptResult) {}, nil
 	}
-	return budget(route, estimate)
+	return budget(route, estimate, first)
 }
 
 type quotaReservationError struct{ cause error }
@@ -336,7 +338,7 @@ func (e quotaReservationError) Error() string { return e.cause.Error() }
 func (e quotaReservationError) Unwrap() error { return e.cause }
 
 func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) attemptBudget {
-	return func(route liveRoute, estimate int64) (finishAttempt, error) {
+	return func(route liveRoute, estimate int64, first bool) (finishAttempt, error) {
 		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, estimate)
 		if err != nil {
 			return nil, quotaReservationError{cause: err}
@@ -346,18 +348,29 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 			return nil, ErrQuotaExceeded
 		}
 		return func(result attemptResult) {
-
+			canceled := result.clientCanceled || r.Context().Err() != nil
 			if result.tokens < 0 {
 				result.tokens, result.estimated = reserved, reserved
 			}
 			p.settle(r, userID, day, model.Kind, reserved, result.tokens)
 			if p.usage != nil && !result.notSent {
+				counts := UsageCounts{Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated}
+				if first {
+					counts.FirstAttempts = 1
+				} else {
+					counts.FailoverAttempts = 1
+				}
+				if result.outputLimited {
+					counts.TruncatedAttempts = 1
+				} else if !result.success && canceled {
+					counts.CanceledAttempts = 1
+				}
 				p.recordRouteUsage(r.Context(), RouteUsage{
 					Day: day,
 					RouteUsageKey: RouteUsageKey{
 						Kind: model.Kind, Model: model.Name, ProviderID: route.ProviderID, UpstreamModel: route.UpstreamModel,
 					},
-					UsageCounts: UsageCounts{Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated},
+					UsageCounts: counts,
 				}, result.success)
 			}
 		}, nil
@@ -494,7 +507,9 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 	outcome.sourceReached = true
 	if r.Context().Err() != nil || clientWriteFailed {
 		outcome = healthOutcome{reason: "客户端已取消请求"}
+		result.clientCanceled = true
 	}
+	result.outputLimited = end == responseOutputLimit
 	p.finishAttempt(&plan, reply.attempt, result, reply.status, outcome)
 }
 
@@ -727,7 +742,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		outcome := end.outcome()
 		outcome.sourceReached = true
 		p.finishAttempt(plan, attempt, attemptResult{
-			tokens: used, success: end == responseCompleted,
+			tokens: used, success: end == responseCompleted, outputLimited: end == responseOutputLimit,
 		}, reply.status, outcome)
 		if outcome.scope == routeFailure {
 			lastErr = errors.New(outcome.reason)

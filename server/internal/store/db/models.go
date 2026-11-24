@@ -121,15 +121,19 @@ type LlmRoute struct {
 }
 
 type LlmRouteUsage struct {
-	Day             pgtype.Date
-	Kind            string
-	Model           string
-	ProviderID      string
-	UpstreamModel   string
-	Attempts        int64
-	Successes       int64
-	Tokens          int64
-	EstimatedTokens int64
+	Day               pgtype.Date
+	Kind              string
+	Model             string
+	ProviderID        string
+	UpstreamModel     string
+	Attempts          int64
+	FirstAttempts     int64
+	FailoverAttempts  int64
+	Successes         int64
+	TruncatedAttempts int64
+	CanceledAttempts  int64
+	Tokens            int64
+	EstimatedTokens   int64
 }
 
 type LlmUsage struct {

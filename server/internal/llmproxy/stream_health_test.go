@@ -78,8 +78,15 @@ func TestStreamCompletionControlsUsageAndProbeRecovery(t *testing.T) {
 			}
 			day := env.proxy.day()
 			rows, err := usage.RouteUsage(t.Context(), day, day)
-			if err != nil || len(rows) != 1 || rows[0].Successes != tc.success ||
-				(!tc.cancel && rows[0].Tokens != 7) {
+			var truncated, canceled int64
+			if tc.name == "output limit" {
+				truncated = 1
+			}
+			if tc.cancel {
+				canceled = 1
+			}
+			if err != nil || len(rows) != 1 || rows[0].Successes != tc.success || rows[0].FirstAttempts != 1 ||
+				rows[0].TruncatedAttempts != truncated || rows[0].CanceledAttempts != canceled || (!tc.cancel && rows[0].Tokens != 7) {
 				t.Fatalf("unexpected usage: %+v, %v", rows, err)
 			}
 		})

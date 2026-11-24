@@ -205,7 +205,11 @@ CREATE TABLE llm_route_usage (
   provider_id       TEXT NOT NULL,
   upstream_model    TEXT NOT NULL,
   attempts          BIGINT NOT NULL,
+  first_attempts    BIGINT NOT NULL,
+  failover_attempts BIGINT NOT NULL,
   successes         BIGINT NOT NULL,
+  truncated_attempts BIGINT NOT NULL,
+  canceled_attempts BIGINT NOT NULL,
   tokens            BIGINT NOT NULL,
   estimated_tokens  BIGINT NOT NULL,
   PRIMARY KEY (day, kind, model, provider_id, upstream_model)

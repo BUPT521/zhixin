@@ -12,28 +12,40 @@ import (
 )
 
 const addRouteUsage = `-- name: AddRouteUsage :exec
-INSERT INTO llm_route_usage (day, kind, model, provider_id, upstream_model, attempts, successes, tokens, estimated_tokens)
+INSERT INTO llm_route_usage (
+  day, kind, model, provider_id, upstream_model,
+  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens
+)
 VALUES (
   $1, $2, $3, $4, $5,
-  $6, $7, $8, $9
+  $6, $7, $8, $9,
+  $10, $11, $12, $13
 )
 ON CONFLICT (day, kind, model, provider_id, upstream_model) DO UPDATE SET
   attempts = llm_route_usage.attempts + EXCLUDED.attempts,
+  first_attempts = llm_route_usage.first_attempts + EXCLUDED.first_attempts,
+  failover_attempts = llm_route_usage.failover_attempts + EXCLUDED.failover_attempts,
   successes = llm_route_usage.successes + EXCLUDED.successes,
+  truncated_attempts = llm_route_usage.truncated_attempts + EXCLUDED.truncated_attempts,
+  canceled_attempts = llm_route_usage.canceled_attempts + EXCLUDED.canceled_attempts,
   tokens = llm_route_usage.tokens + EXCLUDED.tokens,
   estimated_tokens = llm_route_usage.estimated_tokens + EXCLUDED.estimated_tokens
 `
 
 type AddRouteUsageParams struct {
-	Day             pgtype.Date
-	Kind            string
-	Model           string
-	ProviderID      string
-	UpstreamModel   string
-	Attempts        int64
-	Successes       int64
-	Tokens          int64
-	EstimatedTokens int64
+	Day               pgtype.Date
+	Kind              string
+	Model             string
+	ProviderID        string
+	UpstreamModel     string
+	Attempts          int64
+	FirstAttempts     int64
+	FailoverAttempts  int64
+	Successes         int64
+	TruncatedAttempts int64
+	CanceledAttempts  int64
+	Tokens            int64
+	EstimatedTokens   int64
 }
 
 func (q *Queries) AddRouteUsage(ctx context.Context, arg AddRouteUsageParams) error {
@@ -44,7 +56,11 @@ func (q *Queries) AddRouteUsage(ctx context.Context, arg AddRouteUsageParams) er
 		arg.ProviderID,
 		arg.UpstreamModel,
 		arg.Attempts,
+		arg.FirstAttempts,
+		arg.FailoverAttempts,
 		arg.Successes,
+		arg.TruncatedAttempts,
+		arg.CanceledAttempts,
 		arg.Tokens,
 		arg.EstimatedTokens,
 	)
@@ -52,7 +68,8 @@ func (q *Queries) AddRouteUsage(ctx context.Context, arg AddRouteUsageParams) er
 }
 
 const listRouteUsage = `-- name: ListRouteUsage :many
-SELECT day, kind, model, provider_id, upstream_model, attempts, successes, tokens, estimated_tokens
+SELECT day, kind, model, provider_id, upstream_model,
+  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens
 FROM llm_route_usage
 WHERE day BETWEEN $1 AND $2
 `
@@ -78,7 +95,11 @@ func (q *Queries) ListRouteUsage(ctx context.Context, arg ListRouteUsageParams) 
 			&i.ProviderID,
 			&i.UpstreamModel,
 			&i.Attempts,
+			&i.FirstAttempts,
+			&i.FailoverAttempts,
 			&i.Successes,
+			&i.TruncatedAttempts,
+			&i.CanceledAttempts,
 			&i.Tokens,
 			&i.EstimatedTokens,
 		); err != nil {

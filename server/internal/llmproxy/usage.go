@@ -21,18 +21,28 @@ type RouteUsageKey struct {
 }
 
 type UsageCounts struct {
-	Attempts, Successes, Tokens, EstimatedTokens int64
+	Attempts, FirstAttempts, FailoverAttempts, Successes int64
+	TruncatedAttempts, CanceledAttempts                  int64
+	Tokens, EstimatedTokens                              int64
 }
 
 func (u *UsageCounts) add(other UsageCounts) {
 	u.Attempts += other.Attempts
+	u.FirstAttempts += other.FirstAttempts
+	u.FailoverAttempts += other.FailoverAttempts
 	u.Successes += other.Successes
+	u.TruncatedAttempts += other.TruncatedAttempts
+	u.CanceledAttempts += other.CanceledAttempts
 	u.Tokens += other.Tokens
 	u.EstimatedTokens += other.EstimatedTokens
 }
 
 func (u UsageCounts) view() api.AdminUsageCounts {
-	return api.AdminUsageCounts{Attempts: u.Attempts, Successes: u.Successes, Tokens: u.Tokens, EstimatedTokens: u.EstimatedTokens}
+	return api.AdminUsageCounts{
+		Attempts: u.Attempts, FirstAttempts: u.FirstAttempts, FailoverAttempts: u.FailoverAttempts,
+		TruncatedAttempts: u.TruncatedAttempts, CanceledAttempts: u.CanceledAttempts,
+		Successes: u.Successes, Tokens: u.Tokens, EstimatedTokens: u.EstimatedTokens,
+	}
 }
 
 // RouteUsage is an aggregate for one route on a local calendar day. It contains

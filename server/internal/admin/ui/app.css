@@ -493,7 +493,7 @@ label.check input { flex: 0 0 auto; }
 .usage-breakdown-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .usage-breakdown-heading .hint { font-size: 12px; font-variant-numeric: tabular-nums; }
 .usage-card .scroll { margin-top: 12px; border: 1px solid var(--line); }
-.usage-table { min-width: 580px; }
+.usage-table { min-width: 720px; }
 .usage-table th:first-child, .usage-table th:last-child { border-radius: 0; }
 .usage-table .numeric, .usage-table th:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
 .usage-table .mono { overflow-wrap: anywhere; }

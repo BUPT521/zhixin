@@ -16,7 +16,9 @@ func (s *Store) AddRouteUsage(ctx context.Context, row llmproxy.RouteUsage) erro
 	}
 	return s.q.AddRouteUsage(ctx, db.AddRouteUsageParams{
 		Day: day, Kind: string(row.Kind), Model: row.Model, ProviderID: row.ProviderID,
-		UpstreamModel: row.UpstreamModel, Attempts: row.Attempts, Successes: row.Successes,
+		UpstreamModel: row.UpstreamModel, Attempts: row.Attempts, FirstAttempts: row.FirstAttempts,
+		FailoverAttempts: row.FailoverAttempts, Successes: row.Successes,
+		TruncatedAttempts: row.TruncatedAttempts, CanceledAttempts: row.CanceledAttempts,
 		Tokens: row.Tokens, EstimatedTokens: row.EstimatedTokens,
 	})
 }
@@ -42,7 +44,9 @@ func (s *Store) RouteUsage(ctx context.Context, from, to string) ([]llmproxy.Rou
 				Kind: llmproxy.Kind(row.Kind), Model: row.Model, ProviderID: row.ProviderID, UpstreamModel: row.UpstreamModel,
 			},
 			UsageCounts: llmproxy.UsageCounts{
-				Attempts: row.Attempts, Successes: row.Successes, Tokens: row.Tokens, EstimatedTokens: row.EstimatedTokens,
+				Attempts: row.Attempts, FirstAttempts: row.FirstAttempts, FailoverAttempts: row.FailoverAttempts,
+				TruncatedAttempts: row.TruncatedAttempts, CanceledAttempts: row.CanceledAttempts,
+				Successes: row.Successes, Tokens: row.Tokens, EstimatedTokens: row.EstimatedTokens,
 			},
 		})
 	}

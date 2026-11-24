@@ -110,7 +110,7 @@
       </div>
       <dl class="usage-metrics">
         <div><dt>Token 用量</dt><dd id="usage-tokens"></dd><dd id="usage-estimate" class="usage-detail"></dd></div>
-        <div><dt>路由尝试</dt><dd id="usage-attempts"></dd><dd id="usage-unsuccessful" class="usage-detail"></dd></div>
+        <div><dt>路由尝试</dt><dd id="usage-attempts"></dd><dd id="usage-attempt-detail" class="usage-detail"></dd><dd id="usage-unsuccessful" class="usage-detail"></dd></div>
         <div><dt>路由成功率</dt><dd id="usage-success-rate"></dd><dd id="usage-successes" class="usage-detail"></dd></div>
       </dl>
       <section class="usage-card" aria-labelledby="usage-trend">
@@ -118,6 +118,7 @@
           <h2 id="usage-trend">每日趋势</h2>
           <label class="usage-group">指标<select id="usage-metric">
             <option value="tokens">Token 用量</option><option value="attempts">路由尝试</option><option value="unsuccessful">未成功尝试</option>
+            <option value="first_attempts">首次尝试</option><option value="failover_attempts">故障切换</option>
           </select></label>
         </div>
         <div id="usage-legend" class="usage-legend">
@@ -143,10 +144,10 @@
           </select></label>
         </div>
         <div class="scroll" role="region" aria-labelledby="usage-breakdown" tabindex="0"><table class="grid usage-table">
-          <thead><tr><th scope="col">名称</th><th scope="col">种类</th><th scope="col">Token</th><th scope="col">估算 Token</th><th scope="col">尝试</th><th scope="col">未成功</th><th scope="col">成功率</th></tr></thead>
+          <thead><tr><th scope="col">名称</th><th scope="col">种类</th><th scope="col">Token</th><th scope="col">估算 Token</th><th scope="col">尝试</th><th scope="col">首次尝试</th><th scope="col">故障切换</th><th scope="col">未成功</th><th scope="col">成功率</th></tr></thead>
           <tbody id="usage-rows"></tbody>
         </table></div>
-        <p class="hint usage-note">失败后切换来源会增加一次路由尝试，嵌入拆批仍按一次计算。统计覆盖上线后的托管调用，包含估算用量。</p>
+        <p class="hint usage-note">每次请求的第一条实际执行路由计入首次尝试，失败后执行的后续路由计入故障切换，嵌入拆批仍按一次尝试计算。</p>
       </section>
     </div>
   </section>

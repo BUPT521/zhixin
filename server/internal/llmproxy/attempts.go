@@ -36,7 +36,7 @@ func (p *Proxy) beginAttempt(ctx context.Context, plan *attemptPlan, rt liveRout
 	if !ok {
 		return routeAttempt{}, false, nil
 	}
-	settle, err := plan.reserve.start(rt, estimate)
+	settle, err := plan.reserve.start(rt, estimate, plan.started == 0)
 	if err != nil {
 		p.router.health.complete(lease, false, healthOutcome{})
 		return routeAttempt{}, false, err
