@@ -54,7 +54,7 @@ func snapshotFromRow(seq pgtype.Int8, sha, digest pgtype.Text, createdAt pgtype.
 // 已经出现过的 uid 不再写入，响应里回它在 sync_commit_seen 记下的序号；整批都是
 // 重放时直接返回当前 head，因为客户端没有收到上一次的响应（与内存实现一致）。
 // 去重只查 sync_commit_seen，sync_commit 不再为 uid 单独建唯一约束（审查 V17）。
-// 追加会让账号超过序列预算时，策略允许删除就先删掉快照位置之前的全部提交再判断，
+// 追加会让账号超过序列预算时，策略允许删除就先删掉快照位置及之前的全部提交再判断，
 // 仍然超出才返回 ErrStorageFull（ADR-0043、ADR-0047、ADR-0054）。
 func (s *Store) Append(ctx context.Context, userID string, base int64, commits []syncsvc.Commit, policy syncsvc.CompactPolicy) (syncsvc.AppendResult, error) {
 	tx, err := s.pool.Begin(ctx)
@@ -192,7 +192,7 @@ func tableDigestsJSON(value *map[string]string) []byte {
 	return b
 }
 
-// compactThroughSnapshot 是预算压力下的压缩：有快照就删掉快照位置之前的全部
+// compactThroughSnapshot 是预算压力下的压缩：有快照就删掉快照位置及之前的全部
 // 提交，不按保留期与设备位置过滤，返回删除到的序号；没有快照或没有可删的提交时
 // 返回当前保留下界。调用方已经锁住 sync_state（ADR-0043、ADR-0054）。
 func compactThroughSnapshot(ctx context.Context, q *db.Queries, userID string, trimmed int64) (int64, error) {

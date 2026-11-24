@@ -204,7 +204,7 @@ func TestPushCompactsInsteadOfFailingAtBudget(t *testing.T) {
 		t.Fatalf("没有快照时应返回 ErrStorageFull，得到 %v", err)
 	}
 
-	// 登记快照之后，预算不足会先删掉快照位置之前的提交。
+	// 登记快照之后，预算不足会先删掉快照位置及之前的提交。
 	store.mu.Lock()
 	store.logs["u1"].snapshot = &Snapshot{Seq: 1, SHA256: snapshotSHA, Digest: snapshotDigest, CreatedAt: time.Now().UTC()}
 	store.mu.Unlock()

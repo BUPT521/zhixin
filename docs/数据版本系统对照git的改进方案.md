@@ -99,7 +99,7 @@
 
 ### 3.7 服务端快照与浅克隆（G7，P1，协议变化）
 
-服务端一侧已经随 `149b0b2` 实现（[ADR-0043](adr/0043-服务端快照登记与提交序列压缩.md)）：契约新增 `PUT /v1/sync/snapshot` 与 `GET /v1/sync/snapshot`，一台已经同步到序列 N、且没有待推送提交的设备可以登记“序列 N 的快照是附件 X、整库摘要 D”；服务端只保留最新一份，按保留期或预算压力删掉快照之前的提交，并在 head 与 pull 响应里给出 `earliest_seq` 与 `snapshot`。请求的 `after` 落在已压缩区间时返回 410 `history_compacted` 并带回快照位置、哈希与摘要；账号达到 256 MiB 预算时先压缩再判断是否超限。
+服务端一侧已经随 `149b0b2` 实现（[ADR-0043](adr/0043-服务端快照登记与提交序列压缩.md)）：契约新增 `PUT /v1/sync/snapshot` 与 `GET /v1/sync/snapshot`，一台已经同步到序列 N、且没有待推送提交的设备可以登记“序列 N 的快照是附件 X、整库摘要 D”；服务端只保留最新一份，按保留期或预算压力删掉快照位置及之前的提交，并在 head 与 pull 响应里给出 `earliest_seq` 与 `snapshot`。请求的 `after` 落在已压缩区间时返回 410 `history_compacted` 并带回快照位置、哈希与摘要；账号达到 256 MiB 预算时先压缩再判断是否超限。
 
 客户端已经随 `38abd7e` 接上（[ADR-0046](adr/0046-客户端按快照浅克隆与重新克隆.md)）：`head` 与 `pull` 的响应解析 `earliest_seq` 与 `snapshot{seq, sha256, digest, created_at}`，`pull` 收到 410 `history_compacted` 时抛出 `SyncHistoryCompacted`，带出 `after`、`earliest_seq`、`head` 与快照的位置、哈希和摘要。首次同步在还没有与这个身份建立同步位置时按保留下界分两级：`earliest_seq > 1` 时必须有快照，下载之后按附件哈希与整库摘要核对、按检查点格式导入本机，追加一条 `kind = baseline`、动作“从云端快照重建”、变更明细为空的本机提交并写一份 `initial` 检查点，代次加一、清空 `sync_shadow`，两个位置写成 `sync.server_head = 快照位置`、`sync.pushed = 本机重建提交编号`（这条重建提交不上传），再按 `after = 快照位置` 增量拉取，并把本机未推送的提交按 3.2 的剩余部分在快照之上重放后推送；没有快照时抛出 `SyncSnapshotProblem`（code 为 `unavailable`），明确说明“云端历史已压缩，缺少可用快照，暂时不能自动重建”，不清空本机数据。`earliest_seq == 1` 时仍走 3.6 的全量回放，即使服务端登记过快照也不用，避免只落后不多的设备因为云端有快照就改写本机历史。
 

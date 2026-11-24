@@ -110,8 +110,8 @@ type State struct {
 // （ADR-0047、ADR-0054）。
 type CompactPolicy struct {
 	// Keep 是快照位置之下仍然要保留的提交时间窗口：服务端收到时间早于它减去
-	// 当前时间的提交在登记快照时删除。预算不够时调用方忽略它，删掉快照位置之前
-	// 的全部提交。
+	// 当前时间的提交在登记快照时删除。预算不够时调用方忽略它，删掉快照位置及
+	// 之前的全部提交。
 	Keep time.Duration
 	// AllowDelete 表示这次操作允许删除快照覆盖的提交。压缩开关关闭，或名册里
 	// 有活跃设备没有声明 snapshot 能力时为 false：登记只写指针，预算压力也不删
@@ -408,7 +408,7 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 		added += sizes[i]
 	}
 	if l.bytes+added > m.maxBytes {
-		// 预算不够时先压缩：有快照且策略允许删除就删掉快照位置之前的全部提交，
+		// 预算不够时先压缩：有快照且策略允许删除就删掉快照位置及之前的全部提交，
 		// 不按保留期与设备位置过滤，再判断是否仍然超限（ADR-0043、ADR-0047、
 		// ADR-0054）。
 		if policy.AllowDelete && l.snapshot != nil {
