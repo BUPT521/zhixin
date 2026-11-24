@@ -12,6 +12,8 @@ captures/
 *.aab
 *.keystore
 *.jks
+# tool/build_debug.ps1 写下的构建标记：里面有本机绝对路径，只在两次构建之间有用
+app/android/last_build.json
 
 # ---- Flutter / Dart ----
 .dart_tool/
