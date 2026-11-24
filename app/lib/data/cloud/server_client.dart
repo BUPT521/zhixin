@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
 import '../../domain/models/model_api_key.dart';
+import '../../domain/models/quota_purchase.dart';
 
 /// 服务端的一次拒绝：`application/problem+json` 里的 `code` 是分支依据，
 /// `detail` 只给开发者看，界面按 [userMessage] 给出说明。
@@ -1316,6 +1317,67 @@ class ServerClient {
     final json = await _json('GET', '/v1/llm/quota', accessToken: accessToken);
     return ServerQuota.fromJson(json);
   }
+
+  static const _quotaPurchasePath = '/v1/me/model-quota-purchases';
+
+  Future<QuotaPurchaseOverview> quotaPurchases(String accessToken) async {
+    final json = await _json(
+      'GET',
+      _quotaPurchasePath,
+      accessToken: accessToken,
+    );
+    final offer = json['offer'] as Map<String, Object?>?;
+    final order = json['latest_order'] as Map<String, Object?>?;
+    return QuotaPurchaseOverview(
+      balanceTokens: json['balance_tokens'] as int,
+      offer: offer == null ? null : _quotaOffer(offer, offer['id'] as String),
+      latestOrder: order == null ? null : _quotaOrder(order),
+    );
+  }
+
+  Future<({QuotaPurchaseOrder order, String orderString})> quotaCheckout(
+    String accessToken,
+    String offerId, {
+    String? orderId,
+  }) async {
+    final json = await _json(
+      'POST',
+      _quotaPurchasePath,
+      accessToken: accessToken,
+      body: {'offer_id': offerId, 'order_id': ?orderId},
+    );
+    return (
+      order: _quotaOrder(json['order'] as Map<String, Object?>),
+      orderString: json['order_string'] as String,
+    );
+  }
+
+  Future<QuotaPurchaseOrder> quotaOrder(
+    String accessToken,
+    String orderId,
+  ) async => _quotaOrder(
+    await _json(
+      'GET',
+      '$_quotaPurchasePath/${Uri.encodeComponent(orderId)}',
+      accessToken: accessToken,
+    ),
+  );
+
+  static QuotaPurchaseOffer _quotaOffer(Map<String, Object?> json, String id) =>
+      QuotaPurchaseOffer(
+        id: id,
+        amountFen: json['amount_fen'] as int,
+        tokens: json['tokens'] as int,
+        sandbox: json['sandbox'] as bool,
+      );
+
+  static QuotaPurchaseOrder _quotaOrder(Map<String, Object?> json) =>
+      QuotaPurchaseOrder(
+        id: json['id'] as String,
+        offer: _quotaOffer(json, json['offer_id'] as String),
+        status: json['status'] as String,
+        payable: json['payable'] as bool,
+      );
 
   Future<List<ServerModel>> models(String accessToken) async {
     final json = await _json('GET', '/v1/llm/models', accessToken: accessToken);

@@ -15,6 +15,7 @@ import '../application/sync_service.dart';
 import '../data/cloud/account_store.dart' show AccountIdentity;
 import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import 'account_dialogs.dart';
+import 'quota_purchase_panel.dart';
 import 'cloud_sync_prompts.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
@@ -1177,7 +1178,7 @@ class _AccountPageState extends State<AccountPage> {
       ..._devicesSection(context),
       SectionHeading(
         title: '模型额度',
-        subtitle: '知新服务按账号计每天可用的 token，聊天与语义索引的嵌入分开计；额度用完之后等次日重置，或者联系管理员调整。',
+        subtitle: '知新服务按账号统计用量，聊天与语义索引的嵌入各有每日免费额度。',
       ),
       forui.FCard(
         child: Padding(
@@ -1188,7 +1189,7 @@ class _AccountPageState extends State<AccountPage> {
               Text(
                 _quota == null
                     ? '额度暂时无法读取'
-                    : '聊天今日已用 ${_quota!.usedTokens} / ${_quota!.dailyTokens} token',
+                    : '聊天今日已用 ${_quota!.usedTokens} token · 每日免费额度 ${_quota!.dailyTokens} token',
                 style: theme.text.bodyMedium,
               ),
               // 旧版服务端不返回嵌入额度，读作 0，这时不显示这一行。
@@ -1211,6 +1212,13 @@ class _AccountPageState extends State<AccountPage> {
           ),
         ),
       ),
+      if (_snapshot?.contactVerified == true)
+        QuotaPurchasePanel(
+          key: ValueKey((_snapshot!.serverBaseUrl, _snapshot!.session!.userId)),
+          account: AppScope.of(context).accountServices.account,
+          enabled: !_busy,
+          onPaid: _load,
+        ),
       SectionHeading(title: '账号与数据管理'),
       forui.FTile(
         variant: forui.FItemVariant.destructive,

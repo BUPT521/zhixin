@@ -276,6 +276,41 @@ CREATE TABLE install_active (
 -- 按账号调整每日模型额度：没有行或者某一列为空时用 ZHIXIN_LLM_DAILY_TOKENS
 -- 与 ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS。管理员直接写这张表调整个别账号，不重启
 -- 服务。
+CREATE TABLE model_quota_purchase (
+  id          TEXT PRIMARY KEY,
+  user_id     TEXT REFERENCES app_user(id) ON DELETE SET NULL,
+  amount_fen  BIGINT NOT NULL CHECK (amount_fen > 0),
+  tokens      BIGINT NOT NULL CHECK (tokens > 0),
+  app_id      TEXT NOT NULL,
+  seller_id   TEXT NOT NULL,
+  sandbox     BOOLEAN NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'closed')),
+  trade_id    TEXT,
+  created_at  TIMESTAMPTZ NOT NULL,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  UNIQUE (sandbox, trade_id),
+  CHECK (expires_at > created_at),
+  CHECK ((status = 'pending') = (trade_id IS NULL))
+);
+CREATE INDEX model_quota_purchase_user_created_idx
+  ON model_quota_purchase (user_id, sandbox, created_at DESC, id DESC) WHERE user_id IS NOT NULL;
+
+CREATE TABLE model_quota_wallet (
+  user_id        TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  sandbox        BOOLEAN NOT NULL,
+  balance_tokens BIGINT NOT NULL CHECK (balance_tokens >= 0),
+  PRIMARY KEY (user_id, sandbox)
+);
+
+CREATE TABLE model_quota_paid_usage (
+  user_id TEXT NOT NULL,
+  sandbox BOOLEAN NOT NULL,
+  day     DATE NOT NULL,
+  tokens  BIGINT NOT NULL CHECK (tokens >= 0),
+  PRIMARY KEY (user_id, sandbox, day),
+  FOREIGN KEY (user_id, sandbox) REFERENCES model_quota_wallet(user_id, sandbox) ON DELETE CASCADE
+);
+
 CREATE TABLE llm_quota (
   user_id                 TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
   daily_tokens            BIGINT CHECK (daily_tokens > 0),

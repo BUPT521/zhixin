@@ -23,6 +23,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/payment"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
@@ -39,12 +40,13 @@ const ClientSchemaVersion = 32
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
 type Stores struct {
-	Auth    auth.Store
-	Sync    syncsvc.Store
-	Backups backup.Store
-	Blobs   blobs.Store
-	Quota   llmproxy.Quota
-	Usage   llmproxy.UsageStore
+	Auth     auth.Store
+	Sync     syncsvc.Store
+	Backups  backup.Store
+	Blobs    blobs.Store
+	Quota    llmproxy.Quota
+	Usage    llmproxy.UsageStore
+	Payments payment.Store
 	// Catalog 保存管理后台配置的模型来源与路由（ADR-0029）。
 	Catalog llmproxy.Catalog
 	// Cache 保存按账号隔离的嵌入向量缓存（ADR-0030），派生数据，清空云端数据
@@ -318,6 +320,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		backups:       backupHandler,
 		blobs:         blobHandler,
 		llm:           llmProxy,
+		payments:      payment.NewHandler(st.Payments, cfg.Alipay, cfg.AlipayOffer, log, cfg.RateLimitKeys),
 		llmAdmin:      llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
 		feedback:      feedbackHandler,
 		release:       release.NewHandler(cfg.Releases),
