@@ -106,4 +106,5 @@ func RegisterUI(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 	mux.Handle("GET /admin/{$}", guard(serve("index.html", "text/html; charset=utf-8")))
 	mux.Handle("GET /admin/app.js", guard(serve("app.js", "text/javascript; charset=utf-8")))
 	mux.Handle("GET /admin/app.css", guard(serve("app.css", "text/css; charset=utf-8")))
+	mux.Handle("GET /admin/mark.png", guard(serve("mark.png", "image/png")))
 }

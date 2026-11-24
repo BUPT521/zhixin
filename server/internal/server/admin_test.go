@@ -58,7 +58,7 @@ func fakeProvider(t *testing.T) (*httptest.Server, func() string) {
 
 func TestAdminDisabledWithoutToken(t *testing.T) {
 	h := newHarness(t, nil)
-	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/v1/providers", "/admin/v1/usage?days=invalid"} {
+	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/mark.png", "/admin/v1/providers", "/admin/v1/usage?days=invalid"} {
 		resp := h.do("GET", path, testAdminToken, nil, nil)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
@@ -257,6 +257,11 @@ func TestAdminTokenAndPage(t *testing.T) {
 	}
 	if resp.Header.Get("Cache-Control") != "no-store" || resp.Header.Get("X-Frame-Options") != "DENY" {
 		t.Fatalf("后台响应应禁止缓存与嵌入：%v", resp.Header)
+	}
+	mark := h.do("GET", "/admin/mark.png", "", nil, nil)
+	mark.Body.Close()
+	if mark.StatusCode != http.StatusOK || mark.Header.Get("Content-Type") != "image/png" {
+		t.Fatalf("后台标志应作为 PNG 提供：%d %v", mark.StatusCode, mark.Header)
 	}
 
 	// 账号的访问令牌不能当管理令牌用。

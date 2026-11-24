@@ -32,17 +32,20 @@ function toast(msg) {
 }
 
 async function api(method, path, body, signal) {
+  const token = state.token;
   const res = await fetch('/admin/v1' + path, {
     method,
-    headers: { Authorization: 'Bearer ' + state.token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { Authorization: 'Bearer ' + token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
     body: body ? JSON.stringify(body) : undefined,
     signal,
   });
   if (res.status === 204) return null;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) logout('令牌不对或已失效');
-    const err = new Error(problemText(data, res.status));
+    const unauthorized = res.status === 401;
+    const message = unauthorized ? '管理令牌不正确或已失效。' : problemText(data, res.status);
+    if (unauthorized && token === state.token && !$('#app').hidden) logout(message);
+    const err = new Error(message);
     err.data = data;
     throw err;
   }
@@ -58,19 +61,33 @@ function problemText(p, status) {
 // ---- 登录 ----
 $('#login').addEventListener('submit', async (e) => {
   e.preventDefault();
-  state.token = $('#token').value.trim();
-  try {
-    await loadAll();
-    sessionStorage.setItem('zhixin-admin-token', state.token);
-    $('#token').value = '';
-    showApp(true);
-  } catch (err) {
-    toast(err.message);
-  }
+  await signIn($('#token').value.trim());
 });
 $('#logout').addEventListener('click', () => logout());
 
+async function signIn(token) {
+  const button = $('#login-submit');
+  if (button.disabled) return;
+  button.disabled = true;
+  button.textContent = '连接中…';
+  clearError('login-error');
+  state.token = token;
+  try {
+    await loadAll();
+    sessionStorage.setItem('zhixin-admin-token', token);
+    $('#token').value = '';
+    showApp(true);
+    tabs[0].focus({ preventScroll: true });
+  } catch (err) {
+    logout(err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = '进入后台';
+  }
+}
+
 function logout(msg) {
+  const wasSignedIn = !$('#app').hidden;
   state.token = '';
   sessionStorage.removeItem('zhixin-admin-token');
   usageRequest?.abort();
@@ -81,18 +98,28 @@ function logout(msg) {
   for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close();
   selectTab(tabs[0]);
   showApp(false);
-  if (msg) toast(msg);
+  if (msg) showError('login-error', msg);
+  else clearError('login-error');
+  if (msg || wasSignedIn) $('#token').focus();
 }
 
 function showApp(on) {
   $('#app').hidden = !on;
   $('#session').hidden = !on;
-  $('#login').hidden = on;
+  $('#sign-in').hidden = on;
 }
 
 // ---- 标签页 ----
 const tabs = [...document.querySelectorAll('[role=tab]')];
+const mobileTabs = matchMedia('(max-width: 760px)');
+function updateTabOrientation() {
+  $('.tabs').setAttribute('aria-orientation', mobileTabs.matches ? 'horizontal' : 'vertical');
+}
+mobileTabs.addEventListener('change', updateTabOrientation);
+updateTabOrientation();
+
 function selectTab(tab) {
+  const changed = tab.getAttribute('aria-selected') !== 'true';
   closeProbe();
   for (const item of tabs) {
     const selected = item === tab;
@@ -100,12 +127,16 @@ function selectTab(tab) {
     item.tabIndex = selected ? 0 : -1;
     document.getElementById(item.getAttribute('aria-controls')).hidden = !selected;
   }
+  if (changed) window.scrollTo(0, 0);
   if (tab.dataset.tab === 'usage') loadUsage();
 }
 tabs.forEach((tab, index) => {
   tab.addEventListener('click', () => selectTab(tab));
   tab.addEventListener('keydown', (e) => {
-    const next = { ArrowLeft: (index + tabs.length - 1) % tabs.length, ArrowRight: (index + 1) % tabs.length, Home: 0, End: tabs.length - 1 }[e.key];
+    const previous = (index + tabs.length - 1) % tabs.length;
+    const following = (index + 1) % tabs.length;
+    const next = { ArrowLeft: previous, ArrowRight: following, Home: 0, End: tabs.length - 1,
+      ArrowUp: mobileTabs.matches ? undefined : previous, ArrowDown: mobileTabs.matches ? undefined : following }[e.key];
     if (next === undefined) return;
     e.preventDefault();
     tabs[next].focus();
@@ -298,11 +329,11 @@ function renderProviders() {
         el('span', { class: 'badge ' + tone }, badge),
         details.map((text) => el('div', { class: 'sub status-detail', title: health.last_error_at || '' }, text)),
       ),
-      el('td', { class: 'ops' },
+      el('td', { class: 'ops' }, el('div', { class: 'row-actions' },
         el('button', { type: 'button', class: 'link', 'aria-label': `测试来源 ${p.id}`, onclick: () => testProvider(p) }, '测试'),
         el('button', { type: 'button', class: 'link', 'aria-label': `编辑来源 ${p.id}`, onclick: () => editProvider(p) }, '编辑'),
         el('button', { type: 'button', class: 'danger', 'aria-label': `删除来源 ${p.id}`, onclick: () => deleteProvider(p) }, '删除'),
-      ),
+      )),
     ));
   }
 }
@@ -568,18 +599,18 @@ function renderModels() {
         m.note ? el('div', { class: 'sub' }, m.note) : null,
         updated ? el('div', { class: 'sub' }, '更新于 ' + updated) : null,
       ),
-      el('td', { class: 'routes-cell' }, renderRouteList(m)),
+      el('td', { class: 'routes-cell', 'data-label': '路由' }, renderRouteList(m)),
       el('td', { 'data-label': '状态' },
         el('span', { class: 'badge ' + tone }, label),
         el('div', { class: 'sub' }, usable === m.routes.length ? `${m.routes.length} 条路由` : `${usable}/${m.routes.length} 条路由可用`),
       ),
-      el('td', { class: 'ops' },
+      el('td', { class: 'ops' }, el('div', { class: 'row-actions' },
         el('button', { type: 'button', class: 'link', disabled: !m.available, 'aria-label': `测试模型 ${m.name}`, onclick: () => testModel(m) }, '测试模型'),
         el('button', { type: 'button', class: 'link', 'aria-label': `编辑模型 ${m.name}`, onclick: () => editModel(m) }, '编辑'),
         el('button', { type: 'button', class: 'link', 'aria-label': `按 ${m.name} 的路由复制一个新模型`, onclick: () => editModel(m, { copy: true }) }, '复制'),
         el('button', { type: 'button', class: 'link', 'aria-label': `${m.enabled ? '停用' : '启用'}模型 ${m.name}`, onclick: () => toggleModel(m) }, m.enabled ? '停用' : '启用'),
         el('button', { type: 'button', class: 'danger', 'aria-label': `删除模型 ${m.name}`, onclick: () => deleteModel(m) }, '删除'),
-      ),
+      )),
     ));
   }
 }
@@ -1168,6 +1199,4 @@ function renderUsageTable(routes, date) {
 }
 
 // ---- 启动 ----
-if (state.token) {
-  loadAll().then(() => showApp(true)).catch(() => logout());
-}
+if (state.token) signIn(state.token);

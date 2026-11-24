@@ -5,39 +5,58 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>知新 · 模型后台</title>
-<link rel="icon" href="data:,">
+<link rel="icon" href="/admin/mark.png" type="image/png">
 <link rel="stylesheet" href="/admin/app.css">
 </head>
 <body>
 <header class="top">
-  <div class="brand">知新<span>模型后台</span></div>
-  <form id="login" class="login" autocomplete="off">
-    <input id="token" type="password" placeholder="管理令牌（ZHIXIN_ADMIN_TOKEN）" aria-label="管理令牌" required>
-    <button type="submit">进入</button>
-  </form>
-  <div id="session" class="session" hidden>
-    <span class="dot"></span><span>已连接</span>
-    <button id="logout" class="ghost" type="button">退出</button>
+  <div class="top-inner">
+    <div class="brand">
+      <img src="/admin/mark.png" width="36" height="36" alt="">
+      <strong>知新</strong><span>模型后台</span>
+    </div>
+    <div id="session" class="session" hidden>
+      <span class="badge ok">已连接</span>
+      <button id="logout" class="ghost" type="button">退出</button>
+    </div>
   </div>
 </header>
 
-<main id="app" hidden>
+<main id="sign-in" class="sign-in" aria-labelledby="login-title">
+  <form id="login" class="login" autocomplete="off">
+    <h1 id="login-title">管理员登录</h1>
+    <p class="hint">输入此服务实例配置的管理令牌。</p>
+    <label for="token">管理令牌</label>
+    <input id="token" type="password" placeholder="ZHIXIN_ADMIN_TOKEN" aria-describedby="login-error" required>
+    <p class="form-error" id="login-error" role="alert" hidden></p>
+    <button id="login-submit" type="submit">进入后台</button>
+  </form>
+</main>
+
+<div id="app" class="workspace" hidden>
   <nav class="tabs" role="tablist" aria-label="模型后台">
-    <button role="tab" id="nav-providers" data-tab="providers" aria-selected="true" aria-controls="tab-providers">模型来源</button>
-    <button role="tab" id="nav-models" data-tab="models" aria-selected="false" aria-controls="tab-models" tabindex="-1">对外模型与路由</button>
-    <button role="tab" id="nav-usage" data-tab="usage" aria-selected="false" aria-controls="tab-usage" tabindex="-1">用量统计</button>
+    <button type="button" role="tab" id="nav-providers" data-tab="providers" aria-selected="true" aria-controls="tab-providers">
+      <span class="tab-icon icon-sources" aria-hidden="true"></span>模型来源
+    </button>
+    <button type="button" role="tab" id="nav-models" data-tab="models" aria-selected="false" aria-controls="tab-models" tabindex="-1">
+      <span class="tab-icon icon-routes" aria-hidden="true"></span>模型与路由
+    </button>
+    <button type="button" role="tab" id="nav-usage" data-tab="usage" aria-selected="false" aria-controls="tab-usage" tabindex="-1">
+      <span class="tab-icon icon-usage" aria-hidden="true"></span>用量统计
+    </button>
   </nav>
 
+<main>
   <section id="tab-providers" class="panel" role="tabpanel" aria-labelledby="nav-providers">
     <div class="panel-head">
       <div class="panel-intro">
         <h1 class="panel-title">模型来源</h1>
-        <p class="hint">一个来源是一个 OpenAI 兼容的基础地址和一把密钥，例如 DeepSeek、硅基流动、阿里云百炼的兼容模式，或者自建的 vLLM、Ollama。密钥加密保存，列表只显示末四位。</p>
+        <p class="hint">配置 OpenAI 兼容的服务地址和密钥。密钥加密保存，列表仅显示末四位。</p>
         <p id="provider-summary" class="summary" aria-live="polite"></p>
       </div>
       <button id="add-provider" type="button">新增来源</button>
     </div>
-    <div class="scroll"><table class="grid providers">
+    <div class="list-surface"><table class="grid providers">
       <thead><tr><th scope="col">来源</th><th scope="col">基础地址</th><th scope="col">密钥</th><th scope="col">状态</th><th scope="col" class="ops-head">操作</th></tr></thead>
       <tbody id="providers"></tbody>
     </table></div>
@@ -63,16 +82,16 @@
       <label class="check"><input id="model-attention" type="checkbox">只看需要注意的</label>
       <span id="model-filter-count" class="hint" aria-live="polite"></span>
     </div>
-    <div class="scroll"><table class="grid models">
+    <div class="list-surface"><table class="grid models">
       <thead><tr><th scope="col">模型</th><th scope="col">路由</th><th scope="col">状态</th><th scope="col" class="ops-head">操作</th></tr></thead>
       <tbody id="models"></tbody>
     </table></div>
   </section>
 
   <section id="tab-usage" class="panel" role="tabpanel" aria-labelledby="nav-usage" hidden>
-    <div class="usage-head">
+    <div class="panel-head usage-head">
       <div>
-        <h1>用量统计</h1>
+        <h1 class="panel-title">用量统计</h1>
         <p id="usage-period" class="hint"></p>
       </div>
       <div class="usage-controls">
@@ -123,8 +142,8 @@
             <option value="model">按对外模型</option><option value="provider">按来源</option><option value="route">按路由</option>
           </select></label>
         </div>
-        <div class="scroll"><table class="grid usage-table">
-          <thead><tr><th>名称</th><th>种类</th><th>Token</th><th>估算 Token</th><th>尝试</th><th>未成功</th><th>成功率</th></tr></thead>
+        <div class="scroll" role="region" aria-labelledby="usage-breakdown" tabindex="0"><table class="grid usage-table">
+          <thead><tr><th scope="col">名称</th><th scope="col">种类</th><th scope="col">Token</th><th scope="col">估算 Token</th><th scope="col">尝试</th><th scope="col">未成功</th><th scope="col">成功率</th></tr></thead>
           <tbody id="usage-rows"></tbody>
         </table></div>
         <p class="hint usage-note">失败后切换来源会增加一次路由尝试，嵌入拆批仍按一次计算。统计覆盖上线后的托管调用，包含估算用量。</p>
@@ -137,6 +156,7 @@
     <div id="probe-body"></div>
   </section>
 </main>
+</div>
 
 <p id="toast" class="toast" role="status" hidden></p>
 
