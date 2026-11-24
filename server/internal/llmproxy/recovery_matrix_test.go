@@ -76,7 +76,7 @@ func TestRecoveryWithRepresentativeRequests(t *testing.T) {
 					defer backup.Close()
 					cfg := baseConfig()
 					cfg.FirstOutputTimeout = time.Second
-					cfg.DailyTokens = 100_000
+					cfg.DailyTokens = 400_000
 					env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
 						putProvider(t, c, box, "primary", primary.URL, "test-primary")
 						putProvider(t, c, box, "backup", backup.URL, "test-backup")

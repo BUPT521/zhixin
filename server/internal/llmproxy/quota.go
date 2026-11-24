@@ -19,14 +19,16 @@ type Quota interface {
 	Used(ctx context.Context, userID, day string, kind Kind) (int64, error)
 	Add(ctx context.Context, userID, day string, kind Kind, tokens int64) error
 	DailyLimit(ctx context.Context, userID string, kind Kind) (int64, bool, error)
-	// Reserve 原子预留 want 个 token，返回实际预留量。keyID 是这次调用用的模型
-	// 代理密钥编号，用访问令牌调用时为空字符串；用量按它分开记，额度仍按账号合计，
-	// 账号额度或实例预算已经用完时返回 ErrQuotaExceeded；剩余不足 want 时按剩余量
-	// 预留，调用方照常转发。
+	// Reserve 原子预留 want 个计费 token，返回实际预留量。keyID 是这次调用用的
+	// 模型代理密钥编号，用访问令牌调用时为空字符串；用量按它分开记，额度仍按账号
+	// 合计，账号额度或实例预算已经用完时返回 ErrQuotaExceeded；剩余不足 want 时
+	// 按剩余量预留，调用方照常转发。
 	Reserve(ctx context.Context, userID, day string, kind Kind, keyID string, want int64) (reserved int64, err error)
 	// Settle 按实际用量调整预留：actual 大于 reserved 时补记差额，小于时退回。
-	// keyID 必须与这次预留相同，结算才会落到同一行。
-	Settle(ctx context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64) error
+	// keyID 必须与这次预留相同，结算才会落到同一行。reserved 与 actual 都是计费
+	// token（见 Usage.Billed）；usage 是来源报告的原始拆分，只为统计缓存命中，
+	// 不参与扣减。
+	Settle(ctx context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage) error
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
@@ -48,7 +50,9 @@ type MemoryQuota struct {
 	mu sync.Mutex
 	// used 的键是账号、自然日、用途与模型代理密钥编号；密钥编号为空表示访问令牌。
 	// 额度判定按账号合计，记账按密钥分开，与 PostgreSQL 实现同一口径（ADR-0063）。
-	used   map[[4]string]int64
+	used map[[4]string]int64
+	// split 记最近一次结算的原始用量，与 used 同键；只用于核对缓存命中统计。
+	split  map[[4]string]Usage
 	limits map[[2]string]int64
 	// instance 是实例当天的账本，按自然日记 token 数；它与 used 分开保存，删号
 	// 只清 used，已经占用的实例预算因此不会重新腾出来（ADR-0036）。
@@ -64,6 +68,7 @@ type MemoryQuota struct {
 func NewMemoryQuota() *MemoryQuota {
 	return &MemoryQuota{
 		used:     map[[4]string]int64{},
+		split:    map[[4]string]Usage{},
 		limits:   map[[2]string]int64{},
 		instance: map[string]int64{},
 	}
@@ -131,12 +136,15 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	return reserved, nil
 }
 
-func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64) error {
+func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// 缓存命中的拆分与 PostgreSQL 的 llm_usage 一样按密钥分行记，内存实现里
+	// 单独存一份，供本地联调与测试核对；额度判定只看计费后的总量。
+	m.split[[4]string{userID, day, string(kind), keyID}] = usage
 	if actual == reserved {
 		return nil
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	key := [4]string{userID, day, string(kind), keyID}
 	used := m.used[key] + actual - reserved
 	if used < 0 {
@@ -151,6 +159,15 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 	}
 	m.instance[day] = instance
 	return nil
+}
+
+// Split 返回账号当天某类模型最近一次结算记录下来的原始用量，只为核对缓存命中
+// 的统计口径；生产走 PostgreSQL，那里的拆分按天累加，这里只留最近一条。
+func (m *MemoryQuota) Split(userID, day string, kind Kind) Usage {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v := m.split[[4]string{userID, day, string(kind), ""}]
+	return v
 }
 
 func (m *MemoryQuota) InstanceUsed(_ context.Context, day string) (int64, error) {

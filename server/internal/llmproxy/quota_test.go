@@ -39,13 +39,13 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	}
 
 	// 实际用量超过预留时补记差额，少于预留时退回。
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 60, 90); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 60, 90, Usage{}); err != nil {
 		t.Fatalf("settle 补记: %v", err)
 	}
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 130 {
 		t.Fatalf("实际超过预留后用量应为 130，得到 %d", used)
 	}
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 40, 10); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 40, 10, Usage{}); err != nil {
 		t.Fatalf("settle 退回: %v", err)
 	}
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 100 {
@@ -67,7 +67,7 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	}
 
 	// 没有预留行时结算异常参数不会写出负用量。
-	if err := q.Settle(ctx, "u3", day, KindChat, "", 5, 0); err != nil {
+	if err := q.Settle(ctx, "u3", day, KindChat, "", 5, 0, Usage{}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, _ := q.Used(ctx, "u3", day, KindChat); used != 0 {
@@ -123,7 +123,7 @@ func TestMemoryQuotaInstanceBudget(t *testing.T) {
 	}
 
 	// 结算退回 30，实例预算重新有 30 可用。
-	if err := q.Settle(ctx, "u2", day, KindEmbedding, "", 50, 20); err != nil {
+	if err := q.Settle(ctx, "u2", day, KindEmbedding, "", 50, 20, Usage{}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, _ := q.InstanceUsed(ctx, day); used != 220 {

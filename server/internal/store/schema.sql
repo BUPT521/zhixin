@@ -198,22 +198,28 @@ CREATE TABLE backup (
 );
 CREATE INDEX backup_user_created ON backup(user_id, created_at DESC);
 
--- 模型代理用量：只记 token 数，不记请求与回答正文。聊天与嵌入分开计，
--- 各有各的每日额度（ADR-0029）。api_key_id 记录这次调用用的是哪把模型代理密钥，
--- 用访问令牌调用时是空字符串；它不是外键，撤销或清理密钥行不会带走已经发生的
--- 用量（ADR-0063）。
+-- 模型代理用量：不记请求与回答正文。聊天与嵌入分开计，各有各的每日额度
+-- （ADR-0029）。api_key_id 记录这次调用用的是哪把模型代理密钥，用访问令牌调用
+-- 时是空字符串；它不是外键，撤销或清理密钥行不会带走已经发生的用量（ADR-0063）。
+--
+-- tokens 是计费 token：聊天按缓存命中折算（未命中输入 1、命中输入 1/50、输出 4），
+-- 额度判定与已购余额都按它扣；input_tokens 与 cached_tokens 是上游报告的原始
+-- 输入量与其中命中缓存的部分，只用于统计命中率，不参与扣减。嵌入没有缓存语义，
+-- 三个数一致累加。折算口径见 server/internal/llmproxy/billing.go。
 CREATE TABLE llm_usage (
-  user_id    TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  day        DATE NOT NULL,                     -- ZHIXIN_TIMEZONE 下的自然日
-  kind       TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'embedding')),
-  api_key_id TEXT NOT NULL DEFAULT '',
-  tokens     BIGINT NOT NULL DEFAULT 0,
+  user_id       TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day           DATE NOT NULL,                  -- ZHIXIN_TIMEZONE 下的自然日
+  kind          TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'embedding')),
+  api_key_id    TEXT NOT NULL DEFAULT '',
+  tokens        BIGINT NOT NULL DEFAULT 0,      -- 计费 token
+  input_tokens  BIGINT NOT NULL DEFAULT 0,      -- 上游报告的输入量
+  cached_tokens BIGINT NOT NULL DEFAULT 0,      -- 其中命中缓存的部分
   PRIMARY KEY (user_id, day, kind, api_key_id)
 );
 
--- 实例当天的模型用量：只有自然日与 token 数，不与账号关联，删号与清空云端数据
--- 都不会减少它。实例日预算据此判断，删号因此不会把已经发生的提供方费用重新变成
--- 可用额度（ADR-0036）。
+-- 实例当天的模型用量：只有自然日与计费 token 数，不与账号关联，删号与清空云端
+-- 数据都不会减少它。实例日预算据此判断，删号因此不会把已经发生的提供方费用重新
+-- 变成可用额度（ADR-0036）。
 CREATE TABLE llm_instance_usage (
   day     DATE PRIMARY KEY,                     -- ZHIXIN_TIMEZONE 下的自然日
   tokens  BIGINT NOT NULL DEFAULT 0

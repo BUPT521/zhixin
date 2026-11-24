@@ -286,7 +286,7 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	if day.Chat.Attempts != 3 || day.Chat.FirstAttempts != 2 || day.Chat.FailoverAttempts != 1 ||
 		day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
 		day.Chat.Tokens < day.Chat.EstimatedTokens || day.Embedding != (api.AdminUsageCounts{
-		Attempts: 1, FirstAttempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3,
+		Attempts: 1, FirstAttempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3, InputTokens: 10,
 	}) {
 		t.Fatalf("daily totals: %+v", day)
 	}

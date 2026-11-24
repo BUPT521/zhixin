@@ -39,13 +39,13 @@ func TestPostgresQuotaReserveAndSettle(t *testing.T) {
 	}
 
 	// 实际用量超过预留时补记差额，少于预留时退回。
-	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 60, 90); err != nil {
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 60, 90, llmproxy.Usage{}); err != nil {
 		t.Fatalf("settle 补记: %v", err)
 	}
 	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 130 {
 		t.Fatalf("实际超过预留后用量应为 130，得到 %d %v", used, err)
 	}
-	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 40, 10); err != nil {
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 40, 10, llmproxy.Usage{}); err != nil {
 		t.Fatalf("settle 退回: %v", err)
 	}
 	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 100 {
@@ -98,7 +98,7 @@ func TestPostgresQuotaInstanceBudget(t *testing.T) {
 	}
 
 	// 结算退回 30，实例预算重新有 30 可用。
-	if err := st.Settle(ctx, "u2", day, llmproxy.KindEmbedding, "", 50, 20); err != nil {
+	if err := st.Settle(ctx, "u2", day, llmproxy.KindEmbedding, "", 50, 20, llmproxy.Usage{}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, err := st.InstanceUsed(ctx, day); err != nil || used != 220 {
@@ -234,7 +234,7 @@ func TestPostgresQuotaAttributesUsageToKey(t *testing.T) {
 	}
 
 	// 结算落到这次预留所用的密钥那一行。
-	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "key-a", 100, 130); err != nil {
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "key-a", 100, 130, llmproxy.Usage{}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	var tokens int64

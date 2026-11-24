@@ -207,7 +207,7 @@ server/
 
 账号没有任何一种已验证登录方式时，聊天与嵌入请求均返回 403 `contact_unverified`，这个检查默认启用，开发联调时可通过 `ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT=0` 关闭。每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前返回 429。整个实例同时在途的请求还共用一份 `ZHIXIN_LLM_MAX_INSTANCE_BYTES` 的字节预算：请求体按声明长度的两倍（长度未知时按请求体上限）、非流式响应与嵌入请求按各自的上限在读进内存之前预留，占不到时同样回 429，实例内存因此不随账号数量上涨。聊天与检索查询按前台请求处理，材料导入、索引重建与补算按后台批次处理：客户端在嵌入请求上用 `X-Zhixin-Workload: batch` 标明后台批次，缺省与 `query` 都按前台处理。每个账号的后台请求最多占用并发上限减去 `ZHIXIN_LLM_FOREGROUND_RESERVED` 的名额、且至少保留一个，实例字节预算里后台批次最多占 `ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT`，其余留给前台；占不到容量时后台批次同样回 429，由客户端保留已完成的批次并稍后重试，前台请求因此不会被导入挤掉。非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按无效响应处理，流式响应的空闲时限与总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，两者都不超过本轮剩余预算，响应开始转发后，超时会中断当前来源并结束响应。账号的用途额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`；实例预算读的是 `llm_instance_usage` 里按自然日记的账本，删号与清空云端数据都不减少它，提供方已经计费的部分因此不会重新变成可用额度。最后一次上游尝试返回 429 时，代理按 429 `rate_limited` 返回并原样转出上游的 `Retry-After`，客户端据此提示稍后重试；其余上游拒绝仍按 `upstream_failed` 处理，两者都不带上游响应正文。
 
-聊天与嵌入各有一份每日额度，默认分别取 `ZHIXIN_LLM_DAILY_TOKENS` 与 `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS`，账号的用量按自然日、用途与这次调用所用的模型代理密钥分开记在 `llm_usage`（用访问令牌调用记空编号），额度判定与 `GET /v1/llm/quota` 的展示取账号合计，实例当天的合计另记一份在 `llm_instance_usage`，两份在同一个事务里更新，删号只清账号那一份。嵌入的提供方没有返回 `usage` 时按输入字数估算。需要单独调整某个账号时在 `llm_quota` 表里写一行，两列分别对应聊天与嵌入，为空的一列用默认值；下一次请求就按新数字判定，不用重启服务，删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 同时返回两类的用量与额度，429 的 `extra.kind` 表示请求用途，响应同时给出实例总用量与预算。额度调整是运营动作，下面的语句写在[运维手册](运维手册.md#5-常用操作)里：
+聊天与嵌入各有一份每日额度，默认分别取 `ZHIXIN_LLM_DAILY_TOKENS` 与 `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS`，账号的用量按自然日、用途与这次调用所用的模型代理密钥分开记在 `llm_usage`（用访问令牌调用记空编号），额度判定与 `GET /v1/llm/quota` 的展示取账号合计，实例当天的合计另记一份在 `llm_instance_usage`，两份在同一个事务里更新，删号只清账号那一份。聊天额度按计费 token 计：未命中缓存的输入 token 记 1，命中缓存的输入记 1/50，输出记 4，来源只报总量、说不出命中与否时按原始 token 记；权重取自上游的计价比例，拿不到输入拆分的请求因此不会被多扣四倍，取舍见 [ADR-0066](../docs/adr/0066-额度按缓存命中折算.md)。`llm_usage` 另记上游报告的原始输入量与其中命中缓存的部分，只用于统计命中率，不参与扣减。嵌入的提供方没有返回 `usage` 时按输入字数估算。需要单独调整某个账号时在 `llm_quota` 表里写一行，两列分别对应聊天与嵌入，为空的一列用默认值；下一次请求就按新数字判定，不用重启服务，删掉这一行回到默认值，删号时覆盖行随外键级联删除。`GET /v1/llm/quota` 同时返回两类的用量与额度，429 的 `extra.kind` 表示请求用途，响应同时给出实例总用量与预算。额度调整是运营动作，下面的语句写在[运维手册](运维手册.md#5-常用操作)里：
 
 ```sql
 -- 调高或新建一个账号的额度；只调一类时另一列写 NULL
@@ -424,7 +424,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_REGISTER_GLOBAL_RATE` | `0.05` | 注册的实例级上限（个/秒），与按来源地址的桶同时生效，换地址也不能把未验证账号灌满库 |
 | `ZHIXIN_REGISTER_GLOBAL_BURST` | `10` | 注册实例级上限的桶容量 |
 | `ZHIXIN_UNVERIFIED_KEEP_DAYS` | `7` | 没有任何已验证登录方式的账号保留天数，超过之后由每日清理删除，释放联系方式与账号行 |
-| `ZHIXIN_LLM_DAILY_TOKENS` | `200000` | 每个账号每日聊天 token 额度，也是 `llm_quota.daily_tokens` 为空时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4） |
+| `ZHIXIN_LLM_DAILY_TOKENS` | `320000` | 每个账号每日聊天额度，单位是计费 token（输出按四倍、命中缓存的输入按 1/50 折算，见[模型代理](#模型代理)），也是 `llm_quota.daily_tokens` 为空时的默认值；公测免费，数字按内测用量调整（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D4）。改造前是 200000 个原始 token，按输入输出四比一的常见比例折合约 320000 个计费 token，因此同步调整 |
 | `ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS` | `2000000` | 每个账号每日嵌入 token 额度，也是 `llm_quota.embedding_daily_tokens` 为空时的默认值；占位数字，待内测用量出来再定 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
 | `ZHIXIN_LLM_MAX_INSTANCE_BYTES` | `536870912` | 整个实例同时在途的托管请求可占用的内存，按字节计；输出上限放大到 32768 token 之后从 256 MiB 提到 512 MiB（[ADR-0055](../docs/adr/0055-模型调用协议与上限统一.md)） |
@@ -438,7 +438,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_ADMIN_RATE` | `0.05` | 管理令牌校验失败按来源地址的补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_ADMIN_BURST` | `5` | 管理令牌校验失败的桶容量 |
 | `ZHIXIN_SECRET_KEY` | 空 | 加密来源 key 的 32 字节密钥（base64）；打开后台并使用数据库时必填 |
-| `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` | `20000000` | 整个实例一天的总 token 预算，用尽之后所有托管请求都返回 429 |
+| `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` | `32000000` | 整个实例一天的总预算，单位与账号额度相同，都是计费 token；用尽之后所有托管请求都返回 429。改造前是 20000000 个原始 token，同步调整的原因同上 |
 | `ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT` | `1` | 设为 `1` 时没有任何已验证登录方式的账号不能使用托管额度，聊天与嵌入入口均返回 403 `contact_unverified` |
 | `ZHIXIN_LLM_CONCURRENT_PER_USER` | `4` | 同一账号同时进行的托管请求上限 |
 | `ZHIXIN_LLM_FOREGROUND_RESERVED` | `2` | 每个账号为聊天与检索查询保留的并发名额，后台批次只能用其余名额；后台至少保留一个，具体比例按并发走查调整 |

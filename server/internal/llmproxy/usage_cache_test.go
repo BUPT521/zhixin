@@ -40,16 +40,45 @@ func TestUsageInputDetails(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			input, cached := usageInput([]byte(tc.body))
-			if input != tc.input || cached != tc.cache {
-				t.Fatalf("input/cached = %d/%d, want %d/%d", input, cached, tc.input, tc.cache)
+			used := parseUsage([]byte(tc.body), KindChat)
+			if used.Input != tc.input || used.Cached != tc.cache {
+				t.Fatalf("input/cached = %d/%d, want %d/%d", used.Input, used.Cached, tc.input, tc.cache)
 			}
 		})
 	}
 
 	completion, amount := streamData([]byte(`{"type":"response.completed","response":{"usage":{"input_tokens":80,"input_tokens_details":{"cached_tokens":50},"output_tokens":20,"total_tokens":100}}}`))
-	if completion != responseCompleted || amount.tokens != 100 || amount.input != 80 || amount.cached != 50 {
+	if completion != responseCompleted || amount.Total() != 100 || amount.Input != 80 || amount.Cached != 50 {
 		t.Fatalf("流式用量解析不对：%v %+v", completion, amount)
+	}
+}
+
+// TestBilledTokens 守住计费 token 的折算口径：未命中输入记 1、命中输入记 1/50、
+// 输出记 4；来源没有报告输入拆分时退回按原始 token 记，不把未知的输入当成输出。
+func TestBilledTokens(t *testing.T) {
+	cases := []struct {
+		name string
+		used Usage
+		kind Kind
+		want int64
+	}{
+		{name: "全部未命中", used: Usage{Input: 1_000_000}, want: 1_000_000},
+		{name: "全部命中", used: Usage{Input: 1_000_000, Cached: 1_000_000}, want: 20_000},
+		{name: "一半命中", used: Usage{Input: 1_000_000, Cached: 500_000}, want: 510_000},
+		{name: "输出按四倍", used: Usage{Input: 1_000_000, Output: 250_000}, want: 2_000_000},
+		{name: "没有输入拆分时按原始计", used: Usage{Output: 900_000}, want: 900_000},
+		{name: "嵌入按原始计", used: Usage{Input: 700_000}, kind: KindEmbedding, want: 700_000},
+		{name: "命中量超过输入量时截断", used: Usage{Input: 100, Cached: 500}, want: 2},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.used.Billed(tc.kind); got != tc.want {
+				t.Fatalf("Billed = %d, want %d", got, tc.want)
+			}
+		})
+	}
+	if got := (Usage{Input: 1_000, Output: 1_000}).reserve(KindChat); got != 5_000 {
+		t.Fatalf("预留估算 = %d, want 5000", got)
 	}
 }
 

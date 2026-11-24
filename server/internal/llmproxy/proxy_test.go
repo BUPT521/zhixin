@@ -53,7 +53,9 @@ type testEnv struct {
 
 func baseConfig() config.LLMConfig {
 	return config.LLMConfig{
-		DailyTokens:          10000,
+		// 聊天额度按计费 token 计：输出按四倍折算、命中缓存按 1/50。一次预留
+		// （输出上限 4096 折算后约 16k）就比改造前的 10000 大，这里留出余量。
+		DailyTokens:          65536,
 		EmbeddingDailyTokens: 10000,
 		MaxRequestBytes:      1 << 20,
 		EmbeddingMaxInputs:   8,
@@ -143,7 +145,7 @@ func TestHandlerLLMProxy(t *testing.T) {
 
 	// 一次请求按请求字节加默认输出上限预留，额度 8400 够第一次。
 	cfg := baseConfig()
-	cfg.DailyTokens = 8400
+	cfg.DailyTokens = 65536
 	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "up", upstream.URL, "sk-server")
 		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
@@ -255,7 +257,7 @@ func TestHandlerQuotaOverride(t *testing.T) {
 	defer upstream.Close()
 
 	cfg := baseConfig()
-	cfg.DailyTokens = 8400
+	cfg.DailyTokens = 65536
 	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "up", upstream.URL, "sk-server")
 		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
@@ -378,7 +380,7 @@ func TestChatFailsOverToNextSource(t *testing.T) {
 	}
 	token := tokens.AccessToken
 	// 四次请求都按默认输出上限预留，额度要够整轮失败重试。
-	env.quota.SetDailyLimit(tokens.UserID, 25000)
+	env.quota.SetDailyLimit(tokens.UserID, 200000)
 	chat := map[string]any{"model": "zhixin-chat", "input": []any{}}
 
 	for i := range 3 {
@@ -999,7 +1001,7 @@ func TestHandlerConcurrencyLimit(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, proxy := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:     10000,
+		DailyTokens:     65536,
 		MaxRequestBytes: 1 << 20,
 	}, upstream.URL)
 	proxy.SetConcurrencyLimit(1)
@@ -1054,7 +1056,7 @@ func TestHandlerInstanceMemoryBudget(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:      10000,
+		DailyTokens:      65536,
 		MaxRequestBytes:  1 << 20,
 		MaxResponseBytes: 1 << 20,
 		MaxInstanceBytes: 4096,
@@ -1100,7 +1102,7 @@ func TestHandlerRequiresVerifiedContact(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, proxy := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:            10000,
+		DailyTokens:            65536,
 		MaxRequestBytes:        1 << 20,
 		RequireVerifiedContact: true,
 	}, upstream.URL)
@@ -1161,7 +1163,7 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:     10000,
+		DailyTokens:     65536,
 		MaxRequestBytes: 1 << 20,
 	}, upstream.URL)
 	token := signIn(t, authSvc, "settle@b.cn")
@@ -1223,7 +1225,7 @@ func TestHandlerQuotaExceededBudget(t *testing.T) {
 		defer upstream.Close()
 
 		c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-			DailyTokens:         1000,
+			DailyTokens:         65536,
 			InstanceDailyTokens: 20,
 			MaxRequestBytes:     1 << 20,
 		}, upstream.URL)
@@ -1254,7 +1256,7 @@ func TestHandlerRejectsOversizedResponse(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:      10000,
+		DailyTokens:      65536,
 		MaxRequestBytes:  1 << 20,
 		MaxResponseBytes: 64,
 	}, upstream.URL)
@@ -1288,7 +1290,7 @@ func TestHandlerStreamIdleTimeout(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:       10000,
+		DailyTokens:       65536,
 		MaxRequestBytes:   1 << 20,
 		StreamIdleTimeout: 100 * time.Millisecond,
 	}, upstream.URL)
@@ -1339,7 +1341,7 @@ func TestHandlerStreamTotalTimeout(t *testing.T) {
 	defer upstream.Close()
 
 	c, authSvc, _, _ := newHardeningTestServer(t, config.LLMConfig{
-		DailyTokens:        10000,
+		DailyTokens:        65536,
 		MaxRequestBytes:    1 << 20,
 		StreamIdleTimeout:  5 * time.Second,
 		StreamTotalTimeout: 150 * time.Millisecond,

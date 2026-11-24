@@ -20,7 +20,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Addr != ":8080" || cfg.AccessTTL != time.Hour || cfg.RefreshTTL != 720*time.Hour {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
-	if cfg.LLM.DailyTokens != 200000 || cfg.LLM.MaxAttempts != 3 {
+	if cfg.LLM.DailyTokens != 320000 || cfg.LLM.MaxAttempts != 3 {
 		t.Fatalf("unexpected llm defaults: %+v", cfg.LLM)
 	}
 }

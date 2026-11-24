@@ -152,11 +152,13 @@ type LlmRouteUsage struct {
 }
 
 type LlmUsage struct {
-	UserID   string
-	Day      pgtype.Date
-	Kind     string
-	ApiKeyID string
-	Tokens   int64
+	UserID       string
+	Day          pgtype.Date
+	Kind         string
+	ApiKeyID     string
+	Tokens       int64
+	InputTokens  int64
+	CachedTokens int64
 }
 
 type ModelQuotaPaidUsage struct {

@@ -120,11 +120,12 @@ func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Da
 	return used, nil
 }
 
-// Settle 按实际用量调整预留；差额为 0 时不写库。账号用量与实例账本在同一个事务
-// 里改，任何一步失败都整体回滚，两边的数字不会各写一半。
-func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, reserved, actual int64) error {
+// Settle 按实际用量调整预留；差额为 0 时只记统计用的拆分，不写额度。账号用量与
+// 实例账本在同一个事务里改，任何一步失败都整体回滚，两边的数字不会各写一半。
+// reserved 与 actual 是计费 token，usage 是上游报告的原始拆分。
+func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, reserved, actual int64, usage llmproxy.Usage) error {
 	delta := actual - reserved
-	if delta == 0 {
+	if delta == 0 && usage.Total() == 0 {
 		return nil
 	}
 	date, err := pgDate(day)
@@ -143,7 +144,8 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 		}
 	}
 	if err := q.SettleTokens(ctx, db.SettleTokensParams{
-		UserID: userID, Day: date, Kind: string(kind), ApiKeyID: keyID, Delta: delta,
+		UserID: userID, Day: date, Kind: string(kind), ApiKeyID: keyID,
+		Delta: delta, InputTokens: usage.Input, CachedTokens: usage.Cached,
 	}); err != nil {
 		return fmt.Errorf("pg: 结算额度失败: %w", err)
 	}

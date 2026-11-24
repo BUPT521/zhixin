@@ -66,7 +66,7 @@ func TestPostgresPurchaseCreditsOnceAndPaysForChatOnly(t *testing.T) {
 	assertBalance(50)
 	reserve(day, llmproxy.KindChat, 40, 40)
 	assertBalance(30)
-	if err := st.Settle(ctx, "buyer", day, llmproxy.KindChat, "", 40, 25); err != nil {
+	if err := st.Settle(ctx, "buyer", day, llmproxy.KindChat, "", 40, 25, llmproxy.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	assertBalance(45)
@@ -74,7 +74,7 @@ func TestPostgresPurchaseCreditsOnceAndPaysForChatOnly(t *testing.T) {
 	if _, err := st.Reserve(ctx, "buyer", day, llmproxy.KindChat, "", 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
 		t.Fatalf("empty wallet should give quota exceeded: %v", err)
 	}
-	if err := st.Settle(ctx, "buyer", day, llmproxy.KindChat, "", 45, 10); err != nil {
+	if err := st.Settle(ctx, "buyer", day, llmproxy.KindChat, "", 45, 10, llmproxy.Usage{}); err != nil {
 		t.Fatal(err)
 	}
 	assertBalance(35)

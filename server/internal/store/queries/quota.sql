@@ -27,14 +27,23 @@ DO UPDATE SET tokens = GREATEST(llm_instance_usage.tokens + sqlc.arg(delta)::big
 -- 写好，这里仍然用 upsert，重复结算或异常顺序都不会写坏数据；插入与更新两个分支都
 -- 把结果限在 0 以上，异常参数也不会留下负用量。行按签发这次调用的密钥分开记，
 -- api_key_id 为空字符串表示访问令牌（ADR-0063）。
+--
+-- tokens 是计费 token，input_tokens 与 cached_tokens 是上游报告的原始输入量与
+-- 其中命中缓存的部分：前者参与额度判定，后两者只为统计命中率，所以它们同样按
+-- 差额累加。差额为 0 时调用方也会走这里，好把这次调用的拆分记下来。
 -- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, input_tokens, cached_tokens)
 VALUES (
   sqlc.arg(user_id),
   sqlc.arg(day)::date,
   sqlc.arg(kind),
   sqlc.arg(api_key_id),
-  GREATEST(sqlc.arg(delta)::bigint, 0)
+  GREATEST(sqlc.arg(delta)::bigint, 0),
+  GREATEST(sqlc.arg(input_tokens)::bigint, 0),
+  GREATEST(sqlc.arg(cached_tokens)::bigint, 0)
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
-DO UPDATE SET tokens = GREATEST(llm_usage.tokens + sqlc.arg(delta)::bigint, 0);
+DO UPDATE SET
+  tokens = GREATEST(llm_usage.tokens + sqlc.arg(delta)::bigint, 0),
+  input_tokens = GREATEST(llm_usage.input_tokens + sqlc.arg(input_tokens)::bigint, 0),
+  cached_tokens = GREATEST(llm_usage.cached_tokens + sqlc.arg(cached_tokens)::bigint, 0);

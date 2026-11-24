@@ -289,7 +289,7 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 	wg.Wait()
 	res := embedResult{route: rt}
 	for _, o := range outs {
-		res.usage.tokens += o.tokens
+		res.usage.usage.Input += o.tokens
 		res.usage.estimated += o.estimated
 		res.reached = res.reached || (o.resp.status != 0 && o.resp.status != http.StatusUnauthorized)
 	}
@@ -348,12 +348,13 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 		}
 	}
 	res.status = outs[0].resp.status
-	body := renderEmbeddings(m.Name, merged, res.usage.tokens)
+	body := renderEmbeddings(m.Name, merged, res.usage.usage.Total())
 	if p.cfg.MaxResponseBytes > 0 && int64(len(body)) > p.cfg.MaxResponseBytes {
 		res.err = errResponseTooLarge
 		return res, true
 	}
 	res.usage.success = true
+	res.usage.unknown = res.usage.usage.Total() <= 0
 	res.body, res.dimensions, res.vectors = body, dims, merged
 	return res, false
 }
@@ -399,7 +400,7 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 	if err != nil {
 		return chunkOut{resp: rawResponse{status: resp.StatusCode}, err: err, tokens: estimate, estimated: estimate}
 	}
-	used := usageTokens(b, KindEmbedding)
+	used := parseUsage(b, KindEmbedding).Total()
 	if used <= 0 {
 		return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: estimate, estimated: estimate}
 	}
