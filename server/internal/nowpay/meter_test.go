@@ -161,16 +161,23 @@ func TestInsufficientPointsIsMarkedFailedForTheNextSettlement(t *testing.T) {
 	}
 }
 
-func TestResumeQueuesUnsettledChargesWithoutBlocking(t *testing.T) {
-	ledger := &fakeLedger{unsettled: []Charge{{ID: "nc_1", UserID: "user_1", Points: 2}}}
+func TestResumeRetriesPendingAndOnlyRefreshesProcessing(t *testing.T) {
+	ledger := &fakeLedger{unsettled: []Charge{
+		{ID: "nc_1", UserID: "user_1", Points: 2, Status: StatusPending},
+		{ID: "nc_2", UserID: "user_1", Points: 3, Status: StatusProcessing},
+	}}
 	meter := newTestMeter(t, ledger, &fakeCaller{})
 	meter.Resume(context.Background(), "user_1")
-	if len(meter.queue) != 1 {
+	if len(meter.queue) != 2 {
 		t.Fatalf("待确认流水应排进队列，实际队列 %d", len(meter.queue))
 	}
-	next := <-meter.queue
-	if next.verify {
-		t.Fatal("补查走 quota.refresh，不是重新核销")
+	// pending 说明上一次可能没到支付宝，按原参数重试核销才是幂等的；processing 已经
+	// 发出过，只查结果。
+	if first := <-meter.queue; !first.verify {
+		t.Fatal("pending 流水应重试核销")
+	}
+	if second := <-meter.queue; second.verify {
+		t.Fatal("processing 流水只查结果，不重新核销")
 	}
 }
 

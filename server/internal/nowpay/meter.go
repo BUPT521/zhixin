@@ -122,8 +122,10 @@ func (m *Meter) Record(ctx context.Context, userID, day string, chargeableTokens
 	m.enqueue(job{charge: reserved, verify: true})
 }
 
-// Resume 把还没有确认结果的流水排进队列，用原请求号查询。查询失败不影响这一轮
-// 请求：流水留在原状态，下一轮再查。
+// Resume 把还没有确认结果的流水排进队列：pengding 的用原参数重试核销，processing
+// 的只查结果。重试核销带原请求号，支付宝按幂等处理，不会重复扣；而只查结果的流量
+// 在“上一次请求根本没到”时永远查不到记录，所以两种状态分开处理。查询失败不影响这
+// 一轮请求：流水留在原状态，下一轮再查。
 func (m *Meter) Resume(ctx context.Context, userID string) {
 	charges, err := m.ledger.Unsettled(ctx, userID, 4)
 	if err != nil {
@@ -131,7 +133,7 @@ func (m *Meter) Resume(ctx context.Context, userID string) {
 		return
 	}
 	for _, charge := range charges {
-		m.enqueue(job{charge: charge})
+		m.enqueue(job{charge: charge, verify: charge.Status == StatusPending})
 	}
 }
 
