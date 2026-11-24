@@ -84,7 +84,12 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 |---|---|---|
 | `api_key` | 模型代理的接入密钥，给用户自己的脚本或第三方工具调用 `/v1/llm` 下的模型接口，不参与登录，也不持有学习数据；与访问令牌共用 Bearer 头，靠 `zx_` 前缀区分 | `user_id` 外键级联删除，`key_hash` 唯一且只存整个密钥的 SHA-256，`prefix` 是前 11 位用于展示，`revoked_at` 记录撤销并保留这一行，撤销超过 30 天的行由每日清理删除，`last_used_at` 按十分钟粒度更新；没有有效期列，每账号最多 20 把有效密钥，删号时随外键级联删除 |
 
-增加支付宝支付的三张表后，当前服务端共 28 张表，购买数据的归属和用途见[支付宝 App 收款](#支付宝-app-收款)。
+增加支付宝支付的三张表后，服务端共 28 张表；[ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md) 又增加 `nowpay_charge` 与 `nowpay_purchase` 两张，现在是 30 张表，购买数据的归属与用途见[即刻收收款](#即刻收收款)。
+
+| 表 | 用途 | 关键列与约束 |
+|---|---|---|
+| `nowpay_charge` | 即刻收的积分核销流水，一笔对话结算之后按差额申请一个积分数；`id` 同时是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试 | `user_id` 外键可空，删号时解除关联而不删行；`day` 是记账自然日，`points` 与 `billed_tokens` 是这次申请的积分与折算前的计费 token 数，`status` 的 check 约束为 `pending`、`processing`、`succeeded`、`failed`；`(user_id, day)` 支撑当天已申请量的汇总，部分索引 `(user_id, created_at) WHERE status IN ('pending','processing')` 支撑补查 |
+| `nowpay_purchase` | 购买入口请求，同一账号同一档位在链接有效期内复用原链接，不重复创单 | `out_request_no` 主键，`user_id` 外键可空，删号时解除关联；`sku_id`、`purchase_url` 与 `expires_at`；`(user_id, created_at DESC) WHERE user_id IS NOT NULL` 支撑取最近一次仍在有效期内的入口 |
 
 ## 目录
 
@@ -224,22 +229,34 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 用户自己的脚本或第三方工具不保存登录凭据，改用模型代理密钥（[ADR-0063](../docs/adr/0063-模型代理接入密钥.md)）。用登录令牌调 `POST /v1/me/api-keys`（请求体 `{"name": "脚本", "password": "当前密码"}`）签发一把：签发只凭访问令牌就能换一把不过期的密钥，所以与删号、清空云端数据一样要再提交一次当前密码，密码错误返回 401，连续输错超过按账号的失败预算时返回 429。响应里的 `key` 形如 `zx_` 加 32 位随机字符再加 4 位校验码，共 39 个字符，明文只出现这一次，库里只存 SHA-256；`GET /v1/me/api-keys` 列出编号、名字、前缀、是否撤销、创建时间与最近使用时间，`DELETE /v1/me/api-keys/{id}` 撤销一把，`DELETE /v1/me/api-keys` 撤销全部，撤销之后立刻失效，重复撤销单把回 404。密钥放在 `Authorization: Bearer <key>` 里，调用方式与访问令牌相同，但作用域只有 `/v1/llm` 下的五条模型接口，访问同步、备份、附件与账号管理一律回 403 `key_scope_denied`。额度、并发、实例预算与“登录方式已验证”的门槛都按账号算，密钥不单独记录额度，也没有单把密钥的额度或速率；密钥没有有效期，只能显式撤销，每账号最多保留 20 把有效密钥，上限在存储层与写入一起判定，并发签发不会突破，撤销超过 30 天的行由每日清理删除；重设密码与刷新令牌重放检测都会撤销这个账号的全部密钥，删号时随外键级联删除，用量按 `llm_usage` 的密钥列分开记，最近使用时间按十分钟粒度写入、进程内也跳过这十分钟内的重复写库，因此有十分钟的滞后。只用密钥的请求不计入账号日活。工具收到 401 时应当停止，不要照着客户端的方式刷新令牌。`api_key` 是新表，第一套实例上线这条改动时按 [ADR-0057](../docs/adr/0057-服务端改表清空重建.md) 在计划内停服重建库，重建会清空现有账号。
 
-## 支付宝 App 收款
+## 即刻收收款
 
-Android 的聊天额度包使用 Vibe Pay 的移动应用收款，服务端生成 `alipay.trade.app.pay` 的签名串，通过异步通知和 `alipay.trade.query` 确认到账。`model_quota_purchase` 保存订单、报价及环境，`model_quota_wallet` 保存账号在相应环境中的可用余额，`model_quota_paid_usage` 保存每日计入已购余额的 token。三个表的 DDL 见 [schema.sql](internal/store/schema.sql)，入账规则见 [ADR-0065](../docs/adr/0065-支付宝购买聊天模型额度.md)。
+聊天额度按支付宝「即刻收」直连模式的积分包卖出，见 [ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md)。商品、收费模式、档位与价格都在「即刻收」小程序里配置，审核发布之后把商品详情页的 `out_product_id` 填进配置；应用不能自己定价，也不能生成商品 ID。网关、RSA2 签名与公共参数与 APP 支付完全一样，所以服务端复用同一个支付宝应用的应用凭证，`internal/payment` 的签名与验签是唯一实现，`internal/nowpay` 只按接口名提交 `biz_content`。
+
+服务端用到五个接口：`charge.query` 查收费能力与档位，`quota.query` 查积分余额，`purchase.create` 取托管购买页链接，`quota.verify` 核销，`quota.refresh` 用原请求号查询核销结果。买断与时长包要用的 `purchase.consult` 没有接，因为商品按积分包配置。
+
+契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与遗留余额，`POST /v1/me/model-quota-purchases` 取购买链接，`GET /v1/me/model-quota-purchases/quota` 只查余额。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；`internal/payment` 的通知与查单处理器、Android 侧的 SDK 通道都保留着，需要切回 APP 支付时接线即可。
+
+`nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，同一账号同一档位在链接有效期内复用。两张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
+
+核销在交付之后。每轮对话结算提交之后，服务端按当天用量算出应当由积分承担的计费 token 数（先减免费额度，再减 `model_quota_wallet` 里遗留的已购用量），按“一个积分等于 `ZHIXIN_NOWPAY_TOKENS_PER_POINT` 个计费 token”向上取整，差额写一条 `pending` 流水并排进核销队列。`SUCCEEDED` 记成功；`FAILED` 与 `NOW_PAY_QUOTA_INSUFFICIENT` 记失败，下一次结算重新算差额；`PROCESSING`、超时与网关错误保持原状态，下一轮对话开工前用 `quota.refresh` 补查。核销不提供撤销与返还，交付失败时只能由下一次结算的差额或人工处理。
 
 | 环境变量 | 用途 |
 |---|---|
-| `ZHIXIN_ALIPAY_MODE` | `sandbox`（默认）或 `production` |
-| `ZHIXIN_ALIPAY_APP_ID` | 支付宝应用 ID |
+| `ZHIXIN_ALIPAY_MODE` | `sandbox`（默认）或 `production`；即刻收只有正式网关，联调时保持 `production` |
+| `ZHIXIN_ALIPAY_APP_ID` | 支付宝应用 ID，与即刻收商品属于同一商户 |
 | `ZHIXIN_ALIPAY_SELLER_ID` | 与该应用配套的收款方支付宝用户 ID |
 | `ZHIXIN_ALIPAY_PRIVATE_KEY` | RSA2 应用私钥，支持 PEM 或 Base64 DER |
 | `ZHIXIN_ALIPAY_PUBLIC_KEY` | 支付宝公钥，支持 PEM 或 Base64 DER |
-| `ZHIXIN_ALIPAY_NOTIFY_URL` | 支付宝可访问的 HTTPS 通知地址，路径为 `/v1/payments/alipay/notify` |
-| `ZHIXIN_ALIPAY_QUOTA_AMOUNT_FEN` | 单份售价，单位分 |
-| `ZHIXIN_ALIPAY_QUOTA_TOKENS` | 单份发放的聊天 token 数 |
+| `ZHIXIN_ALIPAY_NOTIFY_URL` | 支付宝可访问的 HTTPS 通知地址；APP 支付停售后只剩配置校验，切回时才用到 |
+| `ZHIXIN_ALIPAY_QUOTA_AMOUNT_FEN` | APP 支付的单份售价，单位分；停售时与下一项同时设 0 |
+| `ZHIXIN_ALIPAY_QUOTA_TOKENS` | APP 支付的单份发放量；设 0 表示停售新单，遗留余额继续可用 |
+| `ZHIXIN_NOWPAY_PRODUCT_ID` | 「即刻收」小程序里的商品 ID；为空表示不卖积分包 |
+| `ZHIXIN_NOWPAY_TOKENS_PER_POINT` | 一个积分覆盖的计费 token 数，默认 `1000` |
+| `ZHIXIN_NOWPAY_CALLBACK_URL` | 可选，购买页返回后的跳转地址，必须是 HTTPS；它不是到账通知 |
 
-在独立实例使用 PostgreSQL 空库，按本地运行章节建表，并在实例环境配置上述变量。价格与 token 数默认均为零，保留其他配置时可以暂停新售而继续确认旧单。沙箱 App ID、收款方 ID 和密钥取自同一个沙箱应用，安装支付宝沙箱版并使用沙箱买家登录，再在知新中用已验证邮箱的账号发起购买。核对取消后可以继续原订单、付款后到账、重复通知只发放一次以及回调延迟时主动查单能确认到账。正式开通前按 [ADR-0065](../docs/adr/0065-支付宝购买聊天模型额度.md#上线条件) 核对退款、对账和数据恢复。[支付宝 Vibe Pay 沙箱指引](https://aipay.alipay.com/products/vibe-pay)
+配置了商品 ID 时启动会检查 `nowpay_charge` 与 `nowpay_purchase` 两张表是否存在，缺表直接退出。在独立实例上先用增量语句建表，再改 `api.env` 并重启，核对 `/readyz` 返回 200。核对购买通道时用已验证邮箱的账号在真机上买一笔最小档位：`GET /v1/me/model-quota-purchases` 的 `balance_points` 增加，客户端回到前台后余额跟着刷新；再发一次对话，`nowpay_charge` 出现一条 `succeeded` 的流水，`quota.query` 的剩余积分按 `Usage.Billed` 折算后减少；同一轮重复发请求不会多扣，`PROCESSING` 时补查用的是同一行的 `id`。
+
 
 ## 管理后台
 
