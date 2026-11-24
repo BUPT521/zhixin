@@ -69,7 +69,6 @@ String buildBuddySystemPrompt(BuddyContext context) {
       truncateCodePoints(persona.text, personaTextLimit),
     ],
     '',
-    text.format('system.time', {'time': formatDateTime(context.now)}),
     text.format('system.goal', {
       'title': currentGoal?.title ?? text['system.goal_none'],
       'due': currentGoal?.dueDate == null
@@ -132,6 +131,14 @@ String buildBuddySystemPrompt(BuddyContext context) {
       );
     }
   }
+
+  // 稳定前缀到这里结束：指令、人格、讨论归属与本次材料都不随每次请求变化，
+  // 同一讨论的追问与工具步骤因此能复用上游已经处理过的这段前缀。当前时间与
+  // 之后的内容每次请求都可能不同，放在后面，前缀不受它们影响；划分见
+  // docs/模型调度与回答恢复实施方案.md 第 5 节。
+  lines
+    ..add('')
+    ..add(text.format('system.time', {'time': formatDateTime(context.now)}));
 
   if (context.conversationFocus?.trim().isNotEmpty == true) {
     lines
