@@ -66,7 +66,7 @@
     <div class="panel-head">
       <div class="panel-intro">
         <h1 class="panel-title">对外模型与路由</h1>
-        <p class="hint">请求按优先级从小到大尝试，同一优先级按权重分流，正在冷却的来源会留到最后再试。测试模型会按这个次序尝试备用路由，单条探测只调用所选路由。嵌入模型的多条路由必须使用同一个向量空间。</p>
+        <p class="hint">请求先尝试主用组，再按顺序尝试备用组。冷却中的来源留到最后。嵌入模型的多条路由必须使用同一个向量空间。</p>
         <p id="model-summary" class="summary" aria-live="polite"></p>
       </div>
       <div class="panel-actions">
@@ -247,13 +247,29 @@
         <div class="section-head">
           <div>
             <h3>路由</h3>
-            <p class="field-hint">按优先级从小到大尝试，同一优先级按权重分流；最多 16 条。探测只调用所选路由，测试模型按这个次序尝试备用路由。</p>
+            <p class="field-hint">同组有多条路由时按权重分流，最多配置 16 条路由。</p>
             <p class="field-hint emb-only" id="embedding-note">嵌入模型的各条路由必须产出同一个向量空间，服务端只核对维度。</p>
           </div>
           <button type="button" id="add-route" class="ghost">添加路由</button>
         </div>
         <div id="route-rows" class="route-edits"></div>
-        <p id="route-empty" class="empty-inline" hidden>还没有路由，至少需要一条才能保存。</p>
+        <section class="route-preview" aria-labelledby="route-preview-title">
+          <div class="route-preview-head">
+            <div>
+              <h3 id="route-preview-title">首选路由预览</h3>
+              <p class="field-hint">按最近读取的来源状态估算每条路由被首先尝试的概率。</p>
+            </div>
+            <label class="inline-field">预览状态
+              <select id="route-scenario">
+                <option value="current">当前状态</option>
+                <option value="primary">主用组来源冷却</option>
+                <option value="all">全部可用来源冷却</option>
+                <optgroup id="route-source-scenarios" label="单个来源冷却" hidden></optgroup>
+              </select>
+            </label>
+          </div>
+          <div id="route-preview-result" aria-live="polite"></div>
+        </section>
       </section>
       <p class="form-error" id="model-error" role="alert" hidden></p>
     </div>

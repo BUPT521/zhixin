@@ -509,6 +509,7 @@ const routeBadge = {
 const kindName = { chat: '聊天', embedding: '嵌入' };
 const kindList = ['chat', 'embedding'];
 const MAX_ROUTES = 16;
+const MAX_ROUTE_PRIORITY = 100;
 const modelFilter = { query: '', kind: 'all', attention: false };
 const quickBusy = new Set();
 
@@ -615,38 +616,64 @@ function renderModels() {
   }
 }
 
-// renderRouteList 按优先级分组显示路由：优先级数字小的先试，同组按权重分流。
-// 实际候选顺序在组内是随机的，冷却中的来源会整体排到最后，不在列表里排序。
-function renderRouteList(m) {
-  if (!m.routes.length) return el('span', { class: 'sub' }, '没有路由');
+function routeGroupName(index) {
+  return index === 0 ? '主用组' : `备用组 ${index}`;
+}
+
+function routeGroups(routes) {
   const groups = new Map();
-  for (const route of m.routes) {
+  for (const route of routes) {
     if (!groups.has(route.priority)) groups.set(route.priority, []);
     groups.get(route.priority).push(route);
   }
+  return [...groups].sort(([a], [b]) => a - b);
+}
+
+// 与 Router.candidates 一致，先按组尝试未冷却的路由，再按同样的组顺序尝试冷却路由。
+function candidateGroups(groups) {
+  return ['ready', 'cooling'].flatMap((state) => groups.map(({ name, routes }) => ({
+    name, state, routes: routes.filter((route) => route.state === state),
+  }))).filter((group) => group.routes.length);
+}
+
+function routeWeight(routes) {
+  return routes.reduce((total, route) => total + route.weight, 0);
+}
+
+function routeShare(value) {
+  return value > 0 && value < 0.001 ? '<0.1%' : percent.format(value);
+}
+
+function renderRouteList(m) {
+  if (!m.routes.length) return el('span', { class: 'sub' }, '没有路由');
+  const groups = routeGroups(m.routes).map(([, routes], index) => ({
+    name: routeGroupName(index), routes,
+  }));
+  const first = candidateGroups(groups)[0]?.routes || [];
+  const total = routeWeight(first);
   const out = [];
-  for (const priority of [...groups.keys()].sort((a, b) => a - b)) {
-    const group = groups.get(priority).sort((a, b) =>
+  for (const { name, routes } of groups) {
+    const ordered = [...routes].sort((a, b) =>
       a.provider_id.localeCompare(b.provider_id) || a.upstream_model.localeCompare(b.upstream_model));
-    const total = group.filter((r) => r.enabled).reduce((sum, r) => sum + r.weight, 0);
-    out.push(el('div', { class: 'route-group' }, group.length > 1
-      ? `优先级 ${priority} · 同组按权重分流`
-      : `优先级 ${priority}`));
-    for (const r of group) out.push(routeRow(m, r, group.length > 1 ? total : 0));
+    out.push(el('div', { class: 'route-group' }, name));
+    for (const route of ordered) {
+      const share = first.includes(route) ? route.weight / total : null;
+      out.push(routeRow(m, route, share));
+    }
   }
   return out;
 }
 
-function routeRow(m, r, groupWeight) {
-  const share = groupWeight && r.enabled && r.weight > 0 ? ` · 同组 ${percent.format(r.weight / groupWeight)}` : '';
-  const meta = [`权重 ${r.weight}${share}`];
+function routeRow(m, r, firstShare) {
+  const meta = [];
+  if (firstShare !== null) meta.push(`首选 ${routeShare(firstShare)}`);
   if (m.kind === 'embedding' && r.max_batch) meta.push(`每批 ${r.max_batch} 条`);
   const health = routeHealthText(r);
   return el('div', { class: 'route' + (r.state === 'ready' || r.state === 'cooling' ? '' : ' is-off') },
     el('div', { class: 'route-main' },
       el('span', { class: 'mono route-name', title: r.provider_id }, providerLabel(r.provider_id) + ' → ' + r.upstream_model),
       el('span', { class: 'badge ' + (routeBadge[r.state] || 'off') }, routeState[r.state] || r.state),
-      el('span', { class: 'route-meta' }, meta.join(' · ')),
+      meta.length ? el('span', { class: 'route-meta' }, meta.join(' · ')) : null,
       health ? el('span', { class: 'route-health', title: providerHealth(r.provider_id).last_error || '' }, health) : null,
     ),
     el('span', { class: 'route-ops' },
@@ -718,11 +745,16 @@ function toggleRoute(m, r) {
 $('#add-model').addEventListener('click', () => editModel(null));
 $('#refresh-models').addEventListener('click', refresh);
 $('#add-route').addEventListener('click', () => {
-  addRouteRow({});
-  $('#route-rows').lastElementChild?.querySelector('[name="provider_id"]')?.focus();
+  const row = addRouteRow({}, $('#route-rows').firstElementChild);
+  updateRouteControls();
+  row.querySelector('[name="provider_id"]').focus();
 });
 $('#model-form').elements.kind.addEventListener('change', syncKind);
-$('#model-form').addEventListener('input', () => clearError('model-error'));
+$('#model-form').addEventListener('input', (event) => {
+  clearError('model-error');
+  if (event.target.closest('#route-rows') || event.target.name === 'enabled') renderRoutePreview();
+});
+$('#route-scenario').addEventListener('change', renderRoutePreview);
 
 function syncKind() {
   const form = $('#model-form');
@@ -733,16 +765,43 @@ function syncKind() {
 
 let routeRowID = 0;
 
-function addRouteRow(route = {}) {
-  const rows = $('#route-rows');
-  if (rows.children.length >= MAX_ROUTES) {
-    toast(`最多 ${MAX_ROUTES} 条路由`);
-    return;
+function addRouteGroup(priority) {
+  const group = el('section', { class: 'route-edit-group', 'data-priority': priority },
+    el('h4', { class: 'route-edit-title' }),
+    el('div', { class: 'route-edit-members' }),
+    el('p', { class: 'field-hint route-edit-empty', hidden: true }, '主用组为空，保存后会从首个备用组开始尝试。'),
+  );
+  $('#route-rows').append(group);
+  return group;
+}
+
+function moveRoute(row, priority) {
+  const groups = [...$('#route-rows').children];
+  let group = groups.find((item) => item.dataset.priority === priority);
+  if (priority === 'new') {
+    let next = Number(groups.at(-1).dataset.priority) + 1;
+    if (next > MAX_ROUTE_PRIORITY) {
+      // 已用到最大编号时，按现有组顺序分配连续编号，给新增组留出位置。
+      groups.forEach((item, index) => { item.dataset.priority = index; });
+      next = groups.length;
+    }
+    group = addRouteGroup(next);
   }
+  const members = group.querySelector('.route-edit-members');
+  const next = [...members.children].find((member) => Number(member.dataset.position) > Number(row.dataset.position));
+  members.insertBefore(row, next || null);
+  updateRouteControls();
+  row.querySelector('[name="priority"]').focus();
+}
+
+function addRouteRow(route, group) {
   const suffix = ++routeRowID;
   const datalist = el('datalist', { id: 'upstream-names-' + suffix });
   const select = el('select', { name: 'provider_id', required: true },
     state.providers.map((p) => el('option', { value: p.id, selected: p.id === route.provider_id }, providerOption(p))));
+  if (route.provider_id && !state.providers.some((p) => p.id === route.provider_id)) {
+    select.append(el('option', { value: route.provider_id, selected: true }, `${route.provider_id}（来源缺失）`));
+  }
   const input = el('input', {
     name: 'upstream_model', required: true, maxlength: 128, list: datalist.id,
     value: route.upstream_model || '', placeholder: '例如 deepseek-chat、BAAI/bge-m3',
@@ -774,11 +833,11 @@ function addRouteRow(route = {}) {
       discover.textContent = label;
     }
   });
-  const priority = el('input', { name: 'priority', type: 'number', min: 0, max: 100, step: 1, inputmode: 'numeric', value: route.priority ?? 0 });
+  const priority = el('select', { name: 'priority', onchange: () => moveRoute(row, priority.value) });
   const weight = el('input', { name: 'weight', type: 'number', min: 1, max: 1000, step: 1, inputmode: 'numeric', value: route.weight ?? 1 });
   const batch = el('input', { name: 'max_batch', type: 'number', min: 0, max: 2048, step: 1, inputmode: 'numeric', value: route.max_batch ?? 0, title: '0 表示不拆分' });
   const enabled = el('input', { name: 'route_enabled', type: 'checkbox', checked: route.enabled ?? true });
-  const row = el('div', { class: 'route-edit' },
+  const row = el('div', { class: 'route-edit', 'data-position': suffix },
     el('label', { class: 'route-field field-provider' },
       el('span', { class: 'field-label' }, '来源'),
       select,
@@ -788,13 +847,13 @@ function addRouteRow(route = {}) {
       el('div', { class: 'input-action' }, input, discover),
       datalist,
     ),
-    el('label', { class: 'route-field field-num' },
-      el('span', { class: 'field-label' }, '优先级'),
+    el('label', { class: 'route-field field-group' },
+      el('span', { class: 'field-label' }, '路由组'),
       priority,
     ),
-    el('label', { class: 'route-field field-num' },
+    el('label', { class: 'route-field field-weight' },
       el('span', { class: 'field-label' }, '权重'),
-      weight,
+      el('span', { class: 'weight-input' }, weight, el('span', { class: 'field-hint route-config-share', 'aria-hidden': 'true' })),
     ),
     el('label', { class: 'route-field field-num emb-only' },
       el('span', { class: 'field-label' }, '每批条数'),
@@ -802,28 +861,120 @@ function addRouteRow(route = {}) {
     ),
     el('label', { class: 'check route-enabled' }, enabled, '启用'),
     el('button', { type: 'button', class: 'link danger route-remove', onclick: () => {
-      if ($('#route-rows').children.length <= 1) return;
       row.remove();
       updateRouteControls();
     } }, '移除'),
   );
-  rows.append(row);
-  syncKind();
-  updateRouteControls();
+  group.querySelector('.route-edit-members').append(row);
+  return row;
 }
 
 function updateRouteControls() {
-  const rows = [...$('#route-rows').children];
+  const groups = [...$('#route-rows').children].filter((group, index) => {
+    if (index === 0 || group.querySelector('.route-edit')) return true;
+    group.remove();
+    return false;
+  });
+  const rows = [...$('#route-rows').querySelectorAll('.route-edit')];
   const add = $('#add-route');
   add.disabled = rows.length >= MAX_ROUTES;
   add.textContent = rows.length >= MAX_ROUTES ? `已达 ${MAX_ROUTES} 条上限` : '添加路由';
-  for (const row of rows) {
-    const remove = row.querySelector('.route-remove');
-    remove.disabled = rows.length <= 1;
-    remove.title = rows.length <= 1 ? '至少保留一条路由' : '移除这条路由';
+  for (const [index, group] of groups.entries()) {
+    const members = group.querySelectorAll('.route-edit');
+    group.querySelector('.route-edit-title').textContent = routeGroupName(index);
+    group.querySelector('.route-edit-empty').hidden = members.length > 0;
+    for (const row of members) {
+      const select = row.querySelector('[name="priority"]');
+      select.replaceChildren(...groups.map((item, i) => el('option', { value: item.dataset.priority }, routeGroupName(i))),
+        el('option', { value: 'new' }, '新建备用组'));
+      select.value = group.dataset.priority;
+      const single = members.length < 2;
+      const weight = row.querySelector('[name="weight"]');
+      if (single && !weight.validity.valid) weight.value = weight.defaultValue;
+      row.querySelector('.field-weight').hidden = single;
+      const remove = row.querySelector('.route-remove');
+      remove.disabled = rows.length <= 1;
+      remove.title = rows.length <= 1 ? '至少保留一条路由' : '移除这条路由';
+    }
   }
-  $('#route-empty').hidden = rows.length > 0;
   $('#model-route-count').textContent = rows.length ? `${rows.length} 条路由` : '';
+  syncKind();
+  renderRoutePreview();
+}
+
+function readRouteRow(row) {
+  const weight = row.querySelector('[name="weight"]');
+  return {
+    provider_id: row.querySelector('[name="provider_id"]').value,
+    upstream_model: row.querySelector('[name="upstream_model"]').value.trim(),
+    priority: Number(row.querySelector('[name="priority"]').value),
+    weight: weight.validity.valid ? Number(weight.value || 1) : NaN,
+    enabled: row.querySelector('[name="route_enabled"]').checked,
+  };
+}
+
+function renderRoutePreview() {
+  const modelEnabled = $('#model-form').elements.enabled.checked;
+  const providers = new Map(state.providers.map((provider) => [provider.id, provider]));
+  const groups = [...$('#route-rows').children].map((group, index) => {
+    const rows = [...group.querySelectorAll('.route-edit')];
+    const routes = rows.map(readRouteRow);
+    const total = routeWeight(routes.filter((route) => route.enabled));
+    for (const [i, route] of routes.entries()) {
+      rows[i].querySelector('.route-config-share').textContent = route.enabled && total > 0
+        ? `组内 ${routeShare(route.weight / total)}` : '';
+    }
+    return { name: routeGroupName(index), routes };
+  });
+  const scenarioSelect = $('#route-scenario');
+  const sourceOptions = $('#route-source-scenarios');
+  const selected = scenarioSelect.value;
+  const sourceIDs = new Set(groups.flatMap(({ routes }) => routes.filter((route) => route.enabled).map((route) => route.provider_id)));
+  sourceOptions.replaceChildren(...state.providers.filter((provider) =>
+    sourceIDs.has(provider.id) && provider.enabled && provider.health.state !== 'key_error',
+  ).map((provider) => el('option', { value: `source:${provider.id}` }, `${providerOption(provider)}冷却`)));
+  sourceOptions.hidden = !sourceOptions.children.length;
+  scenarioSelect.value = [...scenarioSelect.options].some((option) => option.value === selected) ? selected : 'current';
+  const scenario = scenarioSelect.value;
+  const primarySources = new Set(groups[0]?.routes.filter((route) => route.enabled).map((route) => route.provider_id));
+  for (const { routes } of groups) {
+    for (const route of routes) {
+      const provider = providers.get(route.provider_id);
+      const cooling = provider?.health.state === 'cooling' || scenario === 'all' || scenario === `source:${route.provider_id}` ||
+        (scenario === 'primary' && primarySources.has(route.provider_id));
+      route.state = modelEnabled && route.enabled && provider?.enabled && provider.health.state !== 'key_error'
+        ? (cooling ? 'cooling' : 'ready') : 'disabled';
+    }
+  }
+  const result = $('#route-preview-result');
+  const candidates = candidateGroups(groups);
+  if (candidates.length === 0) {
+    result.replaceChildren(el('p', { class: 'field-hint' }, modelEnabled ? '当前没有可尝试的路由。' : '模型停用后暂停路由。'));
+    return;
+  }
+  if (groups.some(({ routes }) => routes.some((route) => route.enabled && !route.upstream_model))) {
+    result.replaceChildren(el('p', { class: 'field-hint' }, '填写启用路由的来源侧模型名后即可预览。'));
+    return;
+  }
+  const first = candidates[0];
+  const total = routeWeight(first.routes);
+  if (!Number.isFinite(total)) {
+    result.replaceChildren(el('p', { class: 'field-hint warn' }, '请使用 1 到 1000 的整数作为权重。'));
+    return;
+  }
+  const order = candidates.map((group) => group.name + (group.state === 'cooling' ? '（冷却中）' : '')).join(' → ');
+  result.replaceChildren(
+    el('p', { class: 'field-hint' }, `候选组顺序 ${order}`),
+    el('ul', { class: 'route-preview-list' }, first.routes.map((route) => {
+      const name = `${providerLabel(route.provider_id)} → ${route.upstream_model}`;
+      const share = route.weight / total;
+      return el('li', {},
+        el('span', { class: 'route-preview-name' }, name),
+        el('progress', { max: 1, value: share, 'aria-hidden': 'true' }),
+        el('span', { class: 'route-preview-share' }, routeShare(share)),
+      );
+    })),
+  );
 }
 
 let editingModel = null;
@@ -846,8 +997,9 @@ function editModel(m, { copy = false } = {}) {
     : m ? '路由整体保存；改用途或向量维度会清理这个模型的嵌入缓存。'
         : '对外模型是客户端请求时使用的名字，路由决定请求发到哪个来源。';
   $('#route-rows').replaceChildren();
-  for (const route of m ? m.routes : [{}]) addRouteRow(route);
-  syncKind();
+  const routes = m?.routes.length ? m.routes : [{ priority: 0 }];
+  const groups = new Map(routeGroups(routes).map(([priority]) => [priority, addRouteGroup(priority)]));
+  for (const route of routes) addRouteRow(route, groups.get(route.priority));
   updateRouteControls();
   checkModelName();
   clearError('model-error');
@@ -881,25 +1033,18 @@ $('#model-form').addEventListener('submit', async (event) => {
   const f = form.elements;
   const name = f.name.value.trim();
   const kind = f.kind.value;
-  const rows = [...document.querySelectorAll('#route-rows .route-edit')];
+  const rows = [...document.querySelectorAll('#route-rows .route-edit')].sort((a, b) => a.dataset.position - b.dataset.position);
   if (!rows.length) {
     showError('model-error', '至少添加一条路由。', $('#add-route'));
     return;
   }
   const routes = [];
   for (const row of rows) {
-    const upstream = row.querySelector('[name="upstream_model"]').value.trim();
-    if (!upstream) {
+    const route = readRouteRow(row);
+    if (!route.upstream_model) {
       showError('model-error', '请填写每一条路由的来源侧模型名。', row.querySelector('[name="upstream_model"]'));
       return;
     }
-    const route = {
-      provider_id: row.querySelector('[name="provider_id"]').value,
-      upstream_model: upstream,
-      priority: Number(row.querySelector('[name="priority"]').value || 0),
-      weight: Number(row.querySelector('[name="weight"]').value || 1),
-      enabled: row.querySelector('[name="route_enabled"]').checked,
-    };
     if (kind === 'embedding') route.max_batch = Number(row.querySelector('[name="max_batch"]').value || 0);
     routes.push(route);
   }
