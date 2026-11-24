@@ -248,6 +248,7 @@ func TestHandlerResponsesForcesStoreOff(t *testing.T) {
 func TestHandlerQuotaOverride(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, sseEvent(`{"type":"response.output_text.delta","delta":"答"}`))
 		fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"total_tokens\":120}}}\n\n")
 
 	}))
