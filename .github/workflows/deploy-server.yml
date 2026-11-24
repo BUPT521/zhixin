@@ -78,7 +78,9 @@ jobs:
     name: 构建并部署
     needs: verify
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 交叉编译与上传要占几分钟，十分钟的上限在 2026-11-24 两次把上传并切换截断
+    # （运维手册「自动部署与回滚」有记录），这里留出重试与波动的时间。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -113,6 +115,9 @@ jobs:
 
       # 远端只做四件事：备份当前文件、换上新文件、重启、轮询 /readyz。轮询不
       # 通过就换回备份并重启，工作流标红；成功后 Runner 再核对一次公网入口。
+      #
+      # 上传与切换都带上连接超时和保活参数：链路卡住时在十几秒内报错结束，不在
+      # 十分钟上限里一直等待，失败时线上仍是切换前的那一份文件。
       - name: 上传并切换
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
@@ -121,9 +126,10 @@ jobs:
         run: |
           set -euo pipefail
           SHA=${GIT_SHA:0:12}
-          scp -i ~/.ssh/deploy_key -o BatchMode=yes \
+          SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
+          scp -i ~/.ssh/deploy_key "${SSH_OPTS[@]}" \
             server/zhixin-api "$DEPLOY_USER@$DEPLOY_HOST:/opt/zhixin/bin/zhixin-api.new-$SHA"
-          ssh -i ~/.ssh/deploy_key -o BatchMode=yes \
+          ssh -i ~/.ssh/deploy_key "${SSH_OPTS[@]}" \
             "$DEPLOY_USER@$DEPLOY_HOST" "bash -s -- $SHA" <<'REMOTE'
           set -euo pipefail
           SHA="$1"
