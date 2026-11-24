@@ -949,11 +949,11 @@ type QuotaPurchaseOverview struct {
 	// LegacyBalanceTokens APP 支付时期留在本服务的已购 token 余额，仍然先于积分使用
 	LegacyBalanceTokens int64 `json:"legacy_balance_tokens"`
 
-	// Product 即刻收商品；未配置或不可售时整体省略
+	// Product 即刻收商品；服务未配置商品或账号未验证登录方式时整体省略，是否允许购买看 capability_status
 	Product *QuotaPurchaseProduct `json:"product,omitempty"`
 }
 
-// QuotaPurchaseProduct 即刻收商品；未配置或不可售时整体省略
+// QuotaPurchaseProduct 即刻收商品；服务未配置商品或账号未验证登录方式时整体省略，是否允许购买看 capability_status
 type QuotaPurchaseProduct struct {
 	BillingMode      QuotaPurchaseProductBillingMode      `json:"billing_mode"`
 	CapabilityStatus QuotaPurchaseProductCapabilityStatus `json:"capability_status"`
