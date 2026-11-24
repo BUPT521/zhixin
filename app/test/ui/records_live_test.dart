@@ -13,6 +13,9 @@ import '../support/telemetry.dart';
 
 /// 记录页改成订阅之后，页面之外的写入与“回到旧数据”都由数据层重读（ADR-0014）。
 ///
+/// 每日截止小时写在 `app_meta` 里，不在记录订阅的表里；页面另外监听数据版本，
+/// 截止小时保存与撤销之后按新口径重排分组，这里补一条界面用例。
+///
 /// 写入放在 `tester.runAsync` 的真异步区，页面不点右上角刷新、不切栏、不返回重进；
 /// 撤销与整库恢复同样只靠订阅带回重读。这里补的是 ADR-0014 实施结果里点名还缺的
 /// 记录页订阅用例：材料、首页、记忆与系统学习已有各自的 `*_live_test.dart`。
@@ -85,14 +88,17 @@ void main() {
     return result as T;
   }
 
-  Future<void> openApp(WidgetTester tester) async {
+  Future<void> openApp(
+    WidgetTester tester, {
+    DateTime Function()? clock,
+  }) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.runAsync(() async {
       await tester.pumpWidget(
-        ZhixinApp(clock: () => DateTime(2026, 11, 16, 9)),
+        ZhixinApp(clock: clock ?? () => DateTime(2026, 11, 16, 9)),
       );
       scope = tester.state<AppScopeState>(find.byType(AppScope));
       await scope!.ready;
@@ -131,6 +137,35 @@ void main() {
     await seed(tester, () => scope!.chat.learning.capture(stem: '求条件概率'));
     await pumpUntil(tester, find.text('求条件概率'));
     expect(find.text('条件概率为什么这么算'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('改每日截止小时之后，记录页不用刷新就按新口径重新分组', (tester) async {
+    // 凌晨一点半：默认 4 点截止，这条记录与“今天”都归到 11 月 19 日。
+    await openApp(tester, clock: () => DateTime(2026, 11, 20, 1, 30));
+    await openRecords(tester);
+    await seed(tester, () async {
+      final id = await scope!.chat.discussion.createConversation(
+        title: '凌晨写下的讨论',
+      );
+      await scope!.testing.conversations.append(
+        id,
+        role: MessageRole.user,
+        content: '这一条写在凌晨。',
+      );
+    });
+    await pumpUntil(tester, find.text('凌晨写下的讨论'));
+    expect(find.textContaining('今天 · 11月19日'), findsOneWidget);
+
+    // 截止时间在“我的”里改，记录页此时不在前台；切回来时按新口径重排分组。
+    await tester.tap(find.text(tabMine).last);
+    await settle(tester);
+    await tester.runAsync(() => scope!.settings.edit.saveCutoffHour(0));
+    await settle(tester);
+    await tester.tap(find.text(tabRecords).last);
+    await settle(tester);
+    expect(find.textContaining('今天 · 11月20日'), findsOneWidget);
+    expect(find.textContaining('11月19日'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

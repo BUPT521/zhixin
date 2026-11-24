@@ -16,6 +16,7 @@ import '../domain/models/question.dart';
 import '../domain/models/study.dart';
 import 'discussion_activity.dart';
 import 'copy.dart';
+import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
@@ -82,7 +83,8 @@ class RecordsPage extends StatefulWidget {
   State<RecordsPage> createState() => _RecordsPageState();
 }
 
-class _RecordsPageState extends State<RecordsPage> {
+class _RecordsPageState extends State<RecordsPage>
+    with DataVersionWatcher<RecordsPage> {
   final GlobalKey<MaterialListState> _materialsKey =
       GlobalKey<MaterialListState>();
   final TextEditingController _searchHint = TextEditingController();
@@ -158,6 +160,8 @@ class _RecordsPageState extends State<RecordsPage> {
     super.didChangeDependencies();
     DiscussionActivity.generating.removeListener(_onGeneratingChanged);
     DiscussionActivity.generating.addListener(_onGeneratingChanged);
+    // 截止小时改变与整库恢复都会推进数据版本；页面常驻，分组要跟着重画。
+    watchDataVersion(AppScope.of(context).dataVersion);
     // 未显示的页面等底栏放行预读再订阅，不和首页的首读抢；切到记录时
     // 还没放行的，当场开始。材料页签同时建好，切过去直接是内容。
     if (_shouldRead) _ensurePreloaded(notify: false);
@@ -236,8 +240,17 @@ class _RecordsPageState extends State<RecordsPage> {
   void _onActiveChanged() {
     if (!mounted || !_active) return;
     _ensurePreloaded();
+    // 期间可能改过截止小时，切回来按当前口径重排一次分组。
+    setState(() {});
     if (_tab == RecordsTab.materials) _materialsKey.currentState?.reload();
   }
+
+  @override
+  bool get dataVersionActive => _active;
+
+  /// 截止小时变化与撤销之后换掉分组口径；列表数据由订阅重读，这里只重画分组。
+  @override
+  void onDataVersionChanged() => setState(() {});
 
   /// 底栏放行预读：还没订阅的话现在在后台订阅第一页，材料页签一并建好，
   /// 两个页签第一次切过去都是内容。
