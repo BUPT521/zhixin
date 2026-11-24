@@ -38,6 +38,8 @@ func run(log *slog.Logger) error {
 	var stores server.Stores
 	// meter 是即刻收的积分核销执行器；没有配置商品时保持为空，结算之后不产生核销。
 	var meter *nowpay.Meter
+	// nowpayClient 是购买接口的调用入口，与 meter 共用同一个客户端。
+	var nowpayClient *nowpay.Client
 	if cfg.DatabaseURL == "" {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
@@ -84,8 +86,7 @@ func run(log *slog.Logger) error {
 				return err
 			}
 			pgStore.SetNowPay(meter)
-			stores.Purchases = pgStore
-			stores.NowPay = client
+			nowpayClient = client
 		}
 		log.Info("using PostgreSQL stores")
 		// 附件索引与配额写在 attachment 表里，BlobStore 负责索引与字节两件事；
@@ -118,6 +119,12 @@ func run(log *slog.Logger) error {
 		}
 		if cfg.Alipay != nil {
 			stores.Payments = pgStore
+		}
+		// 即刻收的购买入口、流水与调用入口在整体装配之后补上：这里的赋值必须在
+		// stores 赋值之后，否则会被上面那份字面量覆盖掉。
+		if cfg.NowPay != nil {
+			stores.Purchases = pgStore
+			stores.NowPay = nowpayClient
 		}
 	}
 	if cfg.AdminToken == "" {
