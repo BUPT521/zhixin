@@ -8,6 +8,16 @@ import (
 	"time"
 )
 
+// twoArgEnv 模拟 Load 里读配置的两参形式：键不存在时回落到默认值。
+func twoArgEnv(m map[string]string) func(string, string) string {
+	return func(k, fallback string) string {
+		if value, ok := m[k]; ok {
+			return value
+		}
+		return fallback
+	}
+}
+
 func env(m map[string]string) func(string) string {
 	return func(k string) string { return m[k] }
 }
@@ -339,5 +349,41 @@ func TestLoadAdminAndSecretKey(t *testing.T) {
 		case c.name == "db with key" && len(cfg.SecretKey) != 32:
 			t.Fatalf("%s: key not parsed", c.name)
 		}
+	}
+}
+
+// 即刻收的商品 ID 从「即刻收」小程序复制，形态固定；比例与回调地址写错时启动就
+// 该拒绝，而不是等到第一次购买才报错。
+func TestParseNowPay(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		env    map[string]string
+		want   string // 期望的错误片段，空表示应当通过
+		verify func(*NowPayConfig) bool
+	}{
+		{"defaults", nil, "", func(c *NowPayConfig) bool { return c.TokensPerPoint == 1000 }},
+		{"custom ratio", map[string]string{"ZHIXIN_NOWPAY_TOKENS_PER_POINT": "500"}, "",
+			func(c *NowPayConfig) bool { return c.TokensPerPoint == 500 }},
+		{"https callback", map[string]string{"ZHIXIN_NOWPAY_CALLBACK_URL": "https://app.example.com/nowpay/return"}, "",
+			func(c *NowPayConfig) bool { return c.CallbackURL != "" }},
+		{"zero ratio", map[string]string{"ZHIXIN_NOWPAY_TOKENS_PER_POINT": "0"}, "TOKENS_PER_POINT", nil},
+		{"bad ratio", map[string]string{"ZHIXIN_NOWPAY_TOKENS_PER_POINT": "一千"}, "TOKENS_PER_POINT", nil},
+		{"http callback", map[string]string{"ZHIXIN_NOWPAY_CALLBACK_URL": "http://app.example.com/r"}, "CALLBACK_URL", nil},
+		{"callback with fragment", map[string]string{"ZHIXIN_NOWPAY_CALLBACK_URL": "https://app.example.com/r#x"}, "CALLBACK_URL", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := parseNowPay(twoArgEnv(c.env), "np_d_f83a7c91")
+			switch {
+			case c.want == "" && err != nil:
+				t.Fatalf("want no error, got %v", err)
+			case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+				t.Fatalf("want error containing %q, got %v", c.want, err)
+			case c.verify != nil && !c.verify(got):
+				t.Fatalf("unexpected config: %+v", got)
+			}
+		})
+	}
+	if _, err := parseNowPay(twoArgEnv(nil), "not a product id"); err == nil {
+		t.Fatal("商品 ID 带空格时应当拒绝")
 	}
 }
