@@ -89,7 +89,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 	case errors.As(res.err, &budgetError):
 		httpx.WriteInternal(w, r, p.log, res.err)
 	case res.passthrough != nil:
-		writeUpstreamStatus(w, r, res.passthrough.status)
+		writeUpstreamStatus(w, r, res.passthrough.status, res.passthrough.retryAfter)
 	case res.err != nil:
 		if r.Context().Err() != nil {
 			return

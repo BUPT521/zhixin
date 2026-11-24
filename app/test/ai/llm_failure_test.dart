@@ -99,4 +99,122 @@ void main() {
     // 4xx 不自动重试：只发出一次请求。
     expect(requests, 1);
   });
+
+  test('429 rate_limited 归为短时繁忙，并带出 Retry-After 的等待时长', () async {
+    var requests = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        requests++;
+        return http.StreamedResponse(
+          Stream.value(
+            utf8.encode(
+              jsonEncode({
+                'type': 'urn:zhixin:problem:rate_limited',
+                'status': 429,
+                'code': 'rate_limited',
+                'detail': 'model source is temporarily rate limited',
+              }),
+            ),
+          ),
+          429,
+          headers: {
+            'content-type': 'application/problem+json',
+            'retry-after': '7',
+          },
+        );
+      }),
+    );
+
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .toList(),
+      throwsA(
+        isA<LlmException>()
+            .having((error) => error.failure, 'failure', LlmFailure.busy)
+            .having(
+              (error) => error.retryAfter,
+              'retryAfter',
+              const Duration(seconds: 7),
+            )
+            .having((error) => error.shortText, 'shortText', '模型服务暂时繁忙'),
+      ),
+    );
+    // 等待时间较长时交给用户，不自动重发。
+    expect(requests, 1);
+  });
+
+  test('429 rate_limited 的等待很短时自动重试一次', () async {
+    var requests = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        requests++;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(jsonEncode({'code': 'rate_limited'}))),
+          429,
+          headers: {
+            'content-type': 'application/problem+json',
+            'retry-after': '1',
+          },
+        );
+      }),
+    );
+
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .toList(),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.busy,
+        ),
+      ),
+    );
+    expect(requests, 2);
+  });
+
+  test('429 quota_exceeded 仍按额度用完归类', () async {
+    var requests = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient.streaming((request, bodyStream) async {
+        requests++;
+        return http.StreamedResponse(
+          Stream.value(utf8.encode(jsonEncode({'code': 'quota_exceeded'}))),
+          429,
+          headers: {'content-type': 'application/problem+json'},
+        );
+      }),
+    );
+
+    await expectLater(
+      client
+          .stream(
+            system: 's',
+            messages: const [LlmMessage(role: 'user', content: 'hi')],
+          )
+          .toList(),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.rateLimited,
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
 }

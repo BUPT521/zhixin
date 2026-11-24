@@ -49,6 +49,26 @@ void main() {
     expect(offline, contains('检查网络后可以点「重试这次回答」。'));
   });
 
+  test('短时繁忙与额度用完给出不同的下一步', () {
+    final busy = answerNoticeText(
+      outcome(
+        notices: const [Notice.modelCallFailed],
+        failure: LlmFailure.busy,
+      ),
+    );
+    expect(busy, contains('模型服务暂时繁忙'));
+    expect(busy, contains('等一会儿再点「重试这次回答」。'));
+    expect(busy, isNot(contains('额度已经用完')));
+
+    final quota = answerNoticeText(
+      outcome(
+        notices: const [Notice.modelCallFailed],
+        failure: LlmFailure.rateLimited,
+      ),
+    );
+    expect(quota, contains('今日额度已经用完'));
+  });
+
   test('未知失败不带原因括号，也没有重试以外的说法', () {
     final text = answerNoticeText(
       outcome(

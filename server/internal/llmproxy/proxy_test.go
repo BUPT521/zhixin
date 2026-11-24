@@ -487,6 +487,31 @@ func TestChatConnectionFailureSkipsSiblingRoutes(t *testing.T) {
 	}
 }
 
+func TestChatUpstreamRateLimitPassesRetryAfter(t *testing.T) {
+	limited := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer limited.Close()
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "limited", limited.URL, "sk-limited")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{
+			{ProviderID: "limited", UpstreamModel: "a"},
+		}})
+	})
+	token := signIn(t, env.authSvc, "busy@example.test")
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		strings.NewReader(`{"model":"m","input":[]}`), map[string]string{"Content-Type": "application/json"})
+	defer resp.Body.Close()
+	problem := testutil.ReadProblem(t, resp)
+	if resp.StatusCode != http.StatusTooManyRequests || problem.Code != string(httpx.CodeRateLimited) {
+		t.Fatalf("上游限流应转成 429 rate_limited：%d %+v", resp.StatusCode, problem)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "7" {
+		t.Fatalf("Retry-After 应原样转给客户端，得到 %q", got)
+	}
+}
+
 func TestCandidatesOrder(t *testing.T) {
 	a := &liveProvider{ProviderRecord: ProviderRecord{ID: "a", Enabled: true}}
 	b := &liveProvider{ProviderRecord: ProviderRecord{ID: "b", Enabled: true}}

@@ -9,6 +9,9 @@ enum LlmFailure {
   auth,
   contactUnverified,
   rateLimited,
+
+  /// 上游或实例短时繁忙，等一会儿重试即可，与当天额度用完不同。
+  busy,
   badResponse,
   truncated,
 
@@ -38,6 +41,7 @@ String shortTextOf(LlmFailure failure) => switch (failure) {
   LlmFailure.auth => '登录已失效或没有访问权限',
   LlmFailure.contactUnverified => '还没有确认任何登录方式，托管额度未开放',
   LlmFailure.rateLimited => '调用额度或频率受限',
+  LlmFailure.busy => '模型服务暂时繁忙',
   LlmFailure.badResponse => '模型回复格式无法识别',
   LlmFailure.truncated => '回答被截断，请再试一次',
   LlmFailure.refused => '这个问题模型不能回答，请换一种问法',
@@ -50,10 +54,13 @@ String shortTextOf(LlmFailure failure) => switch (failure) {
 };
 
 class LlmException implements Exception {
-  const LlmException(this.failure, this.detail);
+  const LlmException(this.failure, this.detail, {this.retryAfter});
 
   final LlmFailure failure;
   final String detail;
+
+  /// 服务端要求等待的时长；只有短时繁忙时由 `Retry-After` 给出，其余为 null。
+  final Duration? retryAfter;
 
   String get shortText => shortTextOf(failure);
 

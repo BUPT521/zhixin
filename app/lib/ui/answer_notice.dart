@@ -99,6 +99,7 @@ String _modelNextStep(LlmFailure? failure) => switch (failure) {
   LlmFailure.contactUnverified =>
     '先在账号页确认一种登录方式，确认后才能使用知新服务的托管额度，改好后再点「重试这次回答」。',
   LlmFailure.offline || LlmFailure.timeout => '检查网络后可以点「重试这次回答」。',
+  LlmFailure.busy => '模型服务刚才很忙，等一会儿再点「重试这次回答」。',
   LlmFailure.rateLimited => '今日额度已经用完，等次日恢复之后再点「重试这次回答」。',
   LlmFailure.contextLimit => '可以缩短问题、减少图片或在设置中核对模型上下文上限。',
   LlmFailure.badResponse ||

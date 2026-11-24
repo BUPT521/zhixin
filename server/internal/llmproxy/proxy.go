@@ -484,7 +484,7 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if reply.status < 200 || reply.status >= 300 {
-		writeUpstreamStatus(w, r, reply.status)
+		writeUpstreamStatus(w, r, reply.status, reply.retryAfter)
 		return
 	}
 	if !stream {
@@ -557,11 +557,21 @@ func rejectedUsage(status int) int64 {
 	}
 }
 
-func writeUpstreamStatus(w http.ResponseWriter, r *http.Request, status int) {
-	if keyRejected(status) || status < 400 {
+// writeUpstreamStatus 把最后一次上游拒绝转给客户端。上游限流单独用
+// `rate_limited` 与 `Retry-After` 表示：客户端据此提示稍后重试，与账号当天
+// 额度用完（`quota_exceeded`）区分开。
+func writeUpstreamStatus(w http.ResponseWriter, r *http.Request, status int, retryAfter string) {
+	code, detail := httpx.CodeUpstreamFailed, "model source could not complete the request"
+	switch {
+	case keyRejected(status) || status < 400:
 		status = http.StatusBadGateway
+	case status == http.StatusTooManyRequests:
+		code, detail = httpx.CodeRateLimited, "model source is temporarily rate limited"
+		if retryAfter != "" {
+			w.Header().Set("Retry-After", retryAfter)
+		}
 	}
-	httpx.WriteProblem(w, r, status, httpx.CodeUpstreamFailed, "model source could not complete the request")
+	httpx.WriteProblem(w, r, status, code, detail)
 }
 
 // keyRejected 表示最后一个来源拒绝了服务端的 key。这是服务端的配置问题，
@@ -641,6 +651,8 @@ type chatReply struct {
 	stream     io.ReadCloser
 	attempt    routeAttempt
 	completion responseCompletion
+	// retryAfter 是上游最后一次拒绝时给出的等待时长，原样转给客户端。
+	retryAfter string
 }
 
 // dispatch tries the next candidate while a response can still be replaced.
@@ -688,8 +700,9 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		}
 		if reply.status < 200 || reply.status >= 300 {
 			resp.Body.Close()
+			reply.retryAfter = resp.Header.Get("Retry-After")
 			p.finishAttempt(plan, attempt, attemptResult{tokens: rejectedUsage(reply.status)}, reply.status,
-				httpFailure(reply.status, resp.Header.Get("Retry-After")))
+				httpFailure(reply.status, reply.retryAfter))
 			if retryable(reply.status) {
 				lastErr = nil
 				continue

@@ -67,6 +67,22 @@ class HttpLlmClient implements LlmClient {
   static const _plainRetry = RetryPolicy();
   static const _streamRetry = RetryPolicy(retryTimeout: true);
 
+  /// 上游给出的等待不超过这个时长时自动重试一次；更长的等待交给用户点重试。
+  static const Duration _busyRetryLimit = Duration(seconds: 2);
+
+  /// 服务端把上游限流与自己的额度用完分成两个错误码，这里按短时繁忙处理：
+  /// 没有给出内容、且等待时间很短时才自动再发一次，避免在限流期间反复请求。
+  bool _shortBusyRetry(
+    LlmException failure, {
+    required bool hasOutput,
+    required int attempt,
+  }) =>
+      failure.failure == LlmFailure.busy &&
+      attempt == 0 &&
+      !hasOutput &&
+      failure.retryAfter != null &&
+      failure.retryAfter! <= _busyRetryLimit;
+
   /// 本次请求的预算：调用方给了就共用它，否则按构造时的模板新建一份。
   LlmRequestBudget _budgetFor({LlmCancelToken? cancelToken}) {
     final template = budget;
@@ -112,11 +128,12 @@ class HttpLlmClient implements LlmClient {
         }
         final failure = await _readFailure(response, lifecycle);
         if (_plainRetry.shouldRetry(
-          failure.failure,
-          attempt: attempt,
-          serverUnavailable: failure.failure == LlmFailure.server,
-        )) {
-          await lifecycle.wait(retryDelay);
+              failure.failure,
+              attempt: attempt,
+              serverUnavailable: failure.failure == LlmFailure.server,
+            ) ||
+            _shortBusyRetry(failure, hasOutput: false, attempt: attempt)) {
+          await lifecycle.wait(failure.retryAfter ?? retryDelay);
           continue;
         }
         throw failure;
@@ -152,6 +169,7 @@ class HttpLlmClient implements LlmClient {
       lifecycle.check();
       final attempt = _StreamAttempt(lifecycle: lifecycle);
       var serverUnavailable = false;
+      var waitFor = retryDelay;
       try {
         final response = await attempt.run(
           () => _http.send(
@@ -188,17 +206,23 @@ class HttpLlmClient implements LlmClient {
         if (failure == null) rethrow;
         lifecycle.check();
         if (!_streamRetry.shouldRetry(
-          failure.failure,
-          attempt: index,
-          hasOutput: attempt.hasOutput,
-          serverUnavailable: serverUnavailable,
-        )) {
+              failure.failure,
+              attempt: index,
+              hasOutput: attempt.hasOutput,
+              serverUnavailable: serverUnavailable,
+            ) &&
+            !_shortBusyRetry(
+              failure,
+              hasOutput: attempt.hasOutput,
+              attempt: index,
+            )) {
           throw failure;
         }
+        waitFor = failure.retryAfter ?? retryDelay;
       } finally {
         attempt.abort();
       }
-      await lifecycle.wait(retryDelay);
+      await lifecycle.wait(waitFor);
     }
   }
 
@@ -337,8 +361,10 @@ class HttpLlmClient implements LlmClient {
 
   /// 非 2xx 时尽量读出服务端自己的说明：登录、额度、模型名的问题全靠这一句。
   ///
-  /// 服务端代理的 `403 contact_unverified` 单独归类，界面据此提示去账号页验证，
-  /// 而不是让人以为登录失效；这类 4xx 不自动重试。
+  /// 服务端代理的 `contact_unverified` 单独归类，界面据此提示去账号页验证，
+  /// 而不是让人以为登录失效；这类 4xx 不自动重试。服务端把上游限流写成
+  /// `rate_limited` 并给出 `Retry-After`，与账号当天额度用完的 `quota_exceeded`
+  /// 分开，前者按短时繁忙提示，后者仍按额度用完提示。
   Future<LlmException> _readFailure(
     http.StreamedResponse response,
     LlmRequestBudget lifecycle, {
@@ -351,14 +377,25 @@ class HttpLlmClient implements LlmClient {
           ? await lifecycle.run(response.stream.toBytes)
           : await attempt.run(response.stream.toBytes);
       final body = utf8.decode(bytes, allowMalformed: true);
-      if (problemCodeOf(body) == 'contact_unverified') {
+      final code = problemCodeOf(body);
+      final message = errorMessageOf(body);
+      if (message != null) detail = message;
+      if (code == 'contact_unverified') {
         return const LlmException(
           LlmFailure.contactUnverified,
           '账号还没有确认任何登录方式，托管额度未开放',
         );
       }
-      final message = errorMessageOf(body);
-      if (message != null) detail = message;
+      if (code == 'rate_limited') {
+        return LlmException(
+          LlmFailure.busy,
+          detail,
+          retryAfter: _retryAfterOf(response),
+        );
+      }
+      if (code == 'quota_exceeded') {
+        return LlmException(LlmFailure.rateLimited, detail);
+      }
     } on LlmException catch (error) {
       if (attempt == null || error.failure != LlmFailure.timeout) rethrow;
       lifecycle.check();
@@ -366,6 +403,17 @@ class HttpLlmClient implements LlmClient {
       // 读不出响应体时保留状态码。
     }
     return LlmException(failure, detail);
+  }
+
+  /// 读 `Retry-After` 的秒数；HTTP 日期形式与读不出的值返回 null。
+  Duration? _retryAfterOf(http.StreamedResponse response) {
+    for (final entry in response.headers.entries) {
+      if (entry.key.toLowerCase() != 'retry-after') continue;
+      final seconds = int.tryParse(entry.value.trim());
+      if (seconds == null || seconds < 1) return null;
+      return Duration(seconds: seconds);
+    }
+    return null;
   }
 
   @override
