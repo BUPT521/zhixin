@@ -709,8 +709,7 @@ func (s *Service) issueCode(ctx context.Context, userID, purpose, kind, identifi
 	if err := s.store.PutCode(ctx, c); err != nil {
 		return err
 	}
-	err = s.senders.SendCode(ctx, kind, identifier,
-		codeSubject(purpose, kind), codeBody(purpose, kind, code, s.codeTTL))
+	err = s.senders.SendCode(ctx, kind, identifier, purpose, code, s.codeTTL)
 	if err != nil {
 		_ = s.store.DeleteCode(ctx, purpose, kind, identifier)
 		if errors.Is(err, ErrSenderUnsupported) {
@@ -773,41 +772,6 @@ func newCode() (string, error) {
 		return "", err
 	}
 	return fmt.Sprintf("%06d", n.Int64()), nil
-}
-
-func codeSubject(purpose, kind string) string {
-	if purpose == PurposeResetPassword {
-		return "知新 · 重设密码验证码"
-	}
-	switch kind {
-	case KindPhone:
-		return "知新 · 验证手机号验证码"
-	case KindWechat:
-		return "知新 · 验证微信验证码"
-	default:
-		return "知新 · 验证邮箱验证码"
-	}
-}
-
-func codeBody(purpose, kind, code string, ttl time.Duration) string {
-	action := "确认邮箱"
-	switch {
-	case purpose == PurposeResetPassword:
-		action = "重设密码"
-	case kind == KindPhone:
-		action = "确认手机号"
-	case kind == KindWechat:
-		action = "确认微信"
-	}
-	minutes := int(ttl / time.Minute)
-	if minutes < 1 {
-		minutes = 1
-	}
-	return fmt.Sprintf(
-		"你正在%s。验证码是 %s，%d 分钟内有效。\n\n"+
-			"如果不是你本人操作，忽略这条消息即可，账号不会被改动。\n",
-		action, code, minutes,
-	)
 }
 
 // VerifyCurrentPassword 在不可撤销的操作之前重新核对一次密码：拿着别人设备上

@@ -20,16 +20,15 @@ type fakeMailer struct {
 }
 
 type sentMail struct {
-	To      string
-	Subject string
-	Body    string
+	To string
+	MailMessage
 }
 
-func (m *fakeMailer) Send(_ context.Context, to, subject, body string) error {
+func (m *fakeMailer) Send(_ context.Context, to string, message MailMessage) error {
 	if m.err != nil {
 		return m.err
 	}
-	m.sent = append(m.sent, sentMail{To: to, Subject: subject, Body: body})
+	m.sent = append(m.sent, sentMail{To: to, MailMessage: message})
 	return nil
 }
 
@@ -38,9 +37,10 @@ func (m *fakeMailer) lastCode(t *testing.T) string {
 	if len(m.sent) == 0 {
 		t.Fatal("没有发出邮件")
 	}
-	match := regexp.MustCompile(`\b([0-9]{6})\b`).FindStringSubmatch(m.sent[len(m.sent)-1].Body)
+	body := m.sent[len(m.sent)-1].Text
+	match := regexp.MustCompile(`\b([0-9]{6})\b`).FindStringSubmatch(body)
 	if len(match) != 2 {
-		t.Fatalf("邮件正文里没有六位验证码: %q", m.sent[len(m.sent)-1].Body)
+		t.Fatalf("邮件正文里没有六位验证码: %q", body)
 	}
 	return match[1]
 }
@@ -317,7 +317,7 @@ func TestMailFailureDropsCode(t *testing.T) {
 	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
 		t.Fatal(err)
 	}
-	if len(m.sent) != 1 || !strings.Contains(m.sent[0].Body, "验证码") {
+	if len(m.sent) != 1 || !strings.Contains(m.sent[0].Text, "验证码") {
 		t.Fatalf("sent %+v", m.sent)
 	}
 }

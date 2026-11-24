@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"mime/multipart"
+	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/smtp"
@@ -17,10 +20,16 @@ import (
 	"time"
 )
 
-// Mailer 把一封纯文本邮件交给发信通道。验证码只出现在邮件正文里，不写日志、
-// 不进数据库明文；测试注入一个进程内实现，生产用 SMTP。
+// MailMessage 包含主题及同一封邮件的纯文本和 HTML 正文。
+type MailMessage struct {
+	Subject string
+	Text    string
+	HTML    string
+}
+
+// Mailer 把邮件交给发信通道。生产通过 SMTP 发送，本机联调可使用日志实现。
 type Mailer interface {
-	Send(ctx context.Context, to, subject, body string) error
+	Send(ctx context.Context, to string, message MailMessage) error
 }
 
 // MailerConfig 是 SMTP 发信的配置。TLS 取 starttls、implicit 或 none：
@@ -81,11 +90,11 @@ func NewMailer(cfg MailerConfig, log *slog.Logger) (Mailer, error) {
 
 type logMailer struct{ log *slog.Logger }
 
-func (m *logMailer) Send(_ context.Context, to, subject, body string) error {
+func (m *logMailer) Send(_ context.Context, to string, message MailMessage) error {
 	m.log.Warn("mail is written to the log because SMTP is not configured; never use this in production",
 		slog.String("to", to),
-		slog.String("subject", subject),
-		slog.String("body", body),
+		slog.String("subject", message.Subject),
+		slog.String("body", message.Text),
 	)
 	return nil
 }
@@ -178,7 +187,7 @@ func isTemporary(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.DeadlineExceeded)
 }
 
-func (m *smtpMailer) Send(ctx context.Context, to, subject, body string) error {
+func (m *smtpMailer) Send(ctx context.Context, to string, message MailMessage) error {
 	if pause := m.paused(); pause > 0 {
 		return fmt.Errorf("auth: 发信暂缓 %s 后重试: %w", pause.Round(time.Second), ErrMailPaused)
 	}
@@ -188,13 +197,17 @@ func (m *smtpMailer) Send(ctx context.Context, to, subject, body string) error {
 		return ctx.Err()
 	}
 	defer func() { <-m.sem }()
-	return m.send(ctx, to, subject, body)
+	data, err := encodeMail(m.cfg.From, to, message)
+	if err != nil {
+		return fmt.Errorf("auth: 编码邮件失败: %w", err)
+	}
+	return m.send(ctx, to, data)
 }
 
-func (m *smtpMailer) send(ctx context.Context, to, subject, body string) error {
+func (m *smtpMailer) send(ctx context.Context, to string, data []byte) error {
 	var lastErr error
 	for attempt := 0; attempt < m.cfg.MaxAttempts; attempt++ {
-		err := m.deliver(ctx, to, subject, body)
+		err := m.deliver(ctx, to, data)
 		if err == nil {
 			m.record(nil)
 			return nil
@@ -259,7 +272,7 @@ func (m *smtpMailer) record(err error) {
 	m.pausedUntil = time.Now().Add(pause)
 }
 
-func (m *smtpMailer) deliver(ctx context.Context, to, subject, body string) error {
+func (m *smtpMailer) deliver(ctx context.Context, to string, data []byte) error {
 	host, _, err := net.SplitHostPort(m.cfg.Addr)
 	if err != nil {
 		return fmt.Errorf("auth: SMTP 地址应为 host:port: %w", err)
@@ -309,7 +322,7 @@ func (m *smtpMailer) deliver(ctx context.Context, to, subject, body string) erro
 	if err != nil {
 		return fmt.Errorf("auth: SMTP 开始正文失败: %w", err)
 	}
-	if _, err := writer.Write([]byte(message(m.cfg.From, to, subject, body))); err != nil {
+	if _, err := writer.Write(data); err != nil {
 		return fmt.Errorf("auth: SMTP 写正文失败: %w", err)
 	}
 	if err := writer.Close(); err != nil {
@@ -318,15 +331,32 @@ func (m *smtpMailer) deliver(ctx context.Context, to, subject, body string) erro
 	return client.Quit()
 }
 
-func message(from, to, subject, body string) string {
-	subject = mime.QEncoding.Encode("UTF-8", subject)
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\n", "\r\n")
-	return "From: " + from + "\r\n" +
-		"To: " + to + "\r\n" +
-		"Subject: " + subject + "\r\n" +
-		"MIME-Version: 1.0\r\n" +
-		"Content-Type: text/plain; charset=UTF-8\r\n" +
-		"Content-Transfer-Encoding: 8bit\r\n" +
-		"\r\n" + body
+func encodeMail(from, to string, message MailMessage) ([]byte, error) {
+	var data bytes.Buffer
+	parts := multipart.NewWriter(&data)
+	fmt.Fprintf(&data, "From: %s\r\nTo: %s\r\nDate: %s\r\nSubject: %s\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative;\r\n boundary=\"%s\"\r\n\r\n",
+		from, to, time.Now().Format(time.RFC1123Z), mime.QEncoding.Encode("UTF-8", message.Subject), parts.Boundary())
+	for _, part := range []struct{ mediaType, body string }{
+		{"text/plain", message.Text},
+		{"text/html", message.HTML},
+	} {
+		writer, err := parts.CreatePart(textproto.MIMEHeader{
+			"Content-Type":              {part.mediaType + "; charset=UTF-8"},
+			"Content-Transfer-Encoding": {"quoted-printable"},
+		})
+		if err != nil {
+			return nil, err
+		}
+		encoded := quotedprintable.NewWriter(writer)
+		if _, err := io.WriteString(encoded, part.body); err != nil {
+			return nil, err
+		}
+		if err := encoded.Close(); err != nil {
+			return nil, err
+		}
+	}
+	if err := parts.Close(); err != nil {
+		return nil, err
+	}
+	return data.Bytes(), nil
 }

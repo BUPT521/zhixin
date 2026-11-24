@@ -32,15 +32,13 @@ func (s *Senders) PausedFor() time.Duration {
 	return 0
 }
 
-// CodeSender 按登录方式分发验证码：验证码文本由服务层生成，送达方式按 kind
-// 不同。以后接手机号或微信，只要实现一个同样签名的发送函数并在 Senders 里登记，
-// 服务层与库表都不用改。
+// CodeSender 按登录方式分发验证码，由各通道根据用途和有效期生成正文。
 type CodeSender interface {
 	// CanSend 报告这种登录方式现在有没有装好的发送通道；服务层据此在写验证码之前
 	// 就拒绝，不留下一条用不上的记录。
 	CanSend(kind string) bool
 	// SendCode 把一条验证码交给对应的通道。
-	SendCode(ctx context.Context, kind, identifier, subject, body string) error
+	SendCode(ctx context.Context, kind, identifier, purpose, code string, ttl time.Duration) error
 }
 
 // Senders 是现在唯一装配好的分发实现：邮箱走 Mailer，其余登录方式返回
@@ -64,13 +62,17 @@ func (s *Senders) CanSend(kind string) bool {
 	}
 }
 
-func (s *Senders) SendCode(ctx context.Context, kind, identifier, subject, body string) error {
+func (s *Senders) SendCode(ctx context.Context, kind, identifier, purpose, code string, ttl time.Duration) error {
 	switch kind {
 	case KindEmail:
 		if s == nil || s.mail == nil {
 			return ErrMailUnavailable
 		}
-		return s.mail.Send(ctx, identifier, subject, body)
+		message, err := renderCodeEmail(purpose, code, ttl)
+		if err != nil {
+			return err
+		}
+		return s.mail.Send(ctx, identifier, message)
 	default:
 		return ErrSenderUnsupported
 	}
