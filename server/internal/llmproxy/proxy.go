@@ -491,7 +491,10 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, roundBudgetMs 
 		if errors.Is(err, errResponseTooLarge) {
 			detail = fmt.Sprintf("provider response exceeds %d bytes", p.cfg.MaxResponseBytes)
 		}
-		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, detail)
+		// 所有候选都在交付有效输出之前失败了：客户端据此进入降级或恢复提示，
+		// 不需要自己从状态码推断。
+		httpx.WriteProblemExtra(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, detail,
+			map[string]any{"reason": "candidates_exhausted"})
 		return
 	}
 	if reply.status < 200 || reply.status >= 300 {
@@ -741,7 +744,8 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			continue
 		}
 		reply = chatReply{route: rt, attempt: attempt}
-		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, firstOutput)
+		attemptStarted := p.now()
+		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream, firstOutput)
 		if err != nil {
 			p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, 0, requestFailure(ctx, err))
 			if ctx.Err() != nil {
@@ -782,7 +786,45 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				lastErr = errors.New("provider did not return a chat stream")
 				continue
 			}
-			reply.stream = resp.Body
+			// 首个有效输出之前先暂存：读到正文、工具调用或终止事件才算这一条
+			// 路由交付了回答，此前收到响应头、心跳与开场事件都还能换路。
+			if firstOutput <= 0 {
+				reply.stream = resp.Body
+				return reply, nil
+			}
+			wait := firstOutput - p.now().Sub(attemptStarted)
+			if !deadline.IsZero() {
+				if left := deadline.Sub(p.now()); left < wait {
+					wait = left
+				}
+			}
+			gate := p.gateFirstOutput(resp.Body, wait)
+			if gate.timeout {
+				resp.Body.Close()
+				// 首字时限来自本轮预算时，是这一轮没有时间了，不算来源故障。
+				if !deadline.IsZero() && !p.now().Before(deadline) {
+					p.finishAttempt(plan, attempt, attemptResult{tokens: -1, clientCanceled: true}, reply.status,
+						healthOutcome{reason: "本轮预算用完", sourceReached: true})
+					return reply, context.DeadlineExceeded
+				}
+				p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, reply.status,
+					healthOutcome{reason: "首个有效输出超时", scope: routeFailure, sourceReached: true})
+				lastErr = errors.New("model source did not deliver output in time")
+				continue
+			}
+			if gate.err != nil {
+				resp.Body.Close()
+				if ctx.Err() != nil {
+					p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, reply.status,
+						healthOutcome{reason: "请求已取消或超时"})
+					return reply, ctx.Err()
+				}
+				p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, reply.status,
+					healthOutcome{reason: "首个有效输出之前中断", scope: routeFailure, sourceReached: true})
+				lastErr = gate.err
+				continue
+			}
+			reply.stream = &prefixed{head: bytes.NewReader(gate.buf), body: resp.Body}
 			return reply, nil
 		}
 		// 非流式响应要整段读进内存再写回客户端：先按上限从实例预算里预留，
@@ -868,10 +910,10 @@ func (p *Proxy) firstOutputBudget(plan *attemptPlan, index int, deadline time.Ti
 // 以 /v1 结尾；管理员在后台配置来源时写的就是这个结尾。
 const upstreamResponsesPath = "/responses"
 
-// attempt 向一个来源发一次请求。firstOutput 大于 0 时表示这是等待首个输出的
-// 流式请求：响应头必须在这段时间内到达，否则尝试下一条路由，请求也带上
-// Accept: text/event-stream；非流式聊天要等整段回答生成完才有响应头，传 0。
-func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, firstOutput time.Duration) (*http.Response, error) {
+// attempt 向一个来源发一次请求。eventStream 表示这是等待流式事件的聊天请求，
+// 请求带上 Accept: text/event-stream；headerTimeout 大于 0 时，响应头必须在这段
+// 时间内到达，否则尝试下一条路由。非流式聊天要等整段回答生成完才有响应头，传 0。
+func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, eventStream bool, headerTimeout time.Duration) (*http.Response, error) {
 	actx, cancel := context.WithCancel(ctx)
 	var gotConnection atomic.Bool
 	actx = httptrace.WithClientTrace(actx, &httptrace.ClientTrace{
@@ -886,12 +928,12 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 	if prov.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+prov.APIKey)
 	}
-	if firstOutput > 0 {
+	if eventStream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
 	var timer *time.Timer
-	if firstOutput > 0 {
-		timer = time.AfterFunc(firstOutput, cancel)
+	if headerTimeout > 0 {
+		timer = time.AfterFunc(headerTimeout, cancel)
 	}
 	resp, err := p.sendToProvider(req, prov)
 	if timer != nil && !timer.Stop() {
@@ -900,7 +942,7 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 			resp.Body.Close()
 		}
 		cancel()
-		resp, err = nil, fmt.Errorf("no response within %s", firstOutput)
+		resp, err = nil, fmt.Errorf("no response within %s", headerTimeout)
 	}
 	if err != nil {
 		cancel()
