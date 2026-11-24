@@ -73,6 +73,18 @@ func (rt routes) PostV1AuthPasswordReset(w http.ResponseWriter, r *http.Request)
 func (rt routes) GetV1Me(w http.ResponseWriter, r *http.Request)    { rt.auth.Me(w, r) }
 func (rt routes) DeleteV1Me(w http.ResponseWriter, r *http.Request) { rt.auth.DeleteMe(w, r) }
 
+// 模型代理的接入密钥（ADR-0063）：签发、列出与撤销都要求登录令牌，密钥本身
+// 只能调用 /v1/llm 下的模型接口。
+func (rt routes) GetV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+	rt.auth.ListAPIKeys(w, r)
+}
+func (rt routes) PostV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+	rt.auth.CreateAPIKey(w, r)
+}
+func (rt routes) DeleteV1MeApiKeysId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.auth.RevokeAPIKey(w, r, id)
+}
+
 // DeleteV1Cloud 清空账号的备份、提交序列、附件与遗留对象；装配由 server.New
 // 注入，未装配时返回 501 而不是悄悄回 204。
 func (rt routes) DeleteV1Cloud(w http.ResponseWriter, r *http.Request) {

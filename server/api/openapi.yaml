@@ -278,6 +278,91 @@ paths:
         "404": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
 
+  /v1/me/api-keys:
+    get:
+      tags: [auth]
+      summary: 列出本账号的模型代理密钥，新的在前
+      description: |
+        密钥只用于用户自己的脚本或第三方工具调用 `/v1/llm` 下的模型接口，与账号
+        共用每日额度、并发上限、实例预算与“登录方式已验证”的门槛，不持有学习数据
+        （ADR-0063）。响应不含明文密钥与
+        摘要，只有展示用的前缀；已经撤销的密钥仍然列出，`revoked` 为真。
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                additionalProperties: false
+                properties:
+                  keys:
+                    type: array
+                    items: { $ref: "#/components/schemas/ApiKey" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403":
+          description: "`key_scope_denied`：用密钥调用账号接口；密钥只能调用模型接口"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+    post:
+      tags: [auth]
+      summary: 签发一把模型代理密钥，明文只在这一次返回
+      description: |
+        密钥没有有效期，只能显式撤销。每个账号最多保留 20 把有效密钥，达到上限时
+        返回 409，先撤销旧的再签发。服务端只保存 SHA-256，明文只在这次响应里出现。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              additionalProperties: false
+              properties:
+                name: { type: string, maxLength: 64, description: 给这把密钥起的名字，只用于辨认 }
+      responses:
+        "201":
+          description: 已签发
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ApiKeyCreated" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403":
+          description: "`key_scope_denied`：用密钥签发新的密钥；签发改用登录令牌"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "409":
+          description: "`conflict`：有效密钥数已经达到上限"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+  /v1/me/api-keys/{id}:
+    delete:
+      tags: [auth]
+      summary: 撤销一把模型代理密钥，立即失效
+      description: |
+        撤销之后这把密钥立刻不能再调用模型，其余密钥与登录状态不受影响。已经撤销
+        的密钥再撤销一次返回 404；撤销保留这一行，列表里仍能看到它。
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: 密钥编号
+          schema: { type: string }
+      responses:
+        "204": { description: 已撤销 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403":
+          description: "`key_scope_denied`：用密钥调用账号接口；撤销要用登录令牌"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+
   /v1/cloud:
     delete:
       tags: [cloud]
@@ -1171,7 +1256,7 @@ components:
     bearer:
       type: http
       scheme: bearer
-      description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。
+      description: 不透明访问令牌，一小时过期；刷新令牌三十天过期并在每次刷新时轮换。`zx_` 开头的是模型代理密钥，只接受 `/v1/llm` 下的模型接口，与账号共用额度，没有有效期（ADR-0063）。
     admin:
       type: http
       scheme: bearer
@@ -1449,6 +1534,7 @@ components:
             - invalid_code
             - identifier_taken
             - contact_unverified
+            - key_scope_denied
             - not_found
             - conflict
             - payload_too_large
@@ -1643,6 +1729,33 @@ components:
         kind: { $ref: "#/components/schemas/IdentityKind" }
         identifier: { type: string, description: 规范化之后的联系方式 }
         verified: { type: boolean, description: 这种登录方式是否已经用验证码确认 }
+    ApiKey:
+      type: object
+      required: [id, name, prefix, revoked, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string, description: 用户起的名字，只用于辨认 }
+        prefix:
+          type: string
+          examples: ["zx_AbCdEfGh"]
+          description: 密钥的前几位，用于在列表里辨认；完整密钥只在签发时返回
+        revoked: { type: boolean, description: 是否已经撤销 }
+        created_at: { type: string, format: date-time }
+        last_used_at:
+          type: string
+          format: date-time
+          description: 最近一次调用模型的时间，服务端按十分钟粒度更新；从没用过时省略
+    ApiKeyCreated:
+      type: object
+      required: [id, name, prefix, key, created_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        prefix: { type: string }
+        key:
+          type: string
+          description: "完整密钥，只在这一次返回；调用模型时放在 `Authorization: Bearer` 里"
+        created_at: { type: string, format: date-time }
     Model:
       type: object
       required: [id, object, owned_by, kind]

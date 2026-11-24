@@ -428,3 +428,68 @@ func (h *Handler) checkPassword(w http.ResponseWriter, r *http.Request, check fu
 	}
 	return false
 }
+
+// ListAPIKeys 列出当前账号的模型代理密钥。已撤销的也列出，列表里仍然看得到它，
+// 从没用过时最近使用时间为空（ADR-0063）。
+func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
+	keys, err := h.svc.APIKeys(r.Context(), MustPrincipal(r.Context()))
+	if err != nil {
+		httpx.WriteInternal(w, r, h.log, err)
+		return
+	}
+	out := apiKeysJSON{Keys: make([]api.ApiKey, 0, len(keys))}
+	for _, key := range keys {
+		item := api.ApiKey{
+			Id: key.ID, Name: key.Name, Prefix: key.Prefix,
+			Revoked: key.Revoked, CreatedAt: key.CreatedAt,
+		}
+		if !key.LastUsedAt.IsZero() {
+			used := key.LastUsedAt
+			item.LastUsedAt = &used
+		}
+		out.Keys = append(out.Keys, item)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// apiKeysJSON 是列表响应的形状；契约里这是一个内联对象，不单独生成类型。
+type apiKeysJSON struct {
+	Keys []api.ApiKey `json:"keys"`
+}
+
+// CreateAPIKey 签发一把模型代理密钥。明文只在这次响应里出现，服务端只留摘要；
+// 有效密钥达到上限时回 409，先撤销旧的再签发。
+func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	var in api.PostV1MeApiKeysJSONRequestBody
+	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	key, secret, err := h.svc.CreateAPIKey(r.Context(), MustPrincipal(r.Context()), in.Name)
+	switch {
+	case errors.Is(err, ErrInvalidInput):
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name must be at most 64 characters")
+	case errors.Is(err, ErrKeyLimit):
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "at most 20 active api keys per account")
+	case err != nil:
+		httpx.WriteInternal(w, r, h.log, err)
+	default:
+		httpx.WriteJSON(w, http.StatusCreated, api.ApiKeyCreated{
+			Id: key.ID, Name: key.Name, Prefix: key.Prefix,
+			Key: secret, CreatedAt: key.CreatedAt,
+		})
+	}
+}
+
+// RevokeAPIKey 撤销一把密钥，之后它立刻不能再调用模型。不属于这个账号、已经
+// 撤销或编号不存在都回 404，不区分三种情况。
+func (h *Handler) RevokeAPIKey(w http.ResponseWriter, r *http.Request, id string) {
+	err := h.svc.RevokeAPIKey(r.Context(), MustPrincipal(r.Context()), id)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "api key not found")
+	case err != nil:
+		httpx.WriteInternal(w, r, h.log, err)
+	default:
+		w.WriteHeader(http.StatusNoContent)
+	}
+}

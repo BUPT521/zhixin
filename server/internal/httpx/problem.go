@@ -22,6 +22,7 @@ const (
 	CodeInvalidCode        = api.ProblemCodeInvalidCode
 	CodeIdentifierTaken    = api.ProblemCodeIdentifierTaken
 	CodeContactUnverified  = api.ProblemCodeContactUnverified
+	CodeKeyScopeDenied     = api.ProblemCodeKeyScopeDenied
 	CodeNotFound           = api.ProblemCodeNotFound
 	CodeConflict           = api.ProblemCodeConflict
 	CodePayloadTooLarge    = api.ProblemCodePayloadTooLarge

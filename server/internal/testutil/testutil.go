@@ -115,6 +115,15 @@ func (Base) DeleteV1Cloud(w http.ResponseWriter, _ *http.Request) {
 }
 func (Base) DeleteV1Me(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) }
 func (Base) GetV1Me(w http.ResponseWriter, _ *http.Request)    { w.WriteHeader(http.StatusNotFound) }
+func (Base) GetV1MeApiKeys(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PostV1MeApiKeys(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) DeleteV1MeApiKeysId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) PostV1AuthLogin(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }

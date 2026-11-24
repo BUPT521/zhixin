@@ -38,38 +38,7 @@ var httpMethods = map[string]bool{
 // security: [] 完全一致：两边任何一侧新增、删除或改名都会失败。契约是接口的
 // 唯一真相，鉴权默认拒绝的清单不能靠记忆维护。
 func TestPublicOperationsMatchSpec(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "api", "openapi.yaml"))
-	if err != nil {
-		t.Fatalf("读取契约：%v", err)
-	}
-	var doc spec
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("解析契约：%v", err)
-	}
-
-	specPublic := map[string]bool{}
-	specAll := map[string]bool{}
-	for path, operations := range doc.Paths {
-		for method, node := range operations {
-			method = strings.ToUpper(method)
-			if !httpMethods[method] {
-				// parameters 之类的路径级键不是操作。
-				continue
-			}
-			var op operation
-			if err := node.Decode(&op); err != nil {
-				t.Fatalf("解析 %s %s 的 security 声明：%v", method, path, err)
-			}
-			pattern := method + " " + path
-			specAll[pattern] = true
-			if op.Security.Kind == yaml.SequenceNode && len(op.Security.Content) == 0 {
-				specPublic[pattern] = true
-			}
-		}
-	}
-	if len(specAll) == 0 {
-		t.Fatal("契约里没有解析出任何操作，检查 openapi.yaml 的格式或路径")
-	}
+	specPublic, specAll := specOperations(t)
 
 	codePublic := map[string]bool{}
 	for _, pattern := range PublicOperations() {
@@ -136,4 +105,74 @@ func sortedKeys(set map[string]bool) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// specOperations 解析契约里的全部操作，并分出显式公开的那些。
+func specOperations(t *testing.T) (public, all map[string]bool) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "api", "openapi.yaml"))
+	if err != nil {
+		t.Fatalf("读取契约：%v", err)
+	}
+	var doc spec
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("解析契约：%v", err)
+	}
+	public = map[string]bool{}
+	all = map[string]bool{}
+	for path, operations := range doc.Paths {
+		for method, node := range operations {
+			method = strings.ToUpper(method)
+			if !httpMethods[method] {
+				// parameters 之类的路径级键不是操作。
+				continue
+			}
+			var op operation
+			if err := node.Decode(&op); err != nil {
+				t.Fatalf("解析 %s %s 的 security 声明：%v", method, path, err)
+			}
+			pattern := method + " " + path
+			all[pattern] = true
+			if op.Security.Kind == yaml.SequenceNode && len(op.Security.Content) == 0 {
+				public[pattern] = true
+			}
+		}
+	}
+	if len(all) == 0 {
+		t.Fatal("契约里没有解析出任何操作，检查 openapi.yaml 的格式或路径")
+	}
+	return public, all
+}
+
+// TestKeyOperationsAreModelEndpointsOnly 守住模型代理密钥的作用域：只收 /v1/llm
+// 下的模型接口，契约里确实存在，且不是公开操作；账号、同步与备份接口都不接受
+// 密钥（ADR-0063）。
+func TestKeyOperationsAreModelEndpointsOnly(t *testing.T) {
+	public, all := specOperations(t)
+	if len(KeyOperations()) == 0 {
+		t.Fatal("keyOperations 不应为空")
+	}
+	for _, pattern := range KeyOperations() {
+		if !all[pattern] {
+			t.Errorf("契约里没有 %s", pattern)
+		}
+		if public[pattern] {
+			t.Errorf("%s 是公开操作，不应在密钥作用域里", pattern)
+		}
+		if !strings.HasPrefix(pattern, "GET /v1/llm/") && !strings.HasPrefix(pattern, "POST /v1/llm/") {
+			t.Errorf("密钥只应调用模型接口，%s 不在 /v1/llm 下", pattern)
+		}
+	}
+	for _, pattern := range []string{
+		"POST /v1/me/api-keys",
+		"GET /v1/me/api-keys",
+		"DELETE /v1/me/api-keys/{id}",
+		"GET /v1/sync/head",
+		"POST /v1/backups",
+		"DELETE /v1/cloud",
+	} {
+		if AllowsKey(pattern) {
+			t.Errorf("%s 不应接受模型代理密钥", pattern)
+		}
+	}
 }

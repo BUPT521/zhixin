@@ -56,6 +56,9 @@ type Tokens struct {
 type Principal struct {
 	UserID    string
 	SessionID string
+	// KeyID 非空表示这次请求用的是模型代理密钥（ADR-0063），不是访问令牌。
+	// 只有 /v1/llm 下的模型接口接受密钥，其余受保护路由由中间件按作用域拒绝。
+	KeyID string
 	// ContactVerified 表示这个账号至少有一种登录方式已经确认；托管额度与云端
 	// 写入按它判断，不再只看邮箱（ADR-0038）。
 	ContactVerified bool

@@ -41,6 +41,11 @@ func newAuthedHandler(t *testing.T, store Store) (http.Handler, *Service) {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
+	// 模型路由用来核对密钥的作用域：密钥只在这里被放行。
+	mux.HandleFunc("POST /v1/llm/responses", func(w http.ResponseWriter, r *http.Request) {
+		p := MustPrincipal(r.Context())
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"user_id": p.UserID, "key_id": p.KeyID})
+	})
 	return httpx.Chain(Middleware(svc, log)(mux), httpx.RequestID), svc
 }
 
@@ -210,5 +215,51 @@ func TestNeedsAuthTreatsHeadAsGet(t *testing.T) {
 	}
 	if needsAuth("HEAD", "/v1/app/releases") || needsAuth("HEAD", "/healthz") {
 		t.Fatal("公开路由的 HEAD 不需要令牌")
+	}
+}
+
+// TestMiddlewareKeyIsScopedToModels 核对模型代理密钥的两个边界：模型路由接受
+// 密钥并带上 KeyID，账号与数据路由回 403 key_scope_denied；撤销之后立即回到
+// 401，与访问令牌的失效同一口径（ADR-0063）。
+func TestMiddlewareKeyIsScopedToModels(t *testing.T) {
+	h, svc := newAuthedHandler(t, NewMemoryStore())
+	ctx := context.Background()
+	tok, err := svc.Register(ctx, "key@b.cn", "password1", "")
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	key, secret, err := svc.CreateAPIKey(ctx, Principal{UserID: tok.UserID}, "脚本")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+
+	rec := serve(t, h, http.MethodPost, "/v1/llm/responses", "Bearer "+secret)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("模型路由应接受密钥，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		UserID string `json:"user_id"`
+		KeyID  string `json:"key_id"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.UserID != tok.UserID || body.KeyID != key.ID {
+		t.Fatalf("调用者不对：%+v", body)
+	}
+
+	rec = serve(t, h, http.MethodGet, "/v1/me", "Bearer "+secret)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("账号路由应拒绝密钥，得到 %d：%s", rec.Code, rec.Body.String())
+	}
+	if p := decodeProblem(t, rec); p.Code != string(httpx.CodeKeyScopeDenied) {
+		t.Fatalf("错误码应为 key_scope_denied，得到 %+v", p)
+	}
+
+	if err := svc.RevokeAPIKey(ctx, Principal{UserID: tok.UserID}, key.ID); err != nil {
+		t.Fatalf("revoke: %v", err)
+	}
+	if rec := serve(t, h, http.MethodPost, "/v1/llm/responses", "Bearer "+secret); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("撤销之后应回 401，得到 %d", rec.Code)
 	}
 }

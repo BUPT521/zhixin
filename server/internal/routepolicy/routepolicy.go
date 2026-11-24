@@ -31,6 +31,17 @@ var uploadOperations = []string{
 	"POST /v1/sync/commits",
 }
 
+// keyOperations 是模型代理密钥可以访问的路由：只有模型调用与它们的元数据。
+// 密钥不持有学习数据，所以同步、备份、附件与账号管理都不在其中；密钥访问其余
+// 受保护路由时回 403 key_scope_denied（ADR-0063）。
+var keyOperations = []string{
+	"POST /v1/llm/responses",
+	"POST /v1/llm/embeddings",
+	"POST /v1/llm/embeddings/lookup",
+	"GET /v1/llm/models",
+	"GET /v1/llm/quota",
+}
+
 // cacheableOperations 是明确可以缓存的公开响应，值是 max-age 的秒数。目前只有
 // 发布清单：它在服务端启动时读入，只有重启才会变化，短缓存能减少重复请求，
 // 又不至于让新版本久等。
@@ -52,6 +63,14 @@ func RequiresAuth(pattern string) bool { return pattern != "" && !IsPublic(patte
 
 // IsUpload 报告这条已匹配的路由是否属于按账号限流的上传。
 func IsUpload(pattern string) bool { return contains(uploadOperations, pattern) }
+
+// AllowsKey 报告这条已匹配的路由是否接受模型代理密钥。
+func AllowsKey(pattern string) bool { return contains(keyOperations, pattern) }
+
+// KeyOperations 返回密钥可以访问的操作副本，供契约测试核对。
+func KeyOperations() []string {
+	return append([]string(nil), keyOperations...)
+}
 
 // CacheSeconds 返回这条路由允许的缓存秒数；第二个返回值为假表示保持默认的
 // no-store。

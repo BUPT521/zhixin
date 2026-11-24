@@ -230,3 +230,44 @@ WHERE purpose = sqlc.arg(purpose)
   AND identifier = sqlc.arg(identifier)
   AND code_hash = sqlc.arg(code_hash)
   AND expires_at > sqlc.arg(now);
+
+-- 模型代理的接入密钥（schema.sql 的 api_key，ADR-0063）。密钥本身只在签发那一
+-- 次出现在响应里，库里只有 SHA-256；查询按摘要定位，前缀只用于展示。
+
+-- name: CreateApiKey :exec
+INSERT INTO api_key (id, user_id, name, prefix, key_hash)
+VALUES (
+  sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(prefix),
+  sqlc.arg(key_hash)
+);
+
+-- name: ApiKeysByUser :many
+SELECT id, user_id, name, prefix, revoked_at, last_used_at, created_at
+FROM api_key
+WHERE user_id = sqlc.arg(user_id)
+ORDER BY created_at DESC, id DESC;
+
+-- 鉴权只认没有撤销的密钥；“已验证”与访问令牌同一口径，至少一种登录方式确认过。
+-- name: ApiKeyByHash :one
+SELECT k.id, k.user_id, k.name, k.prefix, k.revoked_at, k.last_used_at,
+  k.created_at,
+  EXISTS (
+    SELECT 1
+    FROM user_identity AS identity
+    WHERE identity.user_id = k.user_id AND identity.verified_at IS NOT NULL
+  )::boolean AS contact_verified
+FROM api_key AS k
+WHERE k.key_hash = sqlc.arg(key_hash) AND k.revoked_at IS NULL;
+
+-- 撤销只对当前账号名下、还没有撤销过的密钥生效；0 行按找不到处理。
+-- name: RevokeApiKey :execrows
+UPDATE api_key
+SET revoked_at = now()
+WHERE id = sqlc.arg(id) AND user_id = sqlc.arg(user_id) AND revoked_at IS NULL;
+
+-- 最近使用时间只用于辨认，十分钟粒度足够，避免每次模型请求都写一行。
+-- name: TouchApiKey :exec
+UPDATE api_key
+SET last_used_at = now()
+WHERE id = sqlc.arg(id)
+  AND (last_used_at IS NULL OR last_used_at < now() - interval '10 minutes');

@@ -81,6 +81,25 @@ CREATE TABLE session_refresh_used (
 );
 CREATE INDEX session_refresh_used_session ON session_refresh_used(session_id);
 
+-- 模型代理的接入密钥：给用户自己的脚本或第三方工具调用 /v1/llm 下的模型接口，
+-- 不参与登录，也不持有学习数据（ADR-0063）。与访问令牌共用 Authorization: Bearer
+-- 头，靠 zx_ 前缀与长度区分；只存整个密钥的 SHA-256，prefix 只留前几位供列表与撤销时
+-- 辨认。没有有效期列：密钥不过期，只能由用户显式撤销，撤销写 revoked_at 并保留
+-- 这一行，列表里仍能看到它。账号删掉时随外键级联删除；重设密码不撤销密钥，
+-- 与常规提供方的做法一致。
+CREATE TABLE api_key (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  name         TEXT NOT NULL DEFAULT '',
+  prefix       TEXT NOT NULL,
+  key_hash     TEXT NOT NULL UNIQUE,
+  revoked_at   TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 账号页按账号列出密钥，最近的在前；撤销按 (id, user_id) 定位，主键已经够用。
+CREATE INDEX api_key_by_user ON api_key(user_id, created_at DESC);
+
 -- 每个账号的同步状态与提交序列（ADR-0043）。推送时在同一事务里
 -- SELECT ... FOR UPDATE 锁住这一行，核对 base_seq = head 之后再追加，压缩也在
 -- 同一次事务里推进保留下界（ADR-0057 之前是单独的 sync_head，已并入本表）。

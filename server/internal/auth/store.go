@@ -73,6 +73,21 @@ type Session struct {
 	ContactVerified bool
 }
 
+// APIKey 是给用户自己的脚本或第三方工具调用模型的一把密钥（ADR-0063）。
+// 密钥本身只在签发那一次返回，库里只存 SHA-256；Prefix 是前几位，用于列表展示
+// 与撤销时辨认。没有有效期：不过期，只能显式撤销。ContactVerified 只在按摘要
+// 鉴权时填充，与访问令牌同一口径（至少一种登录方式确认过）。
+type APIKey struct {
+	ID              string
+	UserID          string
+	Name            string
+	Prefix          string
+	Revoked         bool
+	LastUsedAt      time.Time
+	CreatedAt       time.Time
+	ContactVerified bool
+}
+
 // RefreshUsed 是一次已经轮换掉的刷新令牌摘要。旧令牌再次出现时，服务层用它
 // 判断是同一客户端的重试还是令牌被复制：宽限期内且 request_id 一致算重试，
 // 其余算盗用。只存摘要，不存令牌本身。
@@ -156,6 +171,20 @@ type Store interface {
 	RecordRefreshUsed(ctx context.Context, u RefreshUsed) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
+
+	// CreateKey 保存一把模型代理密钥。库里只存摘要，key.Prefix 用于展示。
+	CreateKey(ctx context.Context, key APIKey, keyHash string) error
+	// KeysByUser 按创建时间倒序列出账号的全部密钥，包括已经撤销的。
+	KeysByUser(ctx context.Context, userID string) ([]APIKey, error)
+	// KeyByHash 按摘要找一把仍然有效的密钥；不存在或已经撤销时返回 ErrNotFound。
+	// 返回的行里 ContactVerified 与访问令牌同一口径。
+	KeyByHash(ctx context.Context, keyHash string) (APIKey, error)
+	// RevokeKey 撤销当前账号名下的一把密钥。不存在、已经撤销或属于别的账号时
+	// 返回 ErrNotFound，调用方据此回 404。
+	RevokeKey(ctx context.Context, userID, id string) error
+	// TouchKey 把最近使用时间推进到 now；实现按十分钟粒度条件写入，大部分请求
+	// 不会真的更新这一行。
+	TouchKey(ctx context.Context, id string) error
 	// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码；仍在有效期内的
 	// 行不受影响。过期数据留在库里不影响正确性，清理只控制表的大小。
 	PruneExpired(ctx context.Context, now, usedBefore time.Time) error
@@ -188,6 +217,8 @@ type MemoryStore struct {
 	sessions    map[string]Session
 	codes       map[string]Code
 	refreshUsed map[string]RefreshUsed
+	apiKeys     map[string]APIKey
+	keyHashes   map[string]string // 密钥摘要 → 密钥编号
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -198,6 +229,8 @@ func NewMemoryStore() *MemoryStore {
 		sessions:    map[string]Session{},
 		codes:       map[string]Code{},
 		refreshUsed: map[string]RefreshUsed{},
+		apiKeys:     map[string]APIKey{},
+		keyHashes:   map[string]string{},
 	}
 }
 
@@ -332,6 +365,17 @@ func (m *MemoryStore) deleteUserLocked(id string) bool {
 			delete(m.sessions, sid)
 		}
 	}
+	for keyID, key := range m.apiKeys {
+		if key.UserID != id {
+			continue
+		}
+		delete(m.apiKeys, keyID)
+		for hash, owned := range m.keyHashes {
+			if owned == keyID {
+				delete(m.keyHashes, hash)
+			}
+		}
+	}
 	for key, c := range m.codes {
 		if c.UserID == id {
 			delete(m.codes, key)
@@ -350,6 +394,79 @@ func (m *MemoryStore) DeleteUserSessions(_ context.Context, userID string) error
 		}
 	}
 	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == userID })
+	return nil
+}
+
+func (m *MemoryStore) CreateKey(_ context.Context, key APIKey, keyHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.apiKeys[key.ID] = key
+	m.keyHashes[keyHash] = key.ID
+	return nil
+}
+
+func (m *MemoryStore) KeysByUser(_ context.Context, userID string) ([]APIKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	keys := make([]APIKey, 0, len(m.apiKeys))
+	for _, key := range m.apiKeys {
+		if key.UserID == userID {
+			keys = append(keys, key)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if !keys[i].CreatedAt.Equal(keys[j].CreatedAt) {
+			return keys[i].CreatedAt.After(keys[j].CreatedAt)
+		}
+		return keys[i].ID > keys[j].ID
+	})
+	return keys, nil
+}
+
+func (m *MemoryStore) KeyByHash(_ context.Context, keyHash string) (APIKey, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	id, ok := m.keyHashes[keyHash]
+	if !ok {
+		return APIKey{}, ErrNotFound
+	}
+	key, ok := m.apiKeys[id]
+	if !ok || key.Revoked {
+		return APIKey{}, ErrNotFound
+	}
+	for _, ident := range m.identities {
+		if ident.UserID == key.UserID && !ident.VerifiedAt.IsZero() {
+			key.ContactVerified = true
+			break
+		}
+	}
+	return key, nil
+}
+
+func (m *MemoryStore) RevokeKey(_ context.Context, userID, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, ok := m.apiKeys[id]
+	if !ok || key.UserID != userID || key.Revoked {
+		return ErrNotFound
+	}
+	key.Revoked = true
+	m.apiKeys[id] = key
+	return nil
+}
+
+func (m *MemoryStore) TouchKey(_ context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key, ok := m.apiKeys[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if !key.LastUsedAt.IsZero() && time.Since(key.LastUsedAt) < 10*time.Minute {
+		return nil
+	}
+	key.LastUsedAt = time.Now()
+	m.apiKeys[id] = key
 	return nil
 }
 

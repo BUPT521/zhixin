@@ -1,9 +1,11 @@
 package auth
 
 import (
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,6 +43,15 @@ func (a testAPI) PostV1AuthPasswordReset(w http.ResponseWriter, r *http.Request)
 }
 func (a testAPI) GetV1Me(w http.ResponseWriter, r *http.Request)    { a.h.Me(w, r) }
 func (a testAPI) DeleteV1Me(w http.ResponseWriter, r *http.Request) { a.h.DeleteMe(w, r) }
+func (a testAPI) GetV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+	a.h.ListAPIKeys(w, r)
+}
+func (a testAPI) PostV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+	a.h.CreateAPIKey(w, r)
+}
+func (a testAPI) DeleteV1MeApiKeysId(w http.ResponseWriter, r *http.Request, id string) {
+	a.h.RevokeAPIKey(w, r, id)
+}
 
 // newTestServer 装配本包处理器与鉴权中间件；限流在这里关掉，由 server 包统一测。
 func newTestServer(t *testing.T) *testutil.Client {
@@ -285,5 +296,72 @@ func TestHandlerIdentityVerificationAndPasswordReset(t *testing.T) {
 		"identifier": "a@b.cn", "password": "password2",
 	}, &tok); code != http.StatusOK {
 		t.Fatalf("login with new password: %d", code)
+	}
+}
+
+// TestHandlerAPIKeysFlow 走一遍契约：签发时返回明文，列表只给前缀与状态，撤销
+// 之后 404，未登录 401，用密钥调用账号接口 403（ADR-0063）。
+func TestHandlerAPIKeysFlow(t *testing.T) {
+	c := newTestServer(t)
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if code := c.JSON(http.MethodPost, "/v1/auth/register", "",
+		map[string]string{"identifier": "keys@b.cn", "password": "password1"}, &tok); code != http.StatusCreated {
+		t.Fatalf("register: %d", code)
+	}
+
+	var created struct {
+		ID        string    `json:"id"`
+		Name      string    `json:"name"`
+		Prefix    string    `json:"prefix"`
+		Key       string    `json:"key"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	if code := c.JSON(http.MethodPost, "/v1/me/api-keys", tok.AccessToken,
+		map[string]string{"name": "脚本"}, &created); code != http.StatusCreated {
+		t.Fatalf("create: %d", code)
+	}
+	if !strings.HasPrefix(created.Key, APIKeyPrefix) || created.ID == "" || created.Name != "脚本" {
+		t.Fatalf("签发结果不对：%+v", created)
+	}
+	if created.Prefix != created.Key[:apiKeyPrefixLength] {
+		t.Fatalf("前缀应取自密钥：%q %q", created.Prefix, created.Key)
+	}
+
+	// 列表里只有前缀，没有明文与摘要。
+	resp := c.Do(http.MethodGet, "/v1/me/api-keys", tok.AccessToken, nil, nil)
+	var listed struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	resp.Body.Close()
+	if len(listed.Keys) != 1 {
+		t.Fatalf("列表应有 1 把，得到 %d", len(listed.Keys))
+	}
+	item := listed.Keys[0]
+	if _, ok := item["key"]; ok {
+		t.Fatal("列表不应返回明文密钥")
+	}
+	if item["revoked"] != false || item["prefix"] != created.Prefix {
+		t.Fatalf("列表项不对：%+v", item)
+	}
+
+	// 密钥不能用来管理密钥。
+	if code := c.JSON(http.MethodPost, "/v1/me/api-keys", created.Key,
+		map[string]string{"name": "越界"}, nil); code != http.StatusForbidden {
+		t.Fatalf("密钥调用账号接口应回 403，得到 %d", code)
+	}
+
+	if code := c.JSON(http.MethodDelete, "/v1/me/api-keys/"+created.ID, tok.AccessToken, nil, nil); code != http.StatusNoContent {
+		t.Fatalf("revoke: %d", code)
+	}
+	if code := c.JSON(http.MethodDelete, "/v1/me/api-keys/"+created.ID, tok.AccessToken, nil, nil); code != http.StatusNotFound {
+		t.Fatalf("重复撤销应回 404，得到 %d", code)
+	}
+	if code := c.JSON(http.MethodGet, "/v1/me/api-keys", "", nil, nil); code != http.StatusUnauthorized {
+		t.Fatalf("未登录应回 401，得到 %d", code)
 	}
 }

@@ -215,6 +215,7 @@ const (
 	ProblemCodeInvalidCode        ProblemCode = "invalid_code"
 	ProblemCodeInvalidCredentials ProblemCode = "invalid_credentials"
 	ProblemCodeInvalidRequest     ProblemCode = "invalid_request"
+	ProblemCodeKeyScopeDenied     ProblemCode = "key_scope_denied"
 	ProblemCodeModelNotAllowed    ProblemCode = "model_not_allowed"
 	ProblemCodeNotFound           ProblemCode = "not_found"
 	ProblemCodeNotImplemented     ProblemCode = "not_implemented"
@@ -245,6 +246,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeInvalidCredentials:
 		return true
 	case ProblemCodeInvalidRequest:
+		return true
+	case ProblemCodeKeyScopeDenied:
 		return true
 	case ProblemCodeModelNotAllowed:
 		return true
@@ -514,6 +517,37 @@ type AdminUsageRoute struct {
 	ProviderId    string                      `json:"provider_id"`
 	UpstreamModel string                      `json:"upstream_model"`
 	Usage         AdminUsageCounts            `json:"usage"`
+}
+
+// ApiKey defines model for ApiKey.
+type ApiKey struct {
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+
+	// LastUsedAt 最近一次调用模型的时间，服务端按十分钟粒度更新；从没用过时省略
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+
+	// Name 用户起的名字，只用于辨认
+	Name string `json:"name"`
+
+	// Prefix 密钥的前几位，用于在列表里辨认；完整密钥只在签发时返回
+	//
+	// Examples: zx_AbCdEfGh
+	Prefix string `json:"prefix"`
+
+	// Revoked 是否已经撤销
+	Revoked bool `json:"revoked"`
+}
+
+// ApiKeyCreated defines model for ApiKeyCreated.
+type ApiKeyCreated struct {
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+
+	// Key 完整密钥，只在这一次返回；调用模型时放在 `Authorization: Bearer` 里
+	Key    string `json:"key"`
+	Name   string `json:"name"`
+	Prefix string `json:"prefix"`
 }
 
 // Backup defines model for Backup.
@@ -1089,6 +1123,12 @@ type DeleteV1MeJSONBody struct {
 	Password string `json:"password"`
 }
 
+// PostV1MeApiKeysJSONBody defines parameters for PostV1MeApiKeys.
+type PostV1MeApiKeysJSONBody struct {
+	// Name 给这把密钥起的名字，只用于辨认
+	Name string `json:"name"`
+}
+
 // PostV1MeIdentitiesIdVerificationConfirmJSONBody defines parameters for PostV1MeIdentitiesIdVerificationConfirm.
 type PostV1MeIdentitiesIdVerificationConfirmJSONBody struct {
 	Code string `json:"code"`
@@ -1200,6 +1240,9 @@ type PostV1LlmResponsesJSONRequestBody PostV1LlmResponsesJSONBody
 
 // DeleteV1MeJSONRequestBody defines body for DeleteV1Me for application/json ContentType.
 type DeleteV1MeJSONRequestBody DeleteV1MeJSONBody
+
+// PostV1MeApiKeysJSONRequestBody defines body for PostV1MeApiKeys for application/json ContentType.
+type PostV1MeApiKeysJSONRequestBody PostV1MeApiKeysJSONBody
 
 // PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody defines body for PostV1MeIdentitiesIdVerificationConfirm for application/json ContentType.
 type PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody PostV1MeIdentitiesIdVerificationConfirmJSONBody
@@ -1476,6 +1519,15 @@ type ServerInterface interface {
 	// GetV1Me 当前账号与它的登录方式
 	// (GET /v1/me)
 	GetV1Me(w http.ResponseWriter, r *http.Request)
+	// GetV1MeApiKeys 列出本账号的模型代理密钥，新的在前
+	// (GET /v1/me/api-keys)
+	GetV1MeApiKeys(w http.ResponseWriter, r *http.Request)
+	// PostV1MeApiKeys 签发一把模型代理密钥，明文只在这一次返回
+	// (POST /v1/me/api-keys)
+	PostV1MeApiKeys(w http.ResponseWriter, r *http.Request)
+	// DeleteV1MeApiKeysId 撤销一把模型代理密钥，立即失效
+	// (DELETE /v1/me/api-keys/{id})
+	DeleteV1MeApiKeysId(w http.ResponseWriter, r *http.Request, id string)
 	// PostV1MeIdentitiesIdVerification 给某一种登录方式发送验证码
 	// (POST /v1/me/identities/{id}/verification)
 	PostV1MeIdentitiesIdVerification(w http.ResponseWriter, r *http.Request, id string)
@@ -2416,6 +2468,60 @@ func (siw *ServerInterfaceWrapper) GetV1Me(w http.ResponseWriter, r *http.Reques
 	handler.ServeHTTP(w, r)
 }
 
+// GetV1MeApiKeys operation middleware
+func (siw *ServerInterfaceWrapper) GetV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetV1MeApiKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostV1MeApiKeys operation middleware
+func (siw *ServerInterfaceWrapper) PostV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostV1MeApiKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteV1MeApiKeysId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteV1MeApiKeysId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteV1MeApiKeysId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // PostV1MeIdentitiesIdVerification operation middleware
 func (siw *ServerInterfaceWrapper) PostV1MeIdentitiesIdVerification(w http.ResponseWriter, r *http.Request) {
 
@@ -3010,6 +3116,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me", wrapper.GetV1Me)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/verification", wrapper.PostV1MeIdentitiesIdVerification)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/identities/{id}/verification/confirm", wrapper.PostV1MeIdentitiesIdVerificationConfirm)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/api-keys", wrapper.GetV1MeApiKeys)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/api-keys", wrapper.PostV1MeApiKeys)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/me/api-keys/{id}", wrapper.DeleteV1MeApiKeysId)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/cloud", wrapper.DeleteV1Cloud)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/head", wrapper.GetV1SyncHead)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/sync/snapshot", wrapper.GetV1SyncSnapshot)

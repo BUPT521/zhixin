@@ -11,6 +11,91 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const apiKeyByHash = `-- name: ApiKeyByHash :one
+SELECT k.id, k.user_id, k.name, k.prefix, k.revoked_at, k.last_used_at,
+  k.created_at,
+  EXISTS (
+    SELECT 1
+    FROM user_identity AS identity
+    WHERE identity.user_id = k.user_id AND identity.verified_at IS NOT NULL
+  )::boolean AS contact_verified
+FROM api_key AS k
+WHERE k.key_hash = $1 AND k.revoked_at IS NULL
+`
+
+type ApiKeyByHashRow struct {
+	ID              string
+	UserID          string
+	Name            string
+	Prefix          string
+	RevokedAt       pgtype.Timestamptz
+	LastUsedAt      pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	ContactVerified bool
+}
+
+// 鉴权只认没有撤销的密钥；“已验证”与访问令牌同一口径，至少一种登录方式确认过。
+func (q *Queries) ApiKeyByHash(ctx context.Context, keyHash string) (ApiKeyByHashRow, error) {
+	row := q.db.QueryRow(ctx, apiKeyByHash, keyHash)
+	var i ApiKeyByHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Prefix,
+		&i.RevokedAt,
+		&i.LastUsedAt,
+		&i.CreatedAt,
+		&i.ContactVerified,
+	)
+	return i, err
+}
+
+const apiKeysByUser = `-- name: ApiKeysByUser :many
+SELECT id, user_id, name, prefix, revoked_at, last_used_at, created_at
+FROM api_key
+WHERE user_id = $1
+ORDER BY created_at DESC, id DESC
+`
+
+type ApiKeysByUserRow struct {
+	ID         string
+	UserID     string
+	Name       string
+	Prefix     string
+	RevokedAt  pgtype.Timestamptz
+	LastUsedAt pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) ApiKeysByUser(ctx context.Context, userID string) ([]ApiKeysByUserRow, error) {
+	rows, err := q.db.Query(ctx, apiKeysByUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ApiKeysByUserRow{}
+	for rows.Next() {
+		var i ApiKeysByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Name,
+			&i.Prefix,
+			&i.RevokedAt,
+			&i.LastUsedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const authCode = `-- name: AuthCode :one
 SELECT purpose, kind, identifier, user_id, code_hash, expires_at, attempts, created_at
 FROM auth_code
@@ -39,6 +124,36 @@ func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCode, e
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const createApiKey = `-- name: CreateApiKey :exec
+
+INSERT INTO api_key (id, user_id, name, prefix, key_hash)
+VALUES (
+  $1, $2, $3, $4,
+  $5
+)
+`
+
+type CreateApiKeyParams struct {
+	ID      string
+	UserID  string
+	Name    string
+	Prefix  string
+	KeyHash string
+}
+
+// 模型代理的接入密钥（schema.sql 的 api_key，ADR-0063）。密钥本身只在签发那一
+// 次出现在响应里，库里只有 SHA-256；查询按摘要定位，前缀只用于展示。
+func (q *Queries) CreateApiKey(ctx context.Context, arg CreateApiKeyParams) error {
+	_, err := q.db.Exec(ctx, createApiKey,
+		arg.ID,
+		arg.UserID,
+		arg.Name,
+		arg.Prefix,
+		arg.KeyHash,
+	)
+	return err
 }
 
 const createIdentity = `-- name: CreateIdentity :exec
@@ -530,6 +645,26 @@ func (q *Queries) RefreshUsed(ctx context.Context, tokenHash string) (SessionRef
 	return i, err
 }
 
+const revokeApiKey = `-- name: RevokeApiKey :execrows
+UPDATE api_key
+SET revoked_at = now()
+WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+`
+
+type RevokeApiKeyParams struct {
+	ID     string
+	UserID string
+}
+
+// 撤销只对当前账号名下、还没有撤销过的密钥生效；0 行按找不到处理。
+func (q *Queries) RevokeApiKey(ctx context.Context, arg RevokeApiKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeApiKey, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const rotateSession = `-- name: RotateSession :execrows
 UPDATE session
 SET access_hash = $1,
@@ -645,6 +780,19 @@ type SetIdentityVerifiedParams struct {
 
 func (q *Queries) SetIdentityVerified(ctx context.Context, arg SetIdentityVerifiedParams) error {
 	_, err := q.db.Exec(ctx, setIdentityVerified, arg.VerifiedAt, arg.ID, arg.UserID)
+	return err
+}
+
+const touchApiKey = `-- name: TouchApiKey :exec
+UPDATE api_key
+SET last_used_at = now()
+WHERE id = $1
+  AND (last_used_at IS NULL OR last_used_at < now() - interval '10 minutes')
+`
+
+// 最近使用时间只用于辨认，十分钟粒度足够，避免每次模型请求都写一行。
+func (q *Queries) TouchApiKey(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, touchApiKey, id)
 	return err
 }
 
