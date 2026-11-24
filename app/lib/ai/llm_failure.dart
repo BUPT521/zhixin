@@ -145,6 +145,15 @@ class LlmRequestBudget {
     return value;
   }
 
+  /// 这一轮还剩多少时间，已经用完时为 0。传输层把它放进请求头交给服务端，
+  /// 服务端据此约束等待首个有效输出与整段回答的时限，两端的期限因此不会互相
+  /// 等待到对方先结束。
+  Duration get remaining {
+    if (cancelToken?.isCancelled ?? false) return Duration.zero;
+    final value = timeout - _clock.elapsed;
+    return value <= Duration.zero ? Duration.zero : value;
+  }
+
   void check() {
     _remaining;
   }

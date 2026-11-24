@@ -169,7 +169,7 @@ func (Base) PutV1BlobsSha256(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-func (Base) PostV1LlmResponses(w http.ResponseWriter, _ *http.Request) {
+func (Base) PostV1LlmResponses(w http.ResponseWriter, _ *http.Request, _ api.PostV1LlmResponsesParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
 

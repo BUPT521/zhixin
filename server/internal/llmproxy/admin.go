@@ -656,7 +656,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 		"input":  json.RawMessage(`[{"type":"message","role":"user","content":"ping"}]`),
 		"stream": json.RawMessage(`false`),
 	}
-	reply, err := a.proxy.dispatch(ctx, &plan, fields, false, defaultOutputTokens)
+	reply, err := a.proxy.dispatch(ctx, &plan, fields, false, defaultOutputTokens, time.Time{})
 	out.LatencyMs = time.Since(start).Milliseconds()
 	if err != nil || reply.completion != responseCompleted {
 		if reply.route.Provider != nil {

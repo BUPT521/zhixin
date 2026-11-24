@@ -370,7 +370,7 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 		return chunkOut{err: err}
 	}
 	estimate := embeddingEstimate(chunk)
-	resp, err := p.attempt(ctx, rt.Provider, "/embeddings", body, true)
+	resp, err := p.attempt(ctx, rt.Provider, "/embeddings", body, p.cfg.HeaderTimeout)
 	if err != nil {
 		return chunkOut{err: err, tokens: estimate, estimated: estimate}
 	}

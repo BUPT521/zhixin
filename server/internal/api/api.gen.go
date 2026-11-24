@@ -1038,6 +1038,15 @@ type PostV1LlmResponsesJSONBody struct {
 	Tools      *[]map[string]interface{} `json:"tools,omitempty"`
 }
 
+// PostV1LlmResponsesParams defines parameters for PostV1LlmResponses.
+type PostV1LlmResponsesParams struct {
+	// XZhixinRoundBudgetMs 客户端从用户发出这一轮提问开始计算的本轮剩余预算，单位毫秒。服务端按
+	// `ZHIXIN_LLM_ROUND_BUDGET_MAX` 截断这个值，整段回答、两次事件之间的
+	// 空闲等待与每次尝试等待首个有效输出都收在这份预算以内；省略时只按本机
+	// 时限执行。值 0 表示这一轮预算已经用完，服务端不再发起上游尝试。
+	XZhixinRoundBudgetMs *int64 `json:"X-Zhixin-Round-Budget-Ms,omitempty"`
+}
+
 // DeleteV1MeJSONBody defines parameters for DeleteV1Me.
 type DeleteV1MeJSONBody struct {
 	Password string `json:"password"`
@@ -1423,7 +1432,7 @@ type ServerInterface interface {
 	GetV1LlmQuota(w http.ResponseWriter, r *http.Request)
 	// PostV1LlmResponses OpenAI Responses 代理
 	// (POST /v1/llm/responses)
-	PostV1LlmResponses(w http.ResponseWriter, r *http.Request)
+	PostV1LlmResponses(w http.ResponseWriter, r *http.Request, params PostV1LlmResponsesParams)
 	// DeleteV1Me 删除账号，连同同步序列、附件、备份与用量一并删除
 	// (DELETE /v1/me)
 	DeleteV1Me(w http.ResponseWriter, r *http.Request)
@@ -2239,8 +2248,35 @@ func (siw *ServerInterfaceWrapper) GetV1LlmQuota(w http.ResponseWriter, r *http.
 // PostV1LlmResponses operation middleware
 func (siw *ServerInterfaceWrapper) PostV1LlmResponses(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PostV1LlmResponsesParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "X-Zhixin-Round-Budget-Ms" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Zhixin-Round-Budget-Ms")]; found {
+		var XZhixinRoundBudgetMs int64
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Zhixin-Round-Budget-Ms", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Zhixin-Round-Budget-Ms", valueList[0], &XZhixinRoundBudgetMs, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Zhixin-Round-Budget-Ms", Err: err})
+			return
+		}
+
+		params.XZhixinRoundBudgetMs = &XZhixinRoundBudgetMs
+
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1LlmResponses(w, r)
+		siw.Handler.PostV1LlmResponses(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

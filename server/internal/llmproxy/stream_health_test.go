@@ -69,7 +69,7 @@ func TestStreamCompletionControlsUsageAndProbeRecovery(t *testing.T) {
 			if tc.cancel {
 				writer = cancelOnWrite{rec, cancel}
 			}
-			env.proxy.Responses(writer, req)
+			env.proxy.Responses(writer, req, nil)
 			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), tc.event) {
 				t.Fatalf("expected upstream stream, got %d %s", rec.Code, rec.Body.String())
 			}

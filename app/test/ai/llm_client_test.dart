@@ -294,6 +294,35 @@ void main() {
     expect(requests, 2);
   });
 
+  test('请求带上本轮剩余预算，重试时剩下的更少', () async {
+    final budgets = <String?>[];
+    final client = HttpLlmClient(
+      config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
+      budget: LlmRequestBudget(timeout: const Duration(seconds: 30)),
+      retryDelay: const Duration(milliseconds: 40),
+      httpClient: MockClient.streaming((request, body) async {
+        budgets.add(request.headers['X-Zhixin-Round-Budget-Ms']);
+        if (budgets.length == 1) {
+          throw http.ClientException('connection closed');
+        }
+        return http.StreamedResponse(
+          Stream.value(utf8.encode('${textDelta('好了')}${completed()}')),
+          200,
+          headers: {'content-type': 'text/event-stream'},
+        );
+      }),
+    );
+    final result = await client.stream(system: 's', messages: _hi).toList();
+    expect(result.map((delta) => delta.text).join(), '好了');
+    expect(budgets, hasLength(2));
+    final first = int.parse(budgets.first!);
+    final second = int.parse(budgets.last!);
+    // 整轮预算 30 秒，单位是毫秒；两次尝试共用一个截止时间，所以后一次更少。
+    expect(first, greaterThan(second));
+    expect(first, lessThanOrEqualTo(30000));
+    expect(second, greaterThan(0));
+  });
+
   test('正文之后的空闲超时按超时返回，已经显示的部分保留', () async {
     var requests = 0;
     final aborted = Completer<void>();

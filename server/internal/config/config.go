@@ -231,6 +231,13 @@ type LLMConfig struct {
 	// HeaderTimeout is how long a source may take to send response headers for
 	// a streamed chat or an embeddings request before the next source is tried.
 	HeaderTimeout time.Duration
+	// FirstOutputTimeout 是一次流式聊天尝试等待首个有效输出的上限，答案是多条
+	// 候选时再按本轮剩余预算平分，首发与备用因此都落在同一轮预算内。它只约束
+	// 首个输出之前，交付正文之后的等待由 StreamIdleTimeout 约束。
+	FirstOutputTimeout time.Duration
+	// RoundBudgetMax 是服务端接受的本轮预算上限：客户端在请求头里带本轮剩余
+	// 时间，值再大也只按这个上限执行，整段回答、空闲等待与首字等待都不超过它。
+	RoundBudgetMax time.Duration
 }
 
 // Load builds a Config from getenv (normally os.Getenv).
@@ -371,6 +378,8 @@ func Load(getenv func(string) string) (Config, error) {
 			EmbeddingCacheBytes:    num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
 			MaxAttempts:            int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
 			HeaderTimeout:          dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
+			FirstOutputTimeout:     dur("ZHIXIN_LLM_FIRST_OUTPUT_TIMEOUT", "20s"),
+			RoundBudgetMax:         dur("ZHIXIN_LLM_ROUND_BUDGET_MAX", "5m"),
 		},
 
 		AdminToken:         get("ZHIXIN_ADMIN_TOKEN", ""),

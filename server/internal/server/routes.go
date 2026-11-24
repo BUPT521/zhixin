@@ -146,8 +146,8 @@ func (rt routes) DeleteV1BackupsId(w http.ResponseWriter, r *http.Request, id st
 
 func (rt routes) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { rt.llm.Models(w, r) }
 func (rt routes) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { rt.llm.QuotaStatus(w, r) }
-func (rt routes) PostV1LlmResponses(w http.ResponseWriter, r *http.Request) {
-	rt.llm.Responses(w, r)
+func (rt routes) PostV1LlmResponses(w http.ResponseWriter, r *http.Request, params api.PostV1LlmResponsesParams) {
+	rt.llm.Responses(w, r, params.XZhixinRoundBudgetMs)
 }
 
 func (rt routes) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, _ api.PostV1LlmEmbeddingsParams) {

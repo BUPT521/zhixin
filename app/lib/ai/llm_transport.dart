@@ -117,6 +117,7 @@ class HttpLlmClient implements LlmClient {
               forceTool: forceTool,
               allowToolCalls: allowToolCalls,
               abortTrigger: lifecycle.abortTrigger,
+              roundBudget: lifecycle.remaining,
             ),
           ),
         );
@@ -181,6 +182,7 @@ class HttpLlmClient implements LlmClient {
               forceTool: forceTool,
               allowToolCalls: allowToolCalls,
               abortTrigger: attempt.abortTrigger,
+              roundBudget: lifecycle.remaining,
             ),
           ),
         );
@@ -264,6 +266,7 @@ class HttpLlmClient implements LlmClient {
     required String? forceTool,
     required bool allowToolCalls,
     required Future<void> abortTrigger,
+    required Duration roundBudget,
   }) {
     final request = http.AbortableRequest(
       'POST',
@@ -274,6 +277,9 @@ class HttpLlmClient implements LlmClient {
       'Authorization': 'Bearer ${config.apiKey.trim()}',
       'Content-Type': 'application/json',
       'Accept': stream ? 'text/event-stream' : 'application/json',
+      // 本轮剩余预算，单位毫秒；服务端按自己的上限截断，并把它用作整段回答与
+      // 等待首个有效输出的时限，两端的期限因此落在同一份预算里。
+      'X-Zhixin-Round-Budget-Ms': '${roundBudget.inMilliseconds}',
     });
     request.bodyBytes = utf8.encode(
       jsonEncode(

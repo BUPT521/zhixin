@@ -732,7 +732,18 @@ paths:
         `response.completed` 的 `usage`（`input_tokens`、`output_tokens`），非流式
         取响应体的 `usage`，缺少用量时保留预留值。错误分类为
         `model_not_allowed`（400）、`contact_unverified`（403）、
-        `quota_exceeded`（429）、`unavailable`（503）、`upstream_failed`（502）。
+        `quota_exceeded`（429）、`unavailable`（503）、`upstream_failed`（502），
+        本轮预算用完且没有任何来源交付有效输出时回 504 `upstream_failed`。
+      parameters:
+        - name: X-Zhixin-Round-Budget-Ms
+          in: header
+          required: false
+          description: |
+            客户端从用户发出这一轮提问开始计算的本轮剩余预算，单位毫秒。服务端按
+            `ZHIXIN_LLM_ROUND_BUDGET_MAX` 截断这个值，整段回答、两次事件之间的
+            空闲等待与每次尝试等待首个有效输出都收在这份预算以内；省略时只按本机
+            时限执行。值 0 表示这一轮预算已经用完，服务端不再发起上游尝试。
+          schema: { type: integer, format: int64, minimum: 0 }
       requestBody:
         required: true
         content:
@@ -776,6 +787,11 @@ paths:
         "429": { $ref: "#/components/responses/Problem" }
         "502": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+        "504":
+          description: "`upstream_failed`：本轮预算用完，没有任何来源交付有效输出"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
 
   /v1/llm/embeddings:
     post:

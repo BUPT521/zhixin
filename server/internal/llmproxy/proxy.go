@@ -399,14 +399,16 @@ func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, reserved,
 
 // Responses 转发客户端唯一的对话请求（ADR-0052）。服务端做字段白名单校验、
 // 按上限校验或补齐 max_output_tokens、替换模型名并结算额度，事件原样转发；
-// 请求体、响应体与流里的用量都不记录。
-func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
+// 请求体、响应体与流里的用量都不记录。roundBudgetMs 是客户端带来的本轮剩余
+// 预算，整段回答、空闲等待与首字等待都收在它以内，见 roundDeadline。
+func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, roundBudgetMs *int64) {
 	userID := auth.MustPrincipal(r.Context()).UserID
 	done, ok := p.beginRequest(w, r, userID)
 	if !ok {
 		return
 	}
 	defer done()
+	deadline := p.roundDeadline(roundBudgetMs)
 	fields, ok := p.readBody(w, r)
 	if !ok {
 		return
@@ -446,22 +448,31 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 	reserve := p.budget(r, userID, day, model)
 
 	// 流式响应套一层守卫：总时限从发起上游请求时开始，空闲时限从收到响应体之后
-	// 开始；超时取消上游请求，阻塞中的读取随即返回。非流式沿用请求自身的 context。
+	// 开始；超时取消上游请求，阻塞中的读取随即返回。非流式沿用请求自身的 context
+	// 加一份整段时限。两种时限都不超过本轮剩余预算。
+	if !deadline.IsZero() && !p.now().Before(deadline) {
+		writeRoundExpired(w, r)
+		return
+	}
 	reqCtx := r.Context()
 	var guard *streamGuard
 	if stream {
-		reqCtx, guard = p.newStreamGuard(reqCtx)
+		reqCtx, guard = p.newStreamGuard(reqCtx, deadline)
 		defer guard.stop()
-	} else if p.cfg.StreamTotalTimeout > 0 {
+	} else if total := p.responseTimeout(deadline); total > 0 {
 		var cancel context.CancelFunc
-		reqCtx, cancel = context.WithTimeout(reqCtx, p.cfg.StreamTotalTimeout)
+		reqCtx, cancel = context.WithTimeout(reqCtx, total)
 		defer cancel()
 	}
 	plan := attemptPlan{model: model, candidates: p.router.candidates(model), reserve: reserve}
-	reply, err := p.dispatch(reqCtx, &plan, fields, stream, output)
+	reply, err := p.dispatch(reqCtx, &plan, fields, stream, output, deadline)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // client went away
+		}
+		if (guard != nil && guard.fromBudget && guard.expired.Load()) || errors.Is(err, context.DeadlineExceeded) {
+			writeRoundExpired(w, r)
+			return
 		}
 		if errors.Is(err, errInstanceBusy) {
 			httpx.TooMany(w, r, 1)
@@ -509,8 +520,51 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 		outcome = healthOutcome{reason: "客户端已取消请求"}
 		result.clientCanceled = true
 	}
+	if guard.fromBudget && guard.expired.Load() {
+		// 本轮预算在服务端这一侧用完：不是来源的故障，按取消计，不增加失败数。
+		outcome = healthOutcome{reason: "本轮预算用完"}
+		result.clientCanceled = true
+	}
 	result.outputLimited = end == responseOutputLimit
 	p.finishAttempt(&plan, reply.attempt, result, reply.status, outcome)
+}
+
+// writeRoundExpired 表示这一轮回答的预算已经用完，服务端没有交付任何有效输出。
+// 客户端据此进入降级或恢复提示，不再等待这一轮。
+func writeRoundExpired(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteProblem(w, r, http.StatusGatewayTimeout, httpx.CodeUpstreamFailed,
+		"this round's time budget is used up before a model source answered")
+}
+
+// roundDeadline 把客户端带来的本轮剩余预算换成截止时间：客户端不给值时返回零
+// 时间，只按本机时限执行；超过 RoundBudgetMax 的值按上限截断；值为 0 时截止
+// 时间就是现在。传递的是一段时长而不是绝对时间，两端时钟不一致也不受影响。
+func (p *Proxy) roundDeadline(raw *int64) time.Time {
+	if raw == nil {
+		return time.Time{}
+	}
+	left := time.Duration(*raw) * time.Millisecond
+	if limit := p.cfg.RoundBudgetMax; limit > 0 && left > limit {
+		left = limit
+	}
+	if left < 0 {
+		left = 0
+	}
+	return p.now().Add(left)
+}
+
+// responseTimeout 是整段回答在服务端这一侧的时限：取 StreamTotalTimeout 与本轮
+// 剩余预算中较小的一个，没有客户端预算时只按 StreamTotalTimeout。调用前已经核对
+// 过预算没有用完，所以有截止时间时返回值总是正的；没有时限时返回 0。
+func (p *Proxy) responseTimeout(deadline time.Time) time.Duration {
+	limit := p.cfg.StreamTotalTimeout
+	if deadline.IsZero() {
+		return limit
+	}
+	if left := deadline.Sub(p.now()); limit <= 0 || left < limit {
+		return left
+	}
+	return limit
 }
 
 // responsesOutputLimit 检查输出上限；没给时补上 defaultOutputTokens，用量估算
@@ -657,16 +711,27 @@ type chatReply struct {
 
 // dispatch tries the next candidate while a response can still be replaced.
 // For a stream, ownership of its body and its settlement moves to Responses.
-func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[string]json.RawMessage, stream bool, output int64) (chatReply, error) {
+// deadline 是本轮截止时间，用于给每次流式尝试分到等待首个输出的时间。
+func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[string]json.RawMessage, stream bool, output int64, deadline time.Time) (chatReply, error) {
 	var lastErr error = errors.New("no usable route")
 	var reply chatReply
-	for _, rt := range plan.candidates {
+	for i, rt := range plan.candidates {
 		if !p.attemptsRemain(plan) {
 			break
+		}
+		if err := ctx.Err(); err != nil {
+			return reply, err
+		}
+		if !deadline.IsZero() && !p.now().Before(deadline) {
+			return reply, context.DeadlineExceeded
 		}
 		body, err := withModel(fields, rt.UpstreamModel)
 		if err != nil {
 			return reply, err
+		}
+		var firstOutput time.Duration
+		if stream {
+			firstOutput = p.firstOutputBudget(plan, i, deadline)
 		}
 		attempt, started, err := p.beginAttempt(ctx, plan, rt, int64(len(body))+output)
 		if err != nil {
@@ -676,7 +741,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			continue
 		}
 		reply = chatReply{route: rt, attempt: attempt}
-		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream)
+		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, firstOutput)
 		if err != nil {
 			p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, 0, requestFailure(ctx, err))
 			if ctx.Err() != nil {
@@ -767,14 +832,46 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 	return reply, lastErr
 }
 
+// firstOutputBudget 给这一次流式尝试分到等待首个有效输出的时间：不超过
+// FirstOutputTimeout（没有配置时退回 HeaderTimeout），也不超过本轮剩余预算按
+// 还能尝试的候选数平分的份额，首发与备用因此都落在同一轮预算内。没有配置任何
+// 时限、也没有客户端预算时返回 0，表示不设这个期限；本轮预算是否已经用完由
+// dispatch 在发起尝试之前核对。
+func (p *Proxy) firstOutputBudget(plan *attemptPlan, index int, deadline time.Time) time.Duration {
+	limit := p.cfg.FirstOutputTimeout
+	if limit <= 0 {
+		limit = p.cfg.HeaderTimeout
+	}
+	if deadline.IsZero() {
+		return limit
+	}
+	left := deadline.Sub(p.now())
+	if left <= 0 {
+		return 0
+	}
+	remaining := len(plan.candidates) - index
+	if p.cfg.MaxAttempts > 0 {
+		if room := p.cfg.MaxAttempts - plan.started; room < remaining {
+			remaining = room
+		}
+	}
+	if remaining < 1 {
+		remaining = 1
+	}
+	if share := left / time.Duration(remaining); limit <= 0 || share < limit {
+		limit = share
+	}
+	return limit
+}
+
 // upstreamResponsesPath 是来源侧接收对话请求的路径。来源都是 OpenAI 兼容地址，
 // 以 /v1 结尾；管理员在后台配置来源时写的就是这个结尾。
 const upstreamResponsesPath = "/responses"
 
-// attempt 向一个来源发一次请求。headerDeadline 为真时，响应头必须在
-// HeaderTimeout 内到达，否则尝试下一条路由；非流式聊天
-// 要等整段回答生成完才有响应头，不设这个期限。
-func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, headerDeadline bool) (*http.Response, error) {
+// attempt 向一个来源发一次请求。firstOutput 大于 0 时表示这是等待首个输出的
+// 流式请求：响应头必须在这段时间内到达，否则尝试下一条路由，请求也带上
+// Accept: text/event-stream；非流式聊天要等整段回答生成完才有响应头，传 0。
+func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, firstOutput time.Duration) (*http.Response, error) {
 	actx, cancel := context.WithCancel(ctx)
 	var gotConnection atomic.Bool
 	actx = httptrace.WithClientTrace(actx, &httptrace.ClientTrace{
@@ -789,12 +886,12 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 	if prov.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+prov.APIKey)
 	}
-	if headerDeadline {
+	if firstOutput > 0 {
 		req.Header.Set("Accept", "text/event-stream")
 	}
 	var timer *time.Timer
-	if headerDeadline && p.cfg.HeaderTimeout > 0 {
-		timer = time.AfterFunc(p.cfg.HeaderTimeout, cancel)
+	if firstOutput > 0 {
+		timer = time.AfterFunc(firstOutput, cancel)
 	}
 	resp, err := p.sendToProvider(req, prov)
 	if timer != nil && !timer.Stop() {
@@ -803,7 +900,7 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 			resp.Body.Close()
 		}
 		cancel()
-		resp, err = nil, fmt.Errorf("no response within %s", p.cfg.HeaderTimeout)
+		resp, err = nil, fmt.Errorf("no response within %s", firstOutput)
 	}
 	if err != nil {
 		cancel()
@@ -997,16 +1094,33 @@ type streamGuard struct {
 	idleTimeout time.Duration
 	idle        *time.Timer
 	total       *time.Timer
+	// fromBudget 表示总时限取自本轮预算而不是 StreamTotalTimeout；到点后调用方
+	// 把这次结束记成预算用完，不算来源故障。
+	fromBudget bool
+	expired    atomic.Bool
 }
 
-// newStreamGuard 创建可取消的上游 context 与守卫；总时限立即开始计时。
-func (p *Proxy) newStreamGuard(ctx context.Context) (context.Context, *streamGuard) {
+// newStreamGuard 创建可取消的上游 context 与守卫；总时限是 StreamTotalTimeout
+// 与本轮剩余预算中较小的一个，创建时立即开始计时。
+func (p *Proxy) newStreamGuard(ctx context.Context, deadline time.Time) (context.Context, *streamGuard) {
 	ctx, cancel := context.WithCancel(ctx)
 	guard := &streamGuard{cancel: cancel}
-	if p.cfg.StreamTotalTimeout > 0 {
-		guard.total = time.AfterFunc(p.cfg.StreamTotalTimeout, cancel)
+	total := p.cfg.StreamTotalTimeout
+	if !deadline.IsZero() {
+		if left := deadline.Sub(p.now()); total <= 0 || left < total {
+			total, guard.fromBudget = left, true
+		}
+	}
+	if total > 0 {
+		guard.total = time.AfterFunc(total, guard.expire)
 	}
 	return ctx, guard
+}
+
+// expire 取消上游请求并记下时限到点，调用方据此区分来源故障与预算用完。
+func (g *streamGuard) expire() {
+	g.expired.Store(true)
+	g.cancel()
 }
 
 // watch 绑定上游响应体并开始空闲计时；之后每次读到数据由 Read 重置计时器。
