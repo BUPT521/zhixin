@@ -225,6 +225,39 @@ func TestHandlerDeleteMeFailBudget(t *testing.T) {
 	}
 }
 
+// TestHandlerCreateAPIKeyFailBudget 核对签发密钥的错误密码也扣按账号的失败预算：
+// 连续输错之后即使密码正确也先回 429，期间不签发任何密钥（ADR-0063）。
+func TestHandlerCreateAPIKeyFailBudget(t *testing.T) {
+	c := newTestServerWithLoginLimit(t, 2)
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if code := c.JSON(http.MethodPost, "/v1/auth/register", "", map[string]string{
+		"identifier": "a@b.cn", "password": "password1",
+	}, &tok); code != http.StatusCreated {
+		t.Fatalf("register: %d", code)
+	}
+	var p testutil.Problem
+	for i := 0; i < 2; i++ {
+		if code := c.JSON(http.MethodPost, "/v1/me/api-keys", tok.AccessToken, map[string]string{
+			"name": "脚本", "password": "wrong-password",
+		}, &p); code != http.StatusUnauthorized {
+			t.Fatalf("第 %d 次错密码签发: %d %+v", i+1, code, p)
+		}
+	}
+	if code := c.JSON(http.MethodPost, "/v1/me/api-keys", tok.AccessToken, map[string]string{
+		"name": "脚本", "password": "password1",
+	}, &p); code != http.StatusTooManyRequests || p.Code != string(httpx.CodeRateLimited) {
+		t.Fatalf("预算用尽应回 429: %d %+v", code, p)
+	}
+	var listed struct {
+		Keys []map[string]any `json:"keys"`
+	}
+	if code := c.JSON(http.MethodGet, "/v1/me/api-keys", tok.AccessToken, nil, &listed); code != http.StatusOK || len(listed.Keys) != 0 {
+		t.Fatalf("失败与限流期间不应签发密钥：%d %+v", code, listed)
+	}
+}
+
 // meIdentities 是 /v1/me 的测试视图：只取本文件用得到的字段。
 type meIdentities struct {
 	UserId     string `json:"user_id"`
@@ -302,8 +335,8 @@ func TestHandlerIdentityVerificationAndPasswordReset(t *testing.T) {
 	}
 }
 
-// TestHandlerAPIKeysFlow 走一遍契约：签发时返回明文，列表只给前缀与状态，撤销
-// 之后 404，未登录 401，用密钥调用账号接口 403（ADR-0063）。
+// TestHandlerAPIKeysFlow 走一遍契约：签发要求当前密码，明文只在签发时返回，列表
+// 只给前缀与状态，撤销之后 404，未登录 401，用密钥调用账号接口 403（ADR-0063）。
 func TestHandlerAPIKeysFlow(t *testing.T) {
 	c := newTestServer(t)
 	var tok struct {
@@ -314,6 +347,14 @@ func TestHandlerAPIKeysFlow(t *testing.T) {
 		t.Fatalf("register: %d", code)
 	}
 
+	// 短期凭据不能直接换长期凭据：密码错了不签发，也不返回明文。
+	var bad testutil.Problem
+	if code := c.JSON(http.MethodPost, "/v1/me/api-keys", tok.AccessToken,
+		map[string]string{"name": "脚本", "password": "wrong-pass"}, &bad); code != http.StatusUnauthorized ||
+		bad.Code != string(httpx.CodeInvalidCredentials) {
+		t.Fatalf("密码错误应回 401 invalid_credentials，得到 %d %+v", code, bad)
+	}
+
 	var created struct {
 		ID        string    `json:"id"`
 		Name      string    `json:"name"`
@@ -322,7 +363,7 @@ func TestHandlerAPIKeysFlow(t *testing.T) {
 		CreatedAt time.Time `json:"created_at"`
 	}
 	if code := c.JSON(http.MethodPost, "/v1/me/api-keys", tok.AccessToken,
-		map[string]string{"name": "脚本"}, &created); code != http.StatusCreated {
+		map[string]string{"name": "脚本", "password": "password1"}, &created); code != http.StatusCreated {
 		t.Fatalf("create: %d", code)
 	}
 	if !strings.HasPrefix(created.Key, APIKeyPrefix) || created.ID == "" || created.Name != "脚本" {
@@ -354,7 +395,7 @@ func TestHandlerAPIKeysFlow(t *testing.T) {
 
 	// 密钥不能用来管理密钥。
 	if code := c.JSON(http.MethodPost, "/v1/me/api-keys", created.Key,
-		map[string]string{"name": "越界"}, nil); code != http.StatusForbidden {
+		map[string]string{"name": "越界", "password": "password1"}, nil); code != http.StatusForbidden {
 		t.Fatalf("密钥调用账号接口应回 403，得到 %d", code)
 	}
 
@@ -386,7 +427,7 @@ func TestHandlerRevokeAllAPIKeys(t *testing.T) {
 			Key string `json:"key"`
 		}
 		if code := c.JSON(http.MethodPost, "/v1/me/api-keys", tok.AccessToken,
-			map[string]string{"name": name}, &created); code != http.StatusCreated {
+			map[string]string{"name": name, "password": "password1"}, &created); code != http.StatusCreated {
 			t.Fatalf("create %s: %d", name, code)
 		}
 		keys = append(keys, created.Key)

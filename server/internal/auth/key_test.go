@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -231,5 +233,60 @@ func TestRevokeAllAPIKeys(t *testing.T) {
 	}
 	if revoked, err := svc.RevokeAllAPIKeys(ctx, p); err != nil || revoked != 0 {
 		t.Fatalf("再撤一次应撤销 0 把，得到 %d %v", revoked, err)
+	}
+}
+
+// TestPruneLoopDeletesStaleRevokedKeys 核对每日清理删除撤销超过保留期的密钥行：
+// 反复签发再撤销不会让表和列表无限变长，保留期内的撤销记录仍能回看，仍然有效的
+// 密钥不受影响（ADR-0063）。
+func TestPruneLoopDeletesStaleRevokedKeys(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s, c := newTestService()
+	st := s.store.(*MemoryStore)
+	user := createEmailAccount(t, st, User{ID: "u-key", PasswordHash: "h", CreatedAt: c.t}, "keys@b.cn")
+	keys := []APIKey{
+		{ID: "old", UserID: user.ID, Name: "旧", Prefix: "zx_Old00000", Revoked: true,
+			RevokedAt: c.t.Add(-revokedKeyKeep - time.Hour), CreatedAt: c.t.Add(-60 * 24 * time.Hour)},
+		{ID: "fresh", UserID: user.ID, Name: "新", Prefix: "zx_New00000", Revoked: true,
+			RevokedAt: c.t.Add(-time.Hour), CreatedAt: c.t.Add(-2 * time.Hour)},
+		{ID: "active", UserID: user.ID, Name: "在用", Prefix: "zx_Active000", CreatedAt: c.t},
+	}
+	for _, key := range keys {
+		if err := st.CreateKey(ctx, key, "hash-"+key.ID); err != nil {
+			t.Fatalf("create key %s: %v", key.ID, err)
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.PruneLoop(ctx, st, slog.New(slog.NewTextHandler(io.Discard, nil)))
+		close(done)
+	}()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if listed, err := s.APIKeys(ctx, Principal{UserID: user.ID}); err == nil && len(listed) == 2 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ctx 结束之后 PruneLoop 应当退出")
+	}
+
+	listed, err := s.APIKeys(ctx, Principal{UserID: user.ID})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("保留期外的撤销行应被删除，得到 %+v", listed)
+	}
+	for _, key := range listed {
+		if key.ID == "old" {
+			t.Fatal("撤销超过保留期的密钥行应当已被删除")
+		}
 	}
 }

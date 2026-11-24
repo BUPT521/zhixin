@@ -3,8 +3,10 @@ package pg
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
@@ -35,6 +37,7 @@ func (s *Store) KeysByUser(ctx context.Context, userID string) ([]auth.APIKey, e
 			Name:       row.Name,
 			Prefix:     row.Prefix,
 			Revoked:    row.RevokedAt.Valid,
+			RevokedAt:  row.RevokedAt.Time,
 			LastUsedAt: row.LastUsedAt.Time,
 			CreatedAt:  row.CreatedAt.Time,
 		})
@@ -55,6 +58,8 @@ func (s *Store) KeyByHash(ctx context.Context, keyHash string) (auth.APIKey, err
 		UserID:          row.UserID,
 		Name:            row.Name,
 		Prefix:          row.Prefix,
+		Revoked:         row.RevokedAt.Valid,
+		RevokedAt:       row.RevokedAt.Time,
 		LastUsedAt:      row.LastUsedAt.Time,
 		CreatedAt:       row.CreatedAt.Time,
 		ContactVerified: row.ContactVerified,
@@ -75,4 +80,10 @@ func (s *Store) RevokeAllKeys(ctx context.Context, userID string) (int64, error)
 
 func (s *Store) TouchKey(ctx context.Context, id string) error {
 	return s.q.TouchApiKey(ctx, id)
+}
+
+// PruneRevokedKeys 删除超过保留期的已撤销密钥行。已撤销的行只用于列表回看，
+// 删除之后表与列表不会随反复签发与撤销无限变长。
+func (s *Store) PruneRevokedKeys(ctx context.Context, revokedBefore time.Time) (int64, error) {
+	return s.q.PruneRevokedApiKeys(ctx, pgtype.Timestamptz{Time: revokedBefore, Valid: true})
 }

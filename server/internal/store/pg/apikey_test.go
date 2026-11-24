@@ -91,3 +91,46 @@ func TestAPIKeyStore(t *testing.T) {
 		t.Fatalf("删号之后不应留下密钥：%+v %v", keys, err)
 	}
 }
+
+// TestAPIKeyPruneRevokedKeys 核对已撤销密钥行的清理：只删撤销时间早于截止时间的
+// 行，仍然有效的与保留期内撤销的不动（ADR-0063）。
+func TestAPIKeyPruneRevokedKeys(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	user := auth.User{ID: "user-prune", PasswordHash: "hash"}
+	if err := createAccount(ctx, st, user, "prune@b.cn"); err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	now := time.Now().UTC()
+	keys := []auth.APIKey{
+		{ID: "old", UserID: user.ID, Name: "旧", Prefix: "zx_Old00000", CreatedAt: now.Add(-60 * 24 * time.Hour)},
+		{ID: "fresh", UserID: user.ID, Name: "新", Prefix: "zx_New00000", CreatedAt: now.Add(-2 * time.Hour)},
+		{ID: "active", UserID: user.ID, Name: "在用", Prefix: "zx_Active000", CreatedAt: now},
+	}
+	hashes := []string{"hash-old", "hash-fresh", "hash-active"}
+	for i, key := range keys {
+		if err := st.CreateKey(ctx, key, hashes[i]); err != nil {
+			t.Fatalf("create key %s: %v", key.ID, err)
+		}
+	}
+	// 直接写撤销时间：CreateKey 只写有效密钥，撤销时间由撤销动作写入。
+	for id, revokedAt := range map[string]time.Time{
+		"old":   now.Add(-40 * 24 * time.Hour),
+		"fresh": now.Add(-time.Hour),
+	} {
+		if _, err := st.pool.Exec(ctx, "UPDATE api_key SET revoked_at = $1 WHERE id = $2", revokedAt, id); err != nil {
+			t.Fatalf("revoke %s: %v", id, err)
+		}
+	}
+
+	removed, err := st.PruneRevokedKeys(ctx, now.Add(-30*24*time.Hour))
+	if err != nil || removed != 1 {
+		t.Fatalf("应只删除保留期外的 1 行，得到 %d %v", removed, err)
+	}
+	if keys, err := st.KeysByUser(ctx, user.ID); err != nil || len(keys) != 2 {
+		t.Fatalf("清理之后应剩 2 行：%+v %v", keys, err)
+	}
+	if removed, err := st.PruneRevokedKeys(ctx, now.Add(-48*time.Hour)); err != nil || removed != 0 {
+		t.Fatalf("保留期内的撤销行不应删除，得到 %d %v", removed, err)
+	}
+}

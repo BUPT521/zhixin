@@ -120,7 +120,8 @@ paths:
                   description: |
                     这次刷新逻辑请求的标识，重试时原样带上。服务端据此判断旧刷新
                     令牌是原请求的重试还是被盗用：只有标识一致、且在轮换后的固定
-                    宽限期内才按重试处理，否则撤销会话并记录安全事件。
+                    宽限期内才按重试处理，否则撤销该账号的全部会话与模型代理密钥
+                    并记录安全事件。
       responses:
         "200":
           description: 已轮换
@@ -317,18 +318,22 @@ paths:
       tags: [auth]
       summary: 签发一把模型代理密钥，明文只在这一次返回
       description: |
-        密钥没有有效期，只能显式撤销。每个账号最多保留 20 把有效密钥，达到上限时
-        返回 409，先撤销旧的再签发。服务端只保存 SHA-256，明文只在这次响应里出现。
+        密钥没有有效期，只能显式撤销，所以签发是兑换长期凭据的一步：只凭访问令牌
+        不能签发，请求体里必须再提交一次当前密码，与删除账号、清空云端数据共用按
+        账号的密码失败预算。密码错误返回 401 `invalid_credentials`，失败次数超过预算
+        时短暂返回 429。每个账号最多保留 20 把有效密钥，达到上限时返回 409，先撤销
+        旧的再签发。服务端只保存 SHA-256，明文只在这次响应里出现。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name]
+              required: [name, password]
               additionalProperties: false
               properties:
                 name: { type: string, maxLength: 64, description: 给这把密钥起的名字，只用于辨认 }
+                password: { type: string, minLength: 1, maxLength: 128, description: 当前账号的密码，用于确认签发是账号本人在操作 }
       responses:
         "201":
           description: 已签发
@@ -336,7 +341,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ApiKeyCreated" }
         "400": { $ref: "#/components/responses/Problem" }
-        "401": { $ref: "#/components/responses/Problem" }
+        "401":
+          description: "`invalid_credentials`：当前密码不正确"
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "403":
           description: "`key_scope_denied`：用密钥签发新的密钥；签发改用登录令牌"
           content:
@@ -347,6 +356,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
   /v1/me/api-keys/{id}:
     delete:
       tags: [auth]

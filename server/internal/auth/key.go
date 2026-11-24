@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -17,9 +18,14 @@ const (
 	APIKeyPrefix = "zx_"
 	// apiKeyPrefixLength 是列表里展示的前缀长度：zx_ 加 8 位随机字符。
 	apiKeyPrefixLength = len(APIKeyPrefix) + 8
-	// maxKeysPerUser 是每个账号最多保留的有效密钥数。上限防列表与表无限增长，
-	// 不是安全边界；撤销一把之后可以再签一把，已撤销的行不占额度。
+	// maxKeysPerUser 是每个账号最多保留的有效密钥数。上限只限定同时可用的凭据
+	// 与列表长度，不是安全边界；撤销一把之后可以再签一把，已撤销的行不占额度，
+	// 由每日清理在保留期之后删掉。
 	maxKeysPerUser = 20
+	// revokedKeyKeep 是已撤销密钥行的保留期。列表只需要看最近的撤销记录，行留着
+	// 只会让表随反复签发与撤销无限变长；超过这段保留期的行由每夜清理删除，与
+	// 其他保留期一样按服务端时钟算。
+	revokedKeyKeep = 30 * 24 * time.Hour
 	// maxKeyNameRunes 是密钥名字的长度上限，名字只用于辨认，不参与鉴权。
 	maxKeyNameRunes = 64
 	// apiKeyLength 是密钥的总长度：前缀加 24 字节的 base64 编码。

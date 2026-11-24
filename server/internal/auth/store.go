@@ -78,11 +78,13 @@ type Session struct {
 // 与撤销时辨认。没有有效期：不过期，只能显式撤销。ContactVerified 只在按摘要
 // 鉴权时填充，与访问令牌同一口径（至少一种登录方式确认过）。
 type APIKey struct {
-	ID              string
-	UserID          string
-	Name            string
-	Prefix          string
-	Revoked         bool
+	ID      string
+	UserID  string
+	Name    string
+	Prefix  string
+	Revoked bool
+	// RevokedAt 是撤销的时刻，只在存储层用于每日清理，列表与响应不返回。
+	RevokedAt       time.Time
 	LastUsedAt      time.Time
 	CreatedAt       time.Time
 	ContactVerified bool
@@ -188,6 +190,9 @@ type Store interface {
 	// TouchKey 把最近使用时间推进到 now；实现按十分钟粒度条件写入，大部分请求
 	// 不会真的更新这一行。
 	TouchKey(ctx context.Context, id string) error
+	// PruneRevokedKeys 删除 revokedBefore 之前撤销的密钥行，返回删除的行数。已
+	// 撤销的行只用于列表回看，超过保留期之后删掉，表不会随反复签发与撤销变长。
+	PruneRevokedKeys(ctx context.Context, revokedBefore time.Time) (int64, error)
 	// PruneExpired 删除刷新令牌已过期的会话与已过期的验证码；仍在有效期内的
 	// 行不受影响。过期数据留在库里不影响正确性，清理只控制表的大小。
 	PruneExpired(ctx context.Context, now, usedBefore time.Time) error
@@ -454,6 +459,7 @@ func (m *MemoryStore) RevokeKey(_ context.Context, userID, id string) error {
 		return ErrNotFound
 	}
 	key.Revoked = true
+	key.RevokedAt = time.Now()
 	m.apiKeys[id] = key
 	return nil
 }
@@ -467,15 +473,37 @@ func (m *MemoryStore) RevokeAllKeys(_ context.Context, userID string) (int64, er
 // revokeKeysLocked 撤销账号名下仍然有效的密钥并返回条数，调用方已持有锁。
 func (m *MemoryStore) revokeKeysLocked(userID string) int64 {
 	var revoked int64
+	revokedAt := time.Now()
 	for id, key := range m.apiKeys {
 		if key.UserID != userID || key.Revoked {
 			continue
 		}
 		key.Revoked = true
+		key.RevokedAt = revokedAt
 		m.apiKeys[id] = key
 		revoked++
 	}
 	return revoked
+}
+
+// PruneRevokedKeys 删除 revokedBefore 之前撤销的密钥行，摘要索引一并清掉。
+func (m *MemoryStore) PruneRevokedKeys(_ context.Context, revokedBefore time.Time) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var removed int64
+	for id, key := range m.apiKeys {
+		if !key.Revoked || !key.RevokedAt.Before(revokedBefore) {
+			continue
+		}
+		delete(m.apiKeys, id)
+		for hash, owned := range m.keyHashes {
+			if owned == id {
+				delete(m.keyHashes, hash)
+			}
+		}
+		removed++
+	}
+	return removed, nil
 }
 
 func (m *MemoryStore) TouchKey(_ context.Context, id string) error {

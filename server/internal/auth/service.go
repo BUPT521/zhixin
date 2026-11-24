@@ -227,9 +227,11 @@ func (s *Service) SetUnverifiedKeep(days int) {
 	}
 }
 
-// PruneLoop 启动时清理一次过期会话、过期验证码与超过保留期的未验证账号，之后
-// 每天清理一次，直到 ctx 结束。节奏与 retention.PruneLoop 一致：过期行不影响
-// 正确性，清理只控制表的大小；未验证账号超过保留期后删除，释放联系方式与账号行。
+// PruneLoop 启动时清理一次过期会话、过期验证码、超过保留期的未验证账号与超过
+// 保留期的已撤销密钥，之后每天清理一次，直到 ctx 结束。节奏与 retention.PruneLoop
+// 一致：这些行不影响正确性，清理只控制表的大小；未验证账号超过保留期后删除，
+// 释放联系方式与账号行；已撤销的密钥行超过保留期后删除，表不会随反复签发与撤销
+// 无限变长。
 func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) {
 	prune := func() {
 		now := s.now()
@@ -251,6 +253,13 @@ func (s *Service) PruneLoop(ctx context.Context, store Store, log *slog.Logger) 
 			} else {
 				log.Info("pruned unverified auth users", slog.Int64("users", removed))
 			}
+		}
+		// 已撤销的密钥行只用于列表回看；每账号 20 把的上限只算有效密钥，管不住
+		// 反复签发与撤销累积的行，超过保留期就删掉（ADR-0063）。
+		if removed, err := store.PruneRevokedKeys(ctx, now.Add(-revokedKeyKeep)); err != nil {
+			log.Error("prune revoked api keys", slog.String("error", err.Error()))
+		} else if removed > 0 {
+			log.Info("pruned revoked api keys", slog.Int64("keys", removed))
 		}
 	}
 	periodic.Run(ctx, time.Hour*24, prune)
@@ -453,8 +462,8 @@ func (s *Service) refresh(ctx context.Context, refreshToken, requestID string, a
 //
 // 宽限期内、request_id 与原记录一致时按同一客户端的重试处理：用同一份记录再
 // 轮换一次，宽限截止时间保持不变。其余情况（宽限期已过、request_id 缺失或不同）
-// 视为令牌被复制，撤销该账号的全部会话并记一条安全事件。完全没有记录时连账号
-// 都无法定位，只回 401。
+// 视为令牌被复制，撤销该账号的全部会话与全部模型代理密钥，并记一条安全事件。
+// 完全没有记录时连账号都无法定位，只回 401。
 func (s *Service) handleRefreshReuse(ctx context.Context, oldHash, requestID string, now time.Time) (Tokens, error) {
 	used, err := s.store.UsedRefresh(ctx, oldHash)
 	if errors.Is(err, ErrNotFound) {
@@ -472,8 +481,21 @@ func (s *Service) handleRefreshReuse(ctx context.Context, oldHash, requestID str
 				slog.String("request_id", requestID),
 			)
 		}
+		// 令牌被复制说明凭据已经落到别人手里，只撤会话不够：之前签出去的密钥
+		// 不过期，退出登录也撤不掉。先撤密钥再删会话，因为删除会话会带走这条
+		// 重放记录，反过来做的话密钥撤销失败就没有下一次重试的机会。
+		revoked, err := s.store.RevokeAllKeys(ctx, used.UserID)
+		if err != nil {
+			return Tokens{}, err
+		}
 		if err := s.store.DeleteUserSessions(ctx, used.UserID); err != nil {
 			return Tokens{}, err
+		}
+		if s.securityLog != nil && revoked > 0 {
+			s.securityLog.Warn("revoked api keys after refresh token reuse",
+				slog.String("user_id", used.UserID),
+				slog.Int64("keys", revoked),
+			)
 		}
 		return Tokens{}, ErrInvalidToken
 	}

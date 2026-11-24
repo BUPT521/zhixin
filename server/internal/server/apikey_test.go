@@ -20,7 +20,7 @@ func TestAPIKeyScopeRevocationAndSharedQuota(t *testing.T) {
 		Key    string `json:"key"`
 	}
 	if code := h.json("POST", "/v1/me/api-keys", token,
-		map[string]string{"name": "脚本"}, &created); code != http.StatusCreated {
+		map[string]string{"name": "脚本", "password": "password1"}, &created); code != http.StatusCreated {
 		t.Fatalf("create: %d", code)
 	}
 	if created.ID == "" || created.Key == "" || created.Prefix == "" {
@@ -92,7 +92,7 @@ func TestAPIKeyScopeRevocationAndSharedQuota(t *testing.T) {
 			Key string `json:"key"`
 		}
 		if code := h.json("POST", "/v1/me/api-keys", token,
-			map[string]string{"name": name}, &created); code != http.StatusCreated {
+			map[string]string{"name": name, "password": "password1"}, &created); code != http.StatusCreated {
 			t.Fatalf("create %s: %d", name, code)
 		}
 		batch = append(batch, created)
@@ -115,7 +115,7 @@ func TestAPIKeyScopeRevocationAndSharedQuota(t *testing.T) {
 		Key string `json:"key"`
 	}
 	if code := h.json("POST", "/v1/me/api-keys", token,
-		map[string]string{"name": "第二把"}, &second); code != http.StatusCreated {
+		map[string]string{"name": "第二把", "password": "password1"}, &second); code != http.StatusCreated {
 		t.Fatalf("create second: %d", code)
 	}
 	if code := h.json("DELETE", "/v1/me", token, map[string]string{"password": "password1"}, nil); code != http.StatusNoContent {

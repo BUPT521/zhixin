@@ -265,3 +265,37 @@ func TestRotateSessionCASAllowsOneWinner(t *testing.T) {
 		t.Fatalf("并发 CAS 应当只有一个成功，实际 %d 个", wins)
 	}
 }
+
+// TestRefreshReplayRevokesAPIKeys 核对刷新令牌被复制时连模型代理密钥一起撤销：
+// 只撤会话的话，之前签出去的密钥不过期，仍然能用（ADR-0063）。
+func TestRefreshReplayRevokesAPIKeys(t *testing.T) {
+	ctx := context.Background()
+	s, c, _ := newRefreshService(t)
+	first, err := s.Register(ctx, "a@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := Principal{UserID: first.UserID}
+	_, secret, err := s.CreateAPIKey(ctx, p, "脚本")
+	if err != nil {
+		t.Fatalf("create key: %v", err)
+	}
+	if _, err := s.AuthenticateAPIKey(ctx, secret); err != nil {
+		t.Fatalf("签发之后密钥应可用：%v", err)
+	}
+
+	c.t = c.t.Add(2 * time.Hour)
+	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Refresh(ctx, first.RefreshToken, "req-2"); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("request_id 不同的重放应返回无效令牌，得到 %v", err)
+	}
+	if _, err := s.AuthenticateAPIKey(ctx, secret); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("重放之后密钥应失效，得到 %v", err)
+	}
+	keys, err := s.APIKeys(ctx, p)
+	if err != nil || len(keys) != 1 || !keys[0].Revoked {
+		t.Fatalf("重放之后密钥行应标为已撤销：%+v %v", keys, err)
+	}
+}

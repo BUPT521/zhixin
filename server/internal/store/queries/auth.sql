@@ -277,3 +277,9 @@ WHERE id = sqlc.arg(id)
 UPDATE api_key
 SET revoked_at = now()
 WHERE user_id = sqlc.arg(user_id) AND revoked_at IS NULL;
+
+-- 已撤销的密钥行只用于列表回看，超过保留期的行由每日清理删除，表因此不会随
+-- 反复签发与撤销变长（ADR-0063）。
+-- name: PruneRevokedApiKeys :execrows
+DELETE FROM api_key
+WHERE revoked_at IS NOT NULL AND revoked_at < sqlc.arg(revoked_before);

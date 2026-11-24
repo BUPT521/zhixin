@@ -61,7 +61,8 @@ type Handler struct {
 	// X-Forwarded-For 的实现，见 httpx.NewClientHost。
 	clientHost func(*http.Request) string
 	// loginFails 是按账号的登录失败预算：登录前非消费地检查，只有密码错误才
-	// 扣一个令牌。DELETE /v1/me 的密码确认共用它，键为 "delete:" + 账号。
+	// 扣一个令牌。会话之外还要重输一次密码的操作（删号、清空云端数据、签发
+	// 密钥）共用它，键为 reauthKey 加账号，与登录失败的桶互相不占额度。
 	loginFails *ratelimit.Limiter
 }
 
@@ -93,8 +94,9 @@ func NewHandler(
 }
 
 // SetLoginFailLimiter 装上按账号的登录失败预算，由 server.New 按配置建好注入。
-// 计数键是规范化之后的登录方式值（邮箱小写、去两端空白）加 "login:" 前缀；删号
-// 前的密码确认用 "delete:" 加账号 id，共用同一个限流器，两种失败互相不占额度。
+// 计数键是规范化之后的登录方式值（邮箱小写、去两端空白）加 "login:" 前缀；二次
+// 确认密码的操作（删号、清空云端数据、签发密钥）用 reauthKey 加账号 id，共用同一
+// 个限流器，两种失败互相不占额度。
 func (h *Handler) SetLoginFailLimiter(l *ratelimit.Limiter) {
 	if l == nil {
 		l = ratelimit.Disabled()
@@ -116,6 +118,10 @@ func (h *Handler) SetRegisterGlobalLimiter(l *ratelimit.Limiter) {
 // registerGlobalKey 是注册全局桶的键。全局桶只有一个键，与按地址的桶互不共用，
 // 因此要单独建一个限流器。
 const registerGlobalKey = "global"
+
+// reauthKey 是二次确认密码的失败预算键前缀。删号、清空云端数据与签发密钥共用
+// 同一个桶：任何一个入口连续输错都会让其他入口一起等，换入口不能多得额度。
+const reauthKey = "reauth:"
 
 // identifierKey 把登录方式的值规范成限流键，与服务层登录时的规范化保持一致：
 // 同一账号换大小写或带空白提交，扣的是同一个桶。长度截到契约上限，避免异常
@@ -406,17 +412,25 @@ func (h *Handler) ConfirmPassword(w http.ResponseWriter, r *http.Request) bool {
 }
 
 func (h *Handler) checkPassword(w http.ResponseWriter, r *http.Request, check func(context.Context, Principal, string) error) bool {
-	p := MustPrincipal(r.Context())
 	var in api.DeleteV1MeJSONRequestBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
 		return false
 	}
-	refund, delay := h.loginFails.TakeRefundable("delete:" + p.UserID)
+	return h.confirmPassword(w, r, in.Password, check)
+}
+
+// confirmPassword 在开始密码校验前扣一次按账号的失败预算，再调用 check 核对当前
+// 密码。密码错误回 401 invalid_credentials 并留下这次扣减，其余失败退回；预算用完
+// 时直接回 429。响应在这里写好，调用方只看返回值决定是否继续。
+func (h *Handler) confirmPassword(w http.ResponseWriter, r *http.Request, password string,
+	check func(context.Context, Principal, string) error) bool {
+	p := MustPrincipal(r.Context())
+	refund, delay := h.loginFails.TakeRefundable(reauthKey + p.UserID)
 	if delay > 0 {
 		httpx.TooMany(w, r, delay)
 		return false
 	}
-	switch err := check(r.Context(), p, in.Password); {
+	switch err := check(r.Context(), p, password); {
 	case err == nil:
 		refund()
 		return true
@@ -452,11 +466,17 @@ func (h *Handler) ListAPIKeys(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// CreateAPIKey 签发一把模型代理密钥。明文只在这次响应里出现，服务端只留摘要；
-// 有效密钥达到上限时回 409，先撤销旧的再签发。
+// CreateAPIKey 签发一把模型代理密钥。签发是把短期凭据换成永久凭据的一步：只凭
+// 一个访问令牌就能签出不过期的密钥，退出登录与刷新令牌重放都撤不掉它，所以请求
+// 里必须再提交一次当前密码，与删号、清空云端数据共用按账号的失败预算。密码错误
+// 回 401，预算用完回 429，有效密钥达到上限回 409，先撤销旧的再签发。明文只在
+// 这次响应里出现，服务端只留摘要。
 func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
-	var in api.PostV1MeApiKeysJSONRequestBody
+	var in api.PostV1MeApiKeysJSONBody
 	if !httpx.DecodeJSON(w, r, h.maxBytes, &in) {
+		return
+	}
+	if !h.confirmPassword(w, r, in.Password, h.svc.VerifyCurrentPassword) {
 		return
 	}
 	key, secret, err := h.svc.CreateAPIKey(r.Context(), MustPrincipal(r.Context()), in.Name)

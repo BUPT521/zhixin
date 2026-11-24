@@ -569,6 +569,21 @@ func (q *Queries) PruneExpiredSessions(ctx context.Context, now pgtype.Timestamp
 	return err
 }
 
+const pruneRevokedApiKeys = `-- name: PruneRevokedApiKeys :execrows
+DELETE FROM api_key
+WHERE revoked_at IS NOT NULL AND revoked_at < $1
+`
+
+// 已撤销的密钥行只用于列表回看，超过保留期的行由每日清理删除，表因此不会随
+// 反复签发与撤销变长（ADR-0063）。
+func (q *Queries) PruneRevokedApiKeys(ctx context.Context, revokedBefore pgtype.Timestamptz) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneRevokedApiKeys, revokedBefore)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pruneUsedRefreshTokens = `-- name: PruneUsedRefreshTokens :exec
 DELETE FROM session_refresh_used WHERE rotated_at < $1
 `

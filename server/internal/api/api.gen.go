@@ -1050,7 +1050,8 @@ type PostV1AuthRefreshJSONBody struct {
 
 	// RequestId 这次刷新逻辑请求的标识，重试时原样带上。服务端据此判断旧刷新
 	// 令牌是原请求的重试还是被盗用：只有标识一致、且在轮换后的固定
-	// 宽限期内才按重试处理，否则撤销会话并记录安全事件。
+	// 宽限期内才按重试处理，否则撤销该账号的全部会话与模型代理密钥
+	// 并记录安全事件。
 	RequestId *string `json:"request_id,omitempty"`
 }
 
@@ -1132,6 +1133,9 @@ type DeleteV1MeJSONBody struct {
 type PostV1MeApiKeysJSONBody struct {
 	// Name 给这把密钥起的名字，只用于辨认
 	Name string `json:"name"`
+
+	// Password 当前账号的密码，用于确认签发是账号本人在操作
+	Password string `json:"password"`
 }
 
 // PostV1MeIdentitiesIdVerificationConfirmJSONBody defines parameters for PostV1MeIdentitiesIdVerificationConfirm.
