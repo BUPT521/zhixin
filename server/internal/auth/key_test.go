@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -132,6 +133,45 @@ func TestAPIKeyLimitCountsActiveOnly(t *testing.T) {
 	}
 }
 
+// TestCreateAPIKeyLimitIsAtomic 核对并发签发不会突破上限：多个请求同时签发时，
+// 成功的正好是上限那么多把，其余返回 ErrKeyLimit（ADR-0063）。
+func TestCreateAPIKeyLimitIsAtomic(t *testing.T) {
+	svc, userID, _ := newKeyTestService(t)
+	p := Principal{UserID: userID}
+	const attempts = maxKeysPerUser + 5
+	var wg sync.WaitGroup
+	results := make(chan error, attempts)
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, err := svc.CreateAPIKey(context.Background(), p, "k")
+			results <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	var created, limited int
+	for err := range results {
+		switch {
+		case err == nil:
+			created++
+		case errors.Is(err, ErrKeyLimit):
+			limited++
+		default:
+			t.Fatalf("并发签发返回意外错误：%v", err)
+		}
+	}
+	if created != maxKeysPerUser || limited != attempts-maxKeysPerUser {
+		t.Fatalf("并发签发应成功 %d 把、拒绝 %d 把，得到 %d 与 %d",
+			maxKeysPerUser, attempts-maxKeysPerUser, created, limited)
+	}
+	keys, err := svc.APIKeys(context.Background(), p)
+	if err != nil || len(keys) != maxKeysPerUser {
+		t.Fatalf("并发签发之后应正好 %d 把：%d %v", maxKeysPerUser, len(keys), err)
+	}
+}
+
 // TestCreateAPIKeyRejectsLongName 核对名字上限按字符算。
 func TestCreateAPIKeyRejectsLongName(t *testing.T) {
 	svc, userID, _ := newKeyTestService(t)
@@ -253,7 +293,7 @@ func TestPruneLoopDeletesStaleRevokedKeys(t *testing.T) {
 		{ID: "active", UserID: user.ID, Name: "在用", Prefix: "zx_Active000", CreatedAt: c.t},
 	}
 	for _, key := range keys {
-		if err := st.CreateKey(ctx, key, "hash-"+key.ID); err != nil {
+		if err := st.CreateKey(ctx, key, "hash-"+key.ID, maxKeysPerUser); err != nil {
 			t.Fatalf("create key %s: %v", key.ID, err)
 		}
 	}

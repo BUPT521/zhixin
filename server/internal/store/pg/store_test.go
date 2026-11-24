@@ -269,7 +269,7 @@ func TestPostgresResetPassword(t *testing.T) {
 	}
 	if err := st.CreateKey(ctx, auth.APIKey{
 		ID: "k1", UserID: u.ID, Name: "脚本", Prefix: "zx_AbCdEfGh", CreatedAt: now,
-	}, "kh1"); err != nil {
+	}, "kh1", 20); err != nil {
 		t.Fatalf("key: %v", err)
 	}
 	if err := st.PutCode(ctx, auth.Code{

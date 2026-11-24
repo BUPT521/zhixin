@@ -126,34 +126,46 @@ func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCode, e
 	return i, err
 }
 
-const createApiKey = `-- name: CreateApiKey :exec
+const createApiKey = `-- name: CreateApiKey :execrows
 
 INSERT INTO api_key (id, user_id, name, prefix, key_hash)
-VALUES (
+SELECT
   $1, $2, $3, $4,
   $5
-)
+WHERE (
+  SELECT count(*)
+  FROM api_key AS existing
+  WHERE existing.user_id = $2 AND existing.revoked_at IS NULL
+) < $6::bigint
 `
 
 type CreateApiKeyParams struct {
-	ID      string
-	UserID  string
-	Name    string
-	Prefix  string
-	KeyHash string
+	ID        string
+	UserID    string
+	Name      string
+	Prefix    string
+	KeyHash   string
+	MaxActive int64
 }
 
 // 模型代理的接入密钥（schema.sql 的 api_key，ADR-0063）。密钥本身只在签发那一
 // 次出现在响应里，库里只有 SHA-256；查询按摘要定位，前缀只用于展示。
-func (q *Queries) CreateApiKey(ctx context.Context, arg CreateApiKeyParams) error {
-	_, err := q.db.Exec(ctx, createApiKey,
+// 签发与有效密钥上限在同一条语句里判定：计数与插入一起执行，调用方不必先把
+// 全部密钥读出来再在 Go 里数一遍。并发签发的竞态由存储层的事务级锁消掉，见
+// store/pg/apikey.go。
+func (q *Queries) CreateApiKey(ctx context.Context, arg CreateApiKeyParams) (int64, error) {
+	result, err := q.db.Exec(ctx, createApiKey,
 		arg.ID,
 		arg.UserID,
 		arg.Name,
 		arg.Prefix,
 		arg.KeyHash,
+		arg.MaxActive,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createIdentity = `-- name: CreateIdentity :exec

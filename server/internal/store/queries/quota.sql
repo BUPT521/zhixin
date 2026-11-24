@@ -25,14 +25,16 @@ DO UPDATE SET tokens = GREATEST(llm_instance_usage.tokens + sqlc.arg(delta)::big
 
 -- 按“实际用量减预留”的差额调整当天账号用量：多退少补。预留行一定已经由 Reserve
 -- 写好，这里仍然用 upsert，重复结算或异常顺序都不会写坏数据；插入与更新两个分支都
--- 把结果限在 0 以上，异常参数也不会留下负用量。
+-- 把结果限在 0 以上，异常参数也不会留下负用量。行按签发这次调用的密钥分开记，
+-- api_key_id 为空字符串表示访问令牌（ADR-0063）。
 -- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, tokens)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens)
 VALUES (
   sqlc.arg(user_id),
   sqlc.arg(day)::date,
   sqlc.arg(kind),
+  sqlc.arg(api_key_id),
   GREATEST(sqlc.arg(delta)::bigint, 0)
 )
-ON CONFLICT (user_id, day, kind)
+ON CONFLICT (user_id, day, kind, api_key_id)
 DO UPDATE SET tokens = GREATEST(llm_usage.tokens + sqlc.arg(delta)::bigint, 0);

@@ -369,13 +369,15 @@ func (e quotaReservationError) Error() string { return e.cause.Error() }
 func (e quotaReservationError) Unwrap() error { return e.cause }
 
 func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) attemptBudget {
+	// 用量记到这次调用所用的模型代理密钥上；用访问令牌时编号为空字符串。
+	keyID := auth.MustPrincipal(r.Context()).KeyID
 	return func(route liveRoute, estimate int64, first bool) (finishAttempt, error) {
-		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, estimate)
+		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, keyID, estimate)
 		if err != nil {
 			return nil, quotaReservationError{cause: err}
 		}
 		if reserved < estimate {
-			p.settle(r, userID, day, model.Kind, reserved, 0)
+			p.settle(r, userID, day, model.Kind, keyID, reserved, 0)
 			return nil, ErrQuotaExceeded
 		}
 		return func(result attemptResult) {
@@ -383,7 +385,7 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 			if result.tokens < 0 {
 				result.tokens, result.estimated = reserved, reserved
 			}
-			p.settle(r, userID, day, model.Kind, reserved, result.tokens)
+			p.settle(r, userID, day, model.Kind, keyID, reserved, result.tokens)
 			if p.usage != nil && !result.notSent {
 				counts := UsageCounts{
 					Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated,
@@ -423,10 +425,10 @@ func (p *Proxy) recordRouteUsage(ctx context.Context, row RouteUsage, success bo
 }
 
 // settle 即使客户端断开也结算本次预留。
-func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, reserved, actual int64) {
+func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, keyID string, reserved, actual int64) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 	defer cancel()
-	if err := p.quota.Settle(ctx, userID, day, kind, reserved, actual); err != nil {
+	if err := p.quota.Settle(ctx, userID, day, kind, keyID, reserved, actual); err != nil {
 		p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
 	}
 }

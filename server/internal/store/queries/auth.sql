@@ -234,12 +234,19 @@ WHERE purpose = sqlc.arg(purpose)
 -- 模型代理的接入密钥（schema.sql 的 api_key，ADR-0063）。密钥本身只在签发那一
 -- 次出现在响应里，库里只有 SHA-256；查询按摘要定位，前缀只用于展示。
 
--- name: CreateApiKey :exec
+-- 签发与有效密钥上限在同一条语句里判定：计数与插入一起执行，调用方不必先把
+-- 全部密钥读出来再在 Go 里数一遍。并发签发的竞态由存储层的事务级锁消掉，见
+-- store/pg/apikey.go。
+-- name: CreateApiKey :execrows
 INSERT INTO api_key (id, user_id, name, prefix, key_hash)
-VALUES (
+SELECT
   sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(prefix),
   sqlc.arg(key_hash)
-);
+WHERE (
+  SELECT count(*)
+  FROM api_key AS existing
+  WHERE existing.user_id = sqlc.arg(user_id) AND existing.revoked_at IS NULL
+) < sqlc.arg(max_active)::bigint;
 
 -- name: ApiKeysByUser :many
 SELECT id, user_id, name, prefix, revoked_at, last_used_at, created_at

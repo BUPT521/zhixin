@@ -24,7 +24,7 @@ func TestAPIKeyStore(t *testing.T) {
 	}
 
 	key := auth.APIKey{ID: "key-1", UserID: user.ID, Name: "脚本", Prefix: "zx_AbCdEfGh"}
-	if err := st.CreateKey(ctx, key, "hash-1"); err != nil {
+	if err := st.CreateKey(ctx, key, "hash-1", 20); err != nil {
 		t.Fatalf("create key: %v", err)
 	}
 
@@ -109,7 +109,7 @@ func TestAPIKeyPruneRevokedKeys(t *testing.T) {
 	}
 	hashes := []string{"hash-old", "hash-fresh", "hash-active"}
 	for i, key := range keys {
-		if err := st.CreateKey(ctx, key, hashes[i]); err != nil {
+		if err := st.CreateKey(ctx, key, hashes[i], 20); err != nil {
 			t.Fatalf("create key %s: %v", key.ID, err)
 		}
 	}

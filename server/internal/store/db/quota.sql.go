@@ -56,32 +56,36 @@ func (q *Queries) InstanceTokens(ctx context.Context, day pgtype.Date) (int64, e
 }
 
 const settleTokens = `-- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, tokens)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens)
 VALUES (
   $1,
   $2::date,
   $3,
-  GREATEST($4::bigint, 0)
+  $4,
+  GREATEST($5::bigint, 0)
 )
-ON CONFLICT (user_id, day, kind)
-DO UPDATE SET tokens = GREATEST(llm_usage.tokens + $4::bigint, 0)
+ON CONFLICT (user_id, day, kind, api_key_id)
+DO UPDATE SET tokens = GREATEST(llm_usage.tokens + $5::bigint, 0)
 `
 
 type SettleTokensParams struct {
-	UserID string
-	Day    pgtype.Date
-	Kind   string
-	Delta  int64
+	UserID   string
+	Day      pgtype.Date
+	Kind     string
+	ApiKeyID string
+	Delta    int64
 }
 
 // 按“实际用量减预留”的差额调整当天账号用量：多退少补。预留行一定已经由 Reserve
 // 写好，这里仍然用 upsert，重复结算或异常顺序都不会写坏数据；插入与更新两个分支都
-// 把结果限在 0 以上，异常参数也不会留下负用量。
+// 把结果限在 0 以上，异常参数也不会留下负用量。行按签发这次调用的密钥分开记，
+// api_key_id 为空字符串表示访问令牌（ADR-0063）。
 func (q *Queries) SettleTokens(ctx context.Context, arg SettleTokensParams) error {
 	_, err := q.db.Exec(ctx, settleTokens,
 		arg.UserID,
 		arg.Day,
 		arg.Kind,
+		arg.ApiKeyID,
 		arg.Delta,
 	)
 	return err

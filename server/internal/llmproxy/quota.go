@@ -19,11 +19,14 @@ type Quota interface {
 	Used(ctx context.Context, userID, day string, kind Kind) (int64, error)
 	Add(ctx context.Context, userID, day string, kind Kind, tokens int64) error
 	DailyLimit(ctx context.Context, userID string, kind Kind) (int64, bool, error)
-	// Reserve 原子预留 want 个 token，返回实际预留量。账号额度或实例预算已经用
-	// 完时返回 ErrQuotaExceeded；剩余不足 want 时按剩余量预留，调用方照常转发。
-	Reserve(ctx context.Context, userID, day string, kind Kind, want int64) (reserved int64, err error)
+	// Reserve 原子预留 want 个 token，返回实际预留量。keyID 是这次调用用的模型
+	// 代理密钥编号，用访问令牌调用时为空字符串；用量按它分开记，额度仍按账号合计，
+	// 账号额度或实例预算已经用完时返回 ErrQuotaExceeded；剩余不足 want 时按剩余量
+	// 预留，调用方照常转发。
+	Reserve(ctx context.Context, userID, day string, kind Kind, keyID string, want int64) (reserved int64, err error)
 	// Settle 按实际用量调整预留：actual 大于 reserved 时补记差额，小于时退回。
-	Settle(ctx context.Context, userID, day string, kind Kind, reserved, actual int64) error
+	// keyID 必须与这次预留相同，结算才会落到同一行。
+	Settle(ctx context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64) error
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
@@ -42,8 +45,10 @@ type quotaLimits interface {
 
 // MemoryQuota is a Quota kept in process memory.
 type MemoryQuota struct {
-	mu     sync.Mutex
-	used   map[[3]string]int64
+	mu sync.Mutex
+	// used 的键是账号、自然日、用途与模型代理密钥编号；密钥编号为空表示访问令牌。
+	// 额度判定按账号合计，记账按密钥分开，与 PostgreSQL 实现同一口径（ADR-0063）。
+	used   map[[4]string]int64
 	limits map[[2]string]int64
 	// instance 是实例当天的账本，按自然日记 token 数；它与 used 分开保存，删号
 	// 只清 used，已经占用的实例预算因此不会重新腾出来（ADR-0036）。
@@ -58,7 +63,7 @@ type MemoryQuota struct {
 
 func NewMemoryQuota() *MemoryQuota {
 	return &MemoryQuota{
-		used:     map[[3]string]int64{},
+		used:     map[[4]string]int64{},
 		limits:   map[[2]string]int64{},
 		instance: map[string]int64{},
 	}
@@ -76,29 +81,44 @@ func (m *MemoryQuota) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instance
 func (m *MemoryQuota) Used(_ context.Context, userID, day string, kind Kind) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.used[[3]string{userID, day, string(kind)}], nil
+	return m.usedByAccountLocked(userID, day, kind), nil
+}
+
+// usedByAccountLocked 汇总账号当天某类模型的全部用量，各把密钥的用量一起算。
+// 调用方必须持有 m.mu。
+func (m *MemoryQuota) usedByAccountLocked(userID, day string, kind Kind) int64 {
+	var total int64
+	for key, tokens := range m.used {
+		if key[0] == userID && key[1] == day && key[2] == string(kind) {
+			total += tokens
+		}
+	}
+	return total
 }
 
 func (m *MemoryQuota) Add(_ context.Context, userID, day string, kind Kind, tokens int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.used[[3]string{userID, day, string(kind)}] += tokens
+	// Add 只用于按账号累加，没有密钥可归；与访问令牌调用记在同一行。
+	m.used[[4]string{userID, day, string(kind), ""}] += tokens
 	return nil
 }
 
 // Reserve 在锁里完成比较与扣减，同一账号或同一天的并发请求不会各自读到旧值。
-func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, want int64) (int64, error) {
+// 比较用账号合计，记在这一次调用的密钥那一行。
+func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, keyID string, want int64) (int64, error) {
 	if want <= 0 {
 		return 0, ErrQuotaExceeded
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := [3]string{userID, day, string(kind)}
+	key := [4]string{userID, day, string(kind), keyID}
+	used := m.usedByAccountLocked(userID, day, kind)
 	// reserved 先按请求量取，再按账号剩余量截断；比较的对象必须是本次请求量，不能是
 	// 上一次截断后的值，否则剩余量够用时也会被截成 0（剩余 60 时请求 40 会被拒绝）。
 	reserved := want
 	if limit, ok := m.accountLimitLocked(userID, kind); ok {
-		reserved = min(want, limit-m.used[key])
+		reserved = min(want, limit-used)
 	}
 	if m.instanceTokens > 0 {
 		reserved = min(reserved, m.instanceTokens-m.instance[day])
@@ -111,13 +131,13 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	return reserved, nil
 }
 
-func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, reserved, actual int64) error {
+func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64) error {
 	if actual == reserved {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := [3]string{userID, day, string(kind)}
+	key := [4]string{userID, day, string(kind), keyID}
 	used := m.used[key] + actual - reserved
 	if used < 0 {
 		// 预留与结算之间没有别的写路径，负数只可能来自调用方给错参数；归零而不是

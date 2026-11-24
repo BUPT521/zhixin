@@ -52,33 +52,20 @@ func newAPIKey() (token, prefix string) {
 }
 
 // CreateAPIKey 为当前账号签发一把模型代理密钥，返回明文密钥与记录。明文只在
-// 这一次出现，库里只有 SHA-256。密钥没有有效期，只能显式撤销。
+// 这一次出现，库里只有 SHA-256。密钥没有有效期，只能显式撤销。是否达到每个账号
+// 的有效密钥上限由存储层在写入时一起判定：先读出全部密钥再在 Go 里计数的话，
+// 并发签发会各自按旧计数通过，上限因此被突破。
 func (s *Service) CreateAPIKey(ctx context.Context, p Principal, name string) (APIKey, string, error) {
 	name = strings.TrimSpace(name)
 	if utf8.RuneCountInString(name) > maxKeyNameRunes {
 		return APIKey{}, "", ErrInvalidInput
-	}
-	existing, err := s.store.KeysByUser(ctx, p.UserID)
-	if err != nil {
-		return APIKey{}, "", err
-	}
-	// 上限按仍然有效的密钥算，撤销一把之后可以再签发一把。并发签发时两个请求
-	// 可能同时看到未满，实际最多多出一两把，这个偏差对容量没有影响。
-	active := 0
-	for _, key := range existing {
-		if !key.Revoked {
-			active++
-		}
-	}
-	if active >= maxKeysPerUser {
-		return APIKey{}, "", ErrKeyLimit
 	}
 	token, prefix := newAPIKey()
 	key := APIKey{
 		ID: newID(), UserID: p.UserID, Name: name, Prefix: prefix,
 		CreatedAt: s.now(),
 	}
-	if err := s.store.CreateKey(ctx, key, hashToken(token)); err != nil {
+	if err := s.store.CreateKey(ctx, key, hashToken(token), maxKeysPerUser); err != nil {
 		return APIKey{}, "", err
 	}
 	return key, token, nil

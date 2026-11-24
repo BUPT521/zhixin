@@ -199,13 +199,16 @@ CREATE TABLE backup (
 CREATE INDEX backup_user_created ON backup(user_id, created_at DESC);
 
 -- 模型代理用量：只记 token 数，不记请求与回答正文。聊天与嵌入分开计，
--- 各有各的每日额度（ADR-0029）。
+-- 各有各的每日额度（ADR-0029）。api_key_id 记录这次调用用的是哪把模型代理密钥，
+-- 用访问令牌调用时是空字符串；它不是外键，撤销或清理密钥行不会带走已经发生的
+-- 用量（ADR-0063）。
 CREATE TABLE llm_usage (
-  user_id  TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  day      DATE NOT NULL,                      -- ZHIXIN_TIMEZONE 下的自然日
-  kind     TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'embedding')),
-  tokens   BIGINT NOT NULL DEFAULT 0,
-  PRIMARY KEY (user_id, day, kind)
+  user_id    TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day        DATE NOT NULL,                     -- ZHIXIN_TIMEZONE 下的自然日
+  kind       TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'embedding')),
+  api_key_id TEXT NOT NULL DEFAULT '',
+  tokens     BIGINT NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, day, kind, api_key_id)
 );
 
 -- 实例当天的模型用量：只有自然日与 token 数，不与账号关联，删号与清空云端数据

@@ -12,24 +12,30 @@ import (
 )
 
 const addTokens = `-- name: AddTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, tokens)
-VALUES ($1, $2::date, $3, $4)
-ON CONFLICT (user_id, day, kind)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens)
+VALUES (
+  $1, $2::date, $3,
+  $4, $5
+)
+ON CONFLICT (user_id, day, kind, api_key_id)
 DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens
 `
 
 type AddTokensParams struct {
-	UserID string
-	Day    pgtype.Date
-	Kind   string
-	Tokens int64
+	UserID   string
+	Day      pgtype.Date
+	Kind     string
+	ApiKeyID string
+	Tokens   int64
 }
 
+// 累加一份用量。api_key_id 记录这次调用用的是哪把密钥，用访问令牌时为空字符串。
 func (q *Queries) AddTokens(ctx context.Context, arg AddTokensParams) error {
 	_, err := q.db.Exec(ctx, addTokens,
 		arg.UserID,
 		arg.Day,
 		arg.Kind,
+		arg.ApiKeyID,
 		arg.Tokens,
 	)
 	return err
@@ -271,7 +277,7 @@ func (q *Queries) TrimBackups(ctx context.Context, arg TrimBackupsParams) ([]str
 }
 
 const usedTokens = `-- name: UsedTokens :one
-SELECT tokens
+SELECT COALESCE(SUM(tokens), 0)::bigint
 FROM llm_usage
 WHERE user_id = $1 AND day = $2::date AND kind = $3
 `
@@ -282,9 +288,11 @@ type UsedTokensParams struct {
 	Kind   string
 }
 
+// 账号当天的用量按用途汇总，额度判定与展示只看账号合计，密钥分开记不妨碍共用
+// 同一份额度（ADR-0063）。
 func (q *Queries) UsedTokens(ctx context.Context, arg UsedTokensParams) (int64, error) {
 	row := q.db.QueryRow(ctx, usedTokens, arg.UserID, arg.Day, arg.Kind)
-	var tokens int64
-	err := row.Scan(&tokens)
-	return tokens, err
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }

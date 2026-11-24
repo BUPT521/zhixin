@@ -170,17 +170,18 @@ func (s *Store) Used(ctx context.Context, userID, day string, kind llmproxy.Kind
 	return usedTokens(ctx, s.q, userID, date, kind)
 }
 
-// Add 累加当天某类模型的用量。
+// Add 累加当天某类模型的用量，不归到具体密钥。
 func (s *Store) Add(ctx context.Context, userID, day string, kind llmproxy.Kind, tokens int64) error {
 	date, err := pgDate(day)
 	if err != nil {
 		return err
 	}
 	return s.q.AddTokens(ctx, db.AddTokensParams{
-		UserID: userID,
-		Day:    date,
-		Kind:   string(kind),
-		Tokens: tokens,
+		UserID:   userID,
+		Day:      date,
+		Kind:     string(kind),
+		ApiKeyID: "",
+		Tokens:   tokens,
 	})
 }
 

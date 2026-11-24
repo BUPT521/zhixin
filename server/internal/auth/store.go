@@ -174,8 +174,10 @@ type Store interface {
 	DeleteSession(ctx context.Context, id string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
 
-	// CreateKey 保存一把模型代理密钥。库里只存摘要，key.Prefix 用于展示。
-	CreateKey(ctx context.Context, key APIKey, keyHash string) error
+	// CreateKey 保存一把模型代理密钥，同时核对每个账号的有效密钥上限：达到
+	// maxActive 把时返回 ErrKeyLimit。计数与写入在同一个事务或同一把锁里完成，
+	// 并发签发不会各自按旧计数通过。
+	CreateKey(ctx context.Context, key APIKey, keyHash string, maxActive int) error
 	// KeysByUser 按创建时间倒序列出账号的全部密钥，包括已经撤销的。
 	KeysByUser(ctx context.Context, userID string) ([]APIKey, error)
 	// KeyByHash 按摘要找一把仍然有效的密钥；不存在或已经撤销时返回 ErrNotFound。
@@ -405,9 +407,18 @@ func (m *MemoryStore) DeleteUserSessions(_ context.Context, userID string) error
 	return nil
 }
 
-func (m *MemoryStore) CreateKey(_ context.Context, key APIKey, keyHash string) error {
+func (m *MemoryStore) CreateKey(_ context.Context, key APIKey, keyHash string, maxActive int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	var active int
+	for _, existing := range m.apiKeys {
+		if existing.UserID == key.UserID && !existing.Revoked {
+			active++
+		}
+	}
+	if active >= maxActive {
+		return ErrKeyLimit
+	}
 	m.apiKeys[key.ID] = key
 	m.keyHashes[keyHash] = key.ID
 	return nil

@@ -53,15 +53,21 @@ RETURNING id;
 -- name: ListAllBackups :many
 SELECT user_id, id FROM backup;
 
+-- 账号当天的用量按用途汇总，额度判定与展示只看账号合计，密钥分开记不妨碍共用
+-- 同一份额度（ADR-0063）。
 -- name: UsedTokens :one
-SELECT tokens
+SELECT COALESCE(SUM(tokens), 0)::bigint
 FROM llm_usage
 WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND kind = sqlc.arg(kind);
 
+-- 累加一份用量。api_key_id 记录这次调用用的是哪把密钥，用访问令牌时为空字符串。
 -- name: AddTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, tokens)
-VALUES (sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(kind), sqlc.arg(tokens))
-ON CONFLICT (user_id, day, kind)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens)
+VALUES (
+  sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(kind),
+  sqlc.arg(api_key_id), sqlc.arg(tokens)
+)
+ON CONFLICT (user_id, day, kind, api_key_id)
 DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens;
 
 -- 按账号调整的每日额度；没有行或者对应列为空时用配置的默认值。

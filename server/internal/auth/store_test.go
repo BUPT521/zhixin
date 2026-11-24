@@ -30,7 +30,7 @@ func TestMemoryResetPasswordIsAtomic(t *testing.T) {
 	}
 	if err := st.CreateKey(ctx, APIKey{
 		ID: "k1", UserID: "u1", Name: "脚本", Prefix: "zx_AbCdEfGh", CreatedAt: now,
-	}, "kh1"); err != nil {
+	}, "kh1", maxKeysPerUser); err != nil {
 		t.Fatal(err)
 	}
 	reset := PasswordReset{
