@@ -173,11 +173,6 @@ func (Base) PostV1LlmResponses(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNotFound)
 }
 
-// PostV1LlmChatCompletions 只让旧的路径继续 404：客户端已经改用 Responses，
-// 契约里的这一条等转发切换完成后再删。
-func (Base) PostV1LlmChatCompletions(w http.ResponseWriter, _ *http.Request) {
-	w.WriteHeader(http.StatusNotFound)
-}
 func (Base) PostV1LlmEmbeddings(w http.ResponseWriter, _ *http.Request, _ api.PostV1LlmEmbeddingsParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
