@@ -20,6 +20,7 @@ func (s *Store) AddRouteUsage(ctx context.Context, row llmproxy.RouteUsage) erro
 		FailoverAttempts: row.FailoverAttempts, Successes: row.Successes,
 		TruncatedAttempts: row.TruncatedAttempts, CanceledAttempts: row.CanceledAttempts,
 		Tokens: row.Tokens, EstimatedTokens: row.EstimatedTokens,
+		InputTokens: row.InputTokens, CachedTokens: row.CachedTokens,
 	})
 }
 
@@ -47,6 +48,7 @@ func (s *Store) RouteUsage(ctx context.Context, from, to string) ([]llmproxy.Rou
 				Attempts: row.Attempts, FirstAttempts: row.FirstAttempts, FailoverAttempts: row.FailoverAttempts,
 				TruncatedAttempts: row.TruncatedAttempts, CanceledAttempts: row.CanceledAttempts,
 				Successes: row.Successes, Tokens: row.Tokens, EstimatedTokens: row.EstimatedTokens,
+				InputTokens: row.InputTokens, CachedTokens: row.CachedTokens,
 			},
 		})
 	}

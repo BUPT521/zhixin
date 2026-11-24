@@ -1,12 +1,14 @@
 -- name: AddRouteUsage :exec
 INSERT INTO llm_route_usage (
   day, kind, model, provider_id, upstream_model,
-  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens
+  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens,
+  input_tokens, cached_tokens
 )
 VALUES (
   sqlc.arg(day), sqlc.arg(kind), sqlc.arg(model), sqlc.arg(provider_id), sqlc.arg(upstream_model),
   sqlc.arg(attempts), sqlc.arg(first_attempts), sqlc.arg(failover_attempts), sqlc.arg(successes),
-  sqlc.arg(truncated_attempts), sqlc.arg(canceled_attempts), sqlc.arg(tokens), sqlc.arg(estimated_tokens)
+  sqlc.arg(truncated_attempts), sqlc.arg(canceled_attempts), sqlc.arg(tokens), sqlc.arg(estimated_tokens),
+  sqlc.arg(input_tokens), sqlc.arg(cached_tokens)
 )
 ON CONFLICT (day, kind, model, provider_id, upstream_model) DO UPDATE SET
   attempts = llm_route_usage.attempts + EXCLUDED.attempts,
@@ -16,10 +18,13 @@ ON CONFLICT (day, kind, model, provider_id, upstream_model) DO UPDATE SET
   truncated_attempts = llm_route_usage.truncated_attempts + EXCLUDED.truncated_attempts,
   canceled_attempts = llm_route_usage.canceled_attempts + EXCLUDED.canceled_attempts,
   tokens = llm_route_usage.tokens + EXCLUDED.tokens,
-  estimated_tokens = llm_route_usage.estimated_tokens + EXCLUDED.estimated_tokens;
+  estimated_tokens = llm_route_usage.estimated_tokens + EXCLUDED.estimated_tokens,
+  input_tokens = llm_route_usage.input_tokens + EXCLUDED.input_tokens,
+  cached_tokens = llm_route_usage.cached_tokens + EXCLUDED.cached_tokens;
 
 -- name: ListRouteUsage :many
 SELECT day, kind, model, provider_id, upstream_model,
-  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens
+  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens,
+  input_tokens, cached_tokens
 FROM llm_route_usage
 WHERE day BETWEEN sqlc.arg(from_day) AND sqlc.arg(to_day);

@@ -1182,6 +1182,7 @@ const percent = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFracti
 const usagePart = () => ({
   attempts: 0, first_attempts: 0, failover_attempts: 0, successes: 0,
   truncated_attempts: 0, canceled_attempts: 0, tokens: 0, estimated_tokens: 0,
+  input_tokens: 0, cached_tokens: 0,
 });
 function addUsage(total, part) {
   for (const field of Object.keys(total)) total[field] += part[field];
@@ -1189,6 +1190,11 @@ function addUsage(total, part) {
 }
 function successRate(u) {
   return u.attempts ? percent.format(u.successes / u.attempts) : '—';
+}
+
+// cacheHitRate 是来源报告的输入里命中缓存的比例；没有输入量时不显示。
+function cacheHitRate(u) {
+  return u.input_tokens > 0 ? routeShare(u.cached_tokens / u.input_tokens) : '';
 }
 
 $('#usage-days').addEventListener('change', loadUsage);
@@ -1293,7 +1299,10 @@ function renderUsage() {
   }
   $('#usage-period').textContent = `${days[0].day} 至 ${days.at(-1).day} · ${report.timezone}`;
   $('#usage-tokens').textContent = number.format(totals.tokens);
-  $('#usage-estimate').textContent = `含估算 ${number.format(totals.estimated_tokens)}`;
+  const hitRate = cacheHitRate(totals);
+  $('#usage-estimate').textContent = hitRate
+    ? `含估算 ${number.format(totals.estimated_tokens)} · 输入缓存命中 ${hitRate}（${number.format(totals.cached_tokens)}/${number.format(totals.input_tokens)}）`
+    : `含估算 ${number.format(totals.estimated_tokens)}`;
   $('#usage-attempts').textContent = number.format(totals.attempts);
   $('#usage-attempt-detail').textContent = `${number.format(totals.first_attempts)} 次首次 · ${number.format(totals.failover_attempts)} 次故障切换`;
   $('#usage-unsuccessful').textContent = `${number.format(totals.attempts - totals.successes)} 次未成功`;
@@ -1345,7 +1354,7 @@ function updateUsageDay(date, routes, byDate) {
   const detail = $('#usage-day-detail');
   const total = day ? addUsage(addUsage(usagePart(), day.chat), day.embedding) : null;
   detail.textContent = total
-    ? `${date} · ${number.format(total.tokens)} Token（含估算 ${number.format(total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试（${number.format(total.first_attempts)} 首次，${number.format(total.failover_attempts)} 故障切换） · ${number.format(total.attempts - total.successes)} 次未成功`
+    ? `${date} · ${number.format(total.tokens)} Token（含估算 ${number.format(total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试（${number.format(total.first_attempts)} 首次，${number.format(total.failover_attempts)} 故障切换） · ${number.format(total.attempts - total.successes)} 次未成功${cacheHitRate(total) ? ` · 输入缓存命中 ${cacheHitRate(total)}` : ''}`
     : ($('#usage-chart-wrap').hidden ? '' : '选择日期查看当天明细。');
   renderUsageTable(routes, date);
 }
@@ -1376,7 +1385,9 @@ function renderUsageTable(routes, date) {
     ].filter(Boolean).join(' · ');
     target.append(el('tr', {}, el('td', {}, el('span', { class: 'mono' }, label), sub ? el('div', { class: 'sub mono' }, sub) : null),
       el('td', { class: 'nowrap' }, kindName[kind]),
-      [u.tokens, u.estimated_tokens, u.attempts, u.first_attempts, u.failover_attempts]
+      el('td', { class: 'numeric' }, number.format(u.tokens),
+        u.input_tokens > 0 ? el('div', { class: 'sub' }, `输入 ${number.format(u.input_tokens)} · 命中 ${cacheHitRate(u)}`) : null),
+      [u.estimated_tokens, u.attempts, u.first_attempts, u.failover_attempts]
         .map((n) => el('td', { class: 'numeric' }, number.format(n))),
       el('td', { class: 'numeric' }, number.format(u.attempts - u.successes), incomplete ? el('div', { class: 'sub' }, incomplete) : null),
       el('td', { class: 'numeric' }, successRate(u))));

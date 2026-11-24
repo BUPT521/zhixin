@@ -212,6 +212,8 @@ CREATE TABLE llm_route_usage (
   canceled_attempts BIGINT NOT NULL,
   tokens            BIGINT NOT NULL,
   estimated_tokens  BIGINT NOT NULL,
+  input_tokens      BIGINT NOT NULL,
+  cached_tokens     BIGINT NOT NULL,
   PRIMARY KEY (day, kind, model, provider_id, upstream_model)
 );
 

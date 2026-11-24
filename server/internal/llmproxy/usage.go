@@ -24,6 +24,10 @@ type UsageCounts struct {
 	Attempts, FirstAttempts, FailoverAttempts, Successes int64
 	TruncatedAttempts, CanceledAttempts                  int64
 	Tokens, EstimatedTokens                              int64
+	// InputTokens 是来源报告的输入量，CachedTokens 是其中命中上游缓存的部分。
+	// 两者都只在上游给出 usage 时记录，缺失时保持 0，缓存命中占比按有数据的
+	// 请求单独计算（方案第 7 节）。
+	InputTokens, CachedTokens int64
 }
 
 func (u *UsageCounts) add(other UsageCounts) {
@@ -35,6 +39,8 @@ func (u *UsageCounts) add(other UsageCounts) {
 	u.CanceledAttempts += other.CanceledAttempts
 	u.Tokens += other.Tokens
 	u.EstimatedTokens += other.EstimatedTokens
+	u.InputTokens += other.InputTokens
+	u.CachedTokens += other.CachedTokens
 }
 
 func (u UsageCounts) view() api.AdminUsageCounts {
@@ -42,6 +48,7 @@ func (u UsageCounts) view() api.AdminUsageCounts {
 		Attempts: u.Attempts, FirstAttempts: u.FirstAttempts, FailoverAttempts: u.FailoverAttempts,
 		TruncatedAttempts: u.TruncatedAttempts, CanceledAttempts: u.CanceledAttempts,
 		Successes: u.Successes, Tokens: u.Tokens, EstimatedTokens: u.EstimatedTokens,
+		InputTokens: u.InputTokens, CachedTokens: u.CachedTokens,
 	}
 }
 

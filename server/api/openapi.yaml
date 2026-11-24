@@ -1324,7 +1324,7 @@ components:
         note: { type: string, maxLength: 200 }
     AdminUsageCounts:
       type: object
-      required: [attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens]
+      required: [attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens, input_tokens, cached_tokens]
       properties:
         attempts: { type: integer, format: int64, description: 尝试路由的次数，嵌入拆批仍计一次 }
         first_attempts: { type: integer, format: int64, description: 每次请求首次执行的路由尝试 }
@@ -1334,6 +1334,8 @@ components:
         canceled_attempts: { type: integer, format: int64, description: 客户端取消或断开时未完成的尝试 }
         tokens: { type: integer, format: int64 }
         estimated_tokens: { type: integer, format: int64, description: tokens 中按估算结算的部分 }
+        input_tokens: { type: integer, format: int64, description: 上游报告的输入量之和；没有报告时为 0 }
+        cached_tokens: { type: integer, format: int64, description: input_tokens 中命中上游缓存的部分，用于计算缓存命中占比 }
     AdminUsageDay:
       type: object
       required: [day, chat, embedding]

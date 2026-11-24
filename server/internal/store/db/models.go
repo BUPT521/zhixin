@@ -134,6 +134,8 @@ type LlmRouteUsage struct {
 	CanceledAttempts  int64
 	Tokens            int64
 	EstimatedTokens   int64
+	InputTokens       int64
+	CachedTokens      int64
 }
 
 type LlmUsage struct {

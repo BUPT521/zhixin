@@ -455,6 +455,9 @@ type AdminUsageCounts struct {
 	// Attempts 尝试路由的次数，嵌入拆批仍计一次
 	Attempts int64 `json:"attempts"`
 
+	// CachedTokens input_tokens 中命中上游缓存的部分，用于计算缓存命中占比
+	CachedTokens int64 `json:"cached_tokens"`
+
 	// CanceledAttempts 客户端取消或断开时未完成的尝试
 	CanceledAttempts int64 `json:"canceled_attempts"`
 
@@ -466,8 +469,11 @@ type AdminUsageCounts struct {
 
 	// FirstAttempts 每次请求首次执行的路由尝试
 	FirstAttempts int64 `json:"first_attempts"`
-	Successes     int64 `json:"successes"`
-	Tokens        int64 `json:"tokens"`
+
+	// InputTokens 上游报告的输入量之和；没有报告时为 0
+	InputTokens int64 `json:"input_tokens"`
+	Successes   int64 `json:"successes"`
+	Tokens      int64 `json:"tokens"`
 
 	// TruncatedAttempts 达到输出上限的尝试
 	TruncatedAttempts int64 `json:"truncated_attempts"`

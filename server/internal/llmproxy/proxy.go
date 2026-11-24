@@ -341,10 +341,13 @@ func (p *Proxy) findModel(w http.ResponseWriter, r *http.Request, fields map[str
 type attemptResult struct {
 	// A negative token count keeps the reservation when usage is unknown.
 	tokens, estimated int64
-	success           bool
-	notSent           bool
-	outputLimited     bool
-	clientCanceled    bool
+	// inputTokens 与 cachedTokens 是来源报告的输入量与其中命中缓存的部分，只在
+	// 上游给出 usage 时记录；嵌入来源没有缓存语义，两者保持 0。
+	inputTokens, cachedTokens int64
+	success                   bool
+	notSent                   bool
+	outputLimited             bool
+	clientCanceled            bool
 }
 
 type finishAttempt func(attemptResult)
@@ -382,7 +385,10 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 			}
 			p.settle(r, userID, day, model.Kind, reserved, result.tokens)
 			if p.usage != nil && !result.notSent {
-				counts := UsageCounts{Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated}
+				counts := UsageCounts{
+					Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated,
+					InputTokens: result.inputTokens, CachedTokens: result.cachedTokens,
+				}
 				if first {
 					counts.FirstAttempts = 1
 				} else {
@@ -903,6 +909,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			response, err = parseResponseObject(b)
 		}
 		used := usageTokens(b, KindChat)
+		inputUsed, cachedUsed := usageInput(b)
 		if used <= 0 {
 			used = -1
 		}
@@ -922,6 +929,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		outcome.sourceReached = true
 		p.finishAttempt(plan, attempt, attemptResult{
 			tokens: used, success: end == responseCompleted, outputLimited: end == responseOutputLimit,
+			inputTokens: inputUsed, cachedTokens: cachedUsed,
 		}, reply.status, outcome)
 		if outcome.scope == routeFailure {
 			lastErr = errors.New(outcome.reason)
@@ -1065,7 +1073,34 @@ type usageEnvelope struct {
 		PromptTokens     int64 `json:"prompt_tokens"`
 		TotalTokens      int64 `json:"total_tokens"`
 		CompletionTokens int64 `json:"completion_tokens"`
+		// InputTokensDetails 是 Responses 在命中上下文缓存时给出的明细，命中量
+		// 读 cached_tokens；没有这个对象表示来源不支持或这次没有命中数据。
+		InputTokensDetails *struct {
+			CachedTokens int64 `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
 	} `json:"usage"`
+}
+
+// input 返回来源报告的输入量与其中命中缓存的部分。没有输入量时缓存命中量也
+// 不单列，因为没有可用的分母；命中量超过输入量时按输入量截断。
+func (u usageEnvelope) input() (input, cached int64) {
+	if u.Usage == nil {
+		return 0, 0
+	}
+	input = u.Usage.InputTokens
+	if u.Usage.InputTokensDetails != nil {
+		cached = u.Usage.InputTokensDetails.CachedTokens
+	}
+	if input <= 0 {
+		return 0, 0
+	}
+	if cached > input {
+		cached = input
+	}
+	if cached < 0 {
+		cached = 0
+	}
+	return input, cached
 }
 
 func (u usageEnvelope) tokens(kind Kind) int64 {
@@ -1185,6 +1220,16 @@ func usageTokens(b []byte, kind Kind) int64 {
 	return 0
 }
 
+// usageInput 从整段聊天响应里取输入量与缓存命中量；字段结构与非流式的
+// `response.completed` 事件相同。
+func usageInput(b []byte) (input, cached int64) {
+	var env usageEnvelope
+	if json.Unmarshal(b, &env) == nil {
+		return env.input()
+	}
+	return 0, 0
+}
+
 // streamGuard 在流式转发期间守住空闲与总时限。总时限从发起上游请求时开始，空闲
 // 时限在两次读到数据之间计时；任一超时都取消上游请求，阻塞中的 Read 返回错误，
 // 响应到此结束。不用 http.Client.Timeout，因为它只能给整次请求一个硬时限，分不
@@ -1267,8 +1312,11 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 				data = bytes.TrimSpace(data)
 				completion, used := streamData(data)
 				end = max(end, completion)
-				if used > 0 {
-					result.tokens = used
+				if used.tokens > 0 {
+					result.tokens = used.tokens
+				}
+				if used.input > 0 {
+					result.inputTokens, result.cachedTokens = used.input, used.cached
 				}
 			}
 			if _, werr := w.Write(line); werr != nil {
@@ -1291,9 +1339,14 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 	}
 }
 
-func streamData(data []byte) (responseCompletion, int64) {
+// usageAmount 是一条流事件里报告的用量：总量、输入量与其中命中缓存的部分。
+type usageAmount struct {
+	tokens, input, cached int64
+}
+
+func streamData(data []byte) (responseCompletion, usageAmount) {
 	if bytes.Equal(data, []byte("[DONE]")) {
-		return responseCompleted, 0
+		return responseCompleted, usageAmount{}
 	}
 	var event struct {
 		usageEnvelope
@@ -1304,19 +1357,23 @@ func streamData(data []byte) (responseCompletion, int64) {
 		} `json:"response"`
 	}
 	if json.Unmarshal(data, &event) != nil {
-		return responseInterrupted, 0
+		return responseInterrupted, usageAmount{}
 	}
-	tokens := event.Response.tokens(KindChat)
-	if tokens <= 0 {
-		tokens = event.tokens(KindChat)
+	amount := usageAmount{tokens: event.Response.tokens(KindChat)}
+	amount.input, amount.cached = event.Response.input()
+	if amount.tokens <= 0 {
+		amount.tokens = event.tokens(KindChat)
+		if amount.input <= 0 {
+			amount.input, amount.cached = event.input()
+		}
 	}
 	switch event.Type {
 	case "response.completed":
-		return responseCompleted, tokens
+		return responseCompleted, amount
 	case "response.incomplete":
-		return responseEnd("incomplete", event.Response.IncompleteDetails), tokens
+		return responseEnd("incomplete", event.Response.IncompleteDetails), amount
 	case "response.failed":
-		return responseFailed, tokens
+		return responseFailed, amount
 	}
-	return responseInterrupted, tokens
+	return responseInterrupted, amount
 }

@@ -14,12 +14,14 @@ import (
 const addRouteUsage = `-- name: AddRouteUsage :exec
 INSERT INTO llm_route_usage (
   day, kind, model, provider_id, upstream_model,
-  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens
+  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens,
+  input_tokens, cached_tokens
 )
 VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8, $9,
-  $10, $11, $12, $13
+  $10, $11, $12, $13,
+  $14, $15
 )
 ON CONFLICT (day, kind, model, provider_id, upstream_model) DO UPDATE SET
   attempts = llm_route_usage.attempts + EXCLUDED.attempts,
@@ -29,7 +31,9 @@ ON CONFLICT (day, kind, model, provider_id, upstream_model) DO UPDATE SET
   truncated_attempts = llm_route_usage.truncated_attempts + EXCLUDED.truncated_attempts,
   canceled_attempts = llm_route_usage.canceled_attempts + EXCLUDED.canceled_attempts,
   tokens = llm_route_usage.tokens + EXCLUDED.tokens,
-  estimated_tokens = llm_route_usage.estimated_tokens + EXCLUDED.estimated_tokens
+  estimated_tokens = llm_route_usage.estimated_tokens + EXCLUDED.estimated_tokens,
+  input_tokens = llm_route_usage.input_tokens + EXCLUDED.input_tokens,
+  cached_tokens = llm_route_usage.cached_tokens + EXCLUDED.cached_tokens
 `
 
 type AddRouteUsageParams struct {
@@ -46,6 +50,8 @@ type AddRouteUsageParams struct {
 	CanceledAttempts  int64
 	Tokens            int64
 	EstimatedTokens   int64
+	InputTokens       int64
+	CachedTokens      int64
 }
 
 func (q *Queries) AddRouteUsage(ctx context.Context, arg AddRouteUsageParams) error {
@@ -63,13 +69,16 @@ func (q *Queries) AddRouteUsage(ctx context.Context, arg AddRouteUsageParams) er
 		arg.CanceledAttempts,
 		arg.Tokens,
 		arg.EstimatedTokens,
+		arg.InputTokens,
+		arg.CachedTokens,
 	)
 	return err
 }
 
 const listRouteUsage = `-- name: ListRouteUsage :many
 SELECT day, kind, model, provider_id, upstream_model,
-  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens
+  attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens,
+  input_tokens, cached_tokens
 FROM llm_route_usage
 WHERE day BETWEEN $1 AND $2
 `
@@ -102,6 +111,8 @@ func (q *Queries) ListRouteUsage(ctx context.Context, arg ListRouteUsageParams) 
 			&i.CanceledAttempts,
 			&i.Tokens,
 			&i.EstimatedTokens,
+			&i.InputTokens,
+			&i.CachedTokens,
 		); err != nil {
 			return nil, err
 		}
