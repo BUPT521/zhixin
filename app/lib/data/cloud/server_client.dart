@@ -1326,57 +1326,66 @@ class ServerClient {
       _quotaPurchasePath,
       accessToken: accessToken,
     );
-    final offer = json['offer'] as Map<String, Object?>?;
-    final order = json['latest_order'] as Map<String, Object?>?;
+    final product = json['product'] as Map<String, Object?>?;
+    final latest = json['latest_purchase'] as Map<String, Object?>?;
     return QuotaPurchaseOverview(
-      balanceTokens: json['balance_tokens'] as int,
-      offer: offer == null ? null : _quotaOffer(offer, offer['id'] as String),
-      latestOrder: order == null ? null : _quotaOrder(order),
+      balancePoints: json['balance_points'] as int,
+      legacyBalanceTokens: json['legacy_balance_tokens'] as int,
+      product: product == null ? null : _quotaProduct(product),
+      latestPurchase: latest == null ? null : _quotaLink(latest),
     );
   }
 
-  Future<({QuotaPurchaseOrder order, String orderString})> quotaCheckout(
-    String accessToken,
-    String offerId, {
-    String? orderId,
+  /// 取一张托管购买页的链接。传 skuId 锁定档位，不传由用户在购买页选择。
+  Future<QuotaPurchaseLink> quotaPurchaseLink(
+    String accessToken, {
+    String? skuId,
   }) async {
     final json = await _json(
       'POST',
       _quotaPurchasePath,
       accessToken: accessToken,
-      body: {'offer_id': offerId, 'order_id': ?orderId},
+      body: {'sku_id': ?skuId},
     );
-    return (
-      order: _quotaOrder(json['order'] as Map<String, Object?>),
-      orderString: json['order_string'] as String,
+    return _quotaLink(json);
+  }
+
+  Future<QuotaBalance> quotaBalance(String accessToken) async {
+    final json = await _json(
+      'GET',
+      '$_quotaPurchasePath/quota',
+      accessToken: accessToken,
+    );
+    return QuotaBalance(
+      remaining: json['remaining'] as int,
+      total: json['total'] as int,
+      used: json['used'] as int,
     );
   }
 
-  Future<QuotaPurchaseOrder> quotaOrder(
-    String accessToken,
-    String orderId,
-  ) async => _quotaOrder(
-    await _json(
-      'GET',
-      '$_quotaPurchasePath/${Uri.encodeComponent(orderId)}',
-      accessToken: accessToken,
-    ),
-  );
-
-  static QuotaPurchaseOffer _quotaOffer(Map<String, Object?> json, String id) =>
-      QuotaPurchaseOffer(
-        id: id,
-        amountFen: json['amount_fen'] as int,
-        tokens: json['tokens'] as int,
-        sandbox: json['sandbox'] as bool,
+  static QuotaPurchaseProduct _quotaProduct(Map<String, Object?> json) =>
+      QuotaPurchaseProduct(
+        capabilityStatus: json['capability_status'] as String,
+        billingMode: json['billing_mode'] as String,
+        quotaUnit: json['quota_unit'] as String,
+        options: [
+          for (final option in (json['options'] as List? ?? const []))
+            if (option is Map<String, Object?>)
+              QuotaPurchaseOption(
+                skuId: option['sku_id'] as String,
+                displayName: option['display_name'] as String,
+                price: option['price'] as String,
+                quotaAmount: option['quota_amount'] as int,
+              ),
+        ],
       );
 
-  static QuotaPurchaseOrder _quotaOrder(Map<String, Object?> json) =>
-      QuotaPurchaseOrder(
-        id: json['id'] as String,
-        offer: _quotaOffer(json, json['offer_id'] as String),
-        status: json['status'] as String,
-        payable: json['payable'] as bool,
+  static QuotaPurchaseLink _quotaLink(Map<String, Object?> json) =>
+      QuotaPurchaseLink(
+        outRequestNo: json['out_request_no'] as String,
+        purchaseUrl: json['purchase_url'] as String,
+        skuId: json['sku_id'] as String?,
+        expiresAt: DateTime.parse(json['expires_at'] as String),
       );
 
   Future<List<ServerModel>> models(String accessToken) async {

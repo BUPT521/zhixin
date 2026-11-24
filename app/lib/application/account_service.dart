@@ -571,14 +571,11 @@ class AccountService {
   Future<QuotaPurchaseOverview> quotaPurchases() =>
       _callForCurrentIdentity((client, token) => client.quotaPurchases(token));
 
-  Future<({QuotaPurchaseOrder order, String orderString})?> quotaCheckout(
-    String offerId, {
-    String? orderId,
-  }) async {
+  /// 取托管购买页链接。商品不可售时服务端回 409，这里当作“现在不能买”返回空。
+  Future<QuotaPurchaseLink?> quotaPurchaseLink({String? skuId}) async {
     try {
       return await _callForCurrentIdentity(
-        (client, token) =>
-            client.quotaCheckout(token, offerId, orderId: orderId),
+        (client, token) => client.quotaPurchaseLink(token, skuId: skuId),
       );
     } on ServerProblem catch (error) {
       if (error.status == 409) return null;
@@ -586,10 +583,8 @@ class AccountService {
     }
   }
 
-  Future<QuotaPurchaseOrder> quotaOrder(String orderId) =>
-      _callForCurrentIdentity(
-        (client, token) => client.quotaOrder(token, orderId),
-      );
+  Future<QuotaBalance> quotaBalance() =>
+      _callForCurrentIdentity((client, token) => client.quotaBalance(token));
 
   Future<List<ServerModel>> models() =>
       call<List<ServerModel>>((client, token) => client.models(token));
