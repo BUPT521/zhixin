@@ -27,6 +27,11 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if want <= 0 {
 		return 0, llmproxy.ErrQuotaExceeded
 	}
+	// 每轮对话开工前先把上一轮没有确认结果的核销补查一次：补查只排进队列，不在这
+	// 条请求路径上调用即刻收，失败也不影响这一轮（ADR-0067）。
+	if s.nowpay != nil && kind == llmproxy.KindChat {
+		s.nowpay.Resume(ctx, userID)
+	}
 	date, err := pgDate(day)
 	if err != nil {
 		return 0, err
@@ -154,6 +159,11 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pg: 提交额度结算失败: %w", err)
+	}
+	// 结算提交之后才算这笔用量：回答已经发给用户，核销失败不回滚，留在流水里由下
+	// 一轮请求前补查（ADR-0067）。
+	if s.nowpay != nil && kind == llmproxy.KindChat {
+		s.chargeNowPay(ctx, userID, day, date)
 	}
 	return nil
 }

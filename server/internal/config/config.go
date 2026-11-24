@@ -13,6 +13,8 @@ import (
 	"net"
 	"net/mail"
 	"net/netip"
+	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +34,8 @@ type Config struct {
 	DatabaseURL string
 	Alipay      *payment.Gateway
 	AlipayOffer payment.Offer
+	// NowPay 是即刻收直连的商品配置；为空表示不卖积分包，购买接口只回本地余额。
+	NowPay *NowPayConfig
 	// Location decides where a "day" starts for the model quota.
 	Location *time.Location
 
@@ -184,6 +188,43 @@ type Config struct {
 	// 为空时不能保存带 key 的来源，已保存的 key 也无法解密。
 	SecretKey []byte
 }
+
+// NowPayConfig 是即刻收直连的商品配置（ZHIXIN_NOWPAY_*），决定按积分包卖聊天
+// 额度。商品、档位与价格都在「即刻收」小程序里配置，这里只放商品 ID、返回地址与
+// 积分折算比例。
+type NowPayConfig struct {
+	// ProductID 是小程序商品详情页复制的外部商品 ID，不能由应用生成。
+	ProductID string
+	// CallbackURL 只在购买页返回之后跳转用，不是到账通知；留空时由客户端自己回到
+	// 应用。配置时必须是 HTTPS 地址。
+	CallbackURL string
+	// TokensPerPoint 是一个积分覆盖的计费 token 数：每轮结束按 Usage.Billed 折算，
+	// 向上取整核销。默认 1000。
+	TokensPerPoint int64
+}
+
+// parseNowPay 读即刻收的三个配置项并做自检。商品 ID 走 32 个字符以内的字母数字与
+// 连接符，保持与支付宝返回的形态一致，也避免把配置错误带进签名。
+func parseNowPay(get func(string, string) string, productID string) (*NowPayConfig, error) {
+	if len(productID) > 128 || !productIDPattern.MatchString(productID) {
+		return nil, errors.New("ZHIXIN_NOWPAY_PRODUCT_ID 必须是「即刻收」小程序里的商品 ID")
+	}
+	perPoint, err := strconv.ParseInt(get("ZHIXIN_NOWPAY_TOKENS_PER_POINT", "1000"), 10, 64)
+	if err != nil || perPoint < 1 || perPoint > 1000000000 {
+		return nil, errors.New("ZHIXIN_NOWPAY_TOKENS_PER_POINT 必须是 1 到 10 亿之间的整数")
+	}
+	callback := strings.TrimSpace(get("ZHIXIN_NOWPAY_CALLBACK_URL", ""))
+	if callback != "" {
+		parsed, err := url.Parse(callback)
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
+			parsed.User != nil || parsed.Fragment != "" || len(callback) > 512 {
+			return nil, errors.New("ZHIXIN_NOWPAY_CALLBACK_URL 必须是 HTTPS 地址，且不带账号信息与片段")
+		}
+	}
+	return &NowPayConfig{ProductID: productID, CallbackURL: callback, TokensPerPoint: perPoint}, nil
+}
+
+var productIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{4,128}$`)
 
 // LLMConfig configures the model proxy.
 //
@@ -487,6 +528,23 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, err)
 		}
 		cfg.Alipay = gateway
+	}
+
+	// 即刻收直连沿用同一个支付宝应用的应用凭证：网关、RSA2 签名与公共参数与 APP
+	// 支付一样，商品 ID 从「即刻收」小程序商品详情复制，应用不能自己生成
+	// （ADR-0067）。没有商品 ID 表示不卖积分包。
+	productID := strings.TrimSpace(get("ZHIXIN_NOWPAY_PRODUCT_ID", ""))
+	if productID != "" {
+		nowPay, err := parseNowPay(get, productID)
+		if err != nil {
+			errs = append(errs, err)
+		} else if cfg.Alipay == nil {
+			errs = append(errs, errors.New("ZHIXIN_NOWPAY_PRODUCT_ID 需要同一套 ZHIXIN_ALIPAY_* 应用凭证"))
+		} else if cfg.DatabaseURL == "" {
+			errs = append(errs, errors.New("即刻收收款需要 ZHIXIN_DATABASE_URL 保存购买入口与核销流水"))
+		} else {
+			cfg.NowPay = nowPay
+		}
 	}
 
 	// 带 key 的上游地址由管理后台保存，地址在保存时校验（见 llmproxy.Admin）。

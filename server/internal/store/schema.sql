@@ -317,6 +317,39 @@ CREATE TABLE model_quota_paid_usage (
   FOREIGN KEY (user_id, sandbox) REFERENCES model_quota_wallet(user_id, sandbox) ON DELETE CASCADE
 );
 
+-- 即刻收积分核销流水（ADR-0067）。id 同时是提交给即刻收的 out_request_no：结果
+-- 未知时只能用原号查询或重试，换号会多扣一次，所以幂等号必须落在本地。points 按
+-- 「1 积分 = 配置的计费 token 数」向上取整折算，只对超出免费额度与遗留已购余额的
+-- 部分申请；status 为 failed 的流水不再计入当天已申请量，下一次结算重新算差额。
+-- 账号删除时解除关联而不删行，留作对账。
+CREATE TABLE nowpay_charge (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT REFERENCES app_user(id) ON DELETE SET NULL,
+  day           DATE NOT NULL,
+  points        BIGINT NOT NULL CHECK (points > 0),
+  billed_tokens BIGINT NOT NULL CHECK (billed_tokens > 0),
+  status        TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
+  note          TEXT NOT NULL DEFAULT '',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX nowpay_charge_user_day_idx ON nowpay_charge (user_id, day);
+CREATE INDEX nowpay_charge_unsettled_idx
+  ON nowpay_charge (user_id, created_at) WHERE status IN ('pending', 'processing');
+
+-- 购买入口请求：同一账号同一档位在链接有效期内重试时复用原链接，不重复创单。
+CREATE TABLE nowpay_purchase (
+  out_request_no TEXT PRIMARY KEY,
+  user_id        TEXT REFERENCES app_user(id) ON DELETE SET NULL,
+  sku_id         TEXT NOT NULL DEFAULT '',
+  purchase_url   TEXT NOT NULL,
+  expires_at     TIMESTAMPTZ NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX nowpay_purchase_user_created_idx
+  ON nowpay_purchase (user_id, created_at DESC) WHERE user_id IS NOT NULL;
+
 CREATE TABLE llm_quota (
   user_id                 TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
   daily_tokens            BIGINT CHECK (daily_tokens > 0),

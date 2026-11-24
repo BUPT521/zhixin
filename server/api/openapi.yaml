@@ -23,6 +23,7 @@ tags:
   - name: llm
   - name: app
   - name: cloud
+  - name: payment
   - name: admin
 
 paths:
@@ -794,8 +795,13 @@ paths:
 
   /v1/me/model-quota-purchases:
     get:
-      summary: 当前聊天 Token 包、购买余额与最近一笔订单
-      description: 需要登录令牌。购买功能未启用或账号未验证登录方式时省略 offer。
+      tags: [payment]
+      summary: 即刻收商品收费能力、聊天积分余额与遗留余额
+      description: |
+        需要登录令牌。服务端按商品查询收费能力（alipay.aipay.nowpaydirect.charge.query），
+        再按账号查询积分余额（alipay.aipay.nowpaydirect.quota.query）。服务未配置商品或
+        账号未验证登录方式时省略 product，余额照常返回；只有 capability_status 是 ENABLED
+        才表示允许新增购买。
       responses:
         '200':
           description: 购买概况
@@ -804,77 +810,52 @@ paths:
               schema: { $ref: '#/components/schemas/QuotaPurchaseOverview' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+        '503': { $ref: '#/components/responses/Problem' }
     post:
-      summary: 按已确认的报价创建支付宝 App 支付订单
-      description: 同一账号在订单可支付期间重试时复用原订单。价格与发放额度由服务端确定。
+      tags: [payment]
+      summary: 获取即刻收托管购买页的购买链接
+      description: |
+        价格、档位与发放额度由即刻收小程序配置，服务端只按 sku_id 锁定档位，不传价格。
+        同一账号、同一档位在链接有效期内重试时复用原链接，按原请求号重新获取。
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [offer_id]
               properties:
-                offer_id: { type: string }
-                order_id: { type: string, description: 继续支付的原订单号，提供后不会另开新单 }
+                sku_id:
+                  type: string
+                  description: 取自查商品返回的档位；省略时由用户在购买页选择
       responses:
         '200':
-          description: 同一笔业务订单及签名后的支付宝 SDK 参数
+          description: 购买链接与失效时间
           content:
             application/json:
-              schema:
-                type: object
-                required: [order_string, order]
-                properties:
-                  order_string: { type: string }
-                  order: { $ref: '#/components/schemas/QuotaPurchaseOrder' }
+              schema: { $ref: '#/components/schemas/QuotaPurchaseLink' }
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
         '409': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/Problem' }
-  /v1/me/model-quota-purchases/{id}:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema: { type: string }
+  /v1/me/model-quota-purchases/quota:
     get:
-      summary: 查询本账号的支付宝订单并确认到账
-      description: 未到账订单由服务端向支付宝查单。到账状态与额度发放在同一个事务中提交。
+      tags: [payment]
+      summary: 查询本账号在即刻收一侧的积分余额
+      description: |
+        购买页返回之后调用，用于刷新余额。余额只表示当前可消费量，实际扣减仍以核销为准。
       responses:
         '200':
-          description: 服务端订单状态
+          description: 积分余额
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/QuotaPurchaseOrder' }
+              schema: { $ref: '#/components/schemas/QuotaBalance' }
         '401': { $ref: '#/components/responses/Problem' }
         '403': { $ref: '#/components/responses/Problem' }
-        '404': { $ref: '#/components/responses/Problem' }
         '429': { $ref: '#/components/responses/RateLimited' }
         '503': { $ref: '#/components/responses/Problem' }
-  /v1/payments/alipay/notify:
-    post:
-      security: []
-      summary: 接收支付宝到账通知
-      description: 验证 RSA2 签名、应用与商户身份、订单、金额及支付宝交易号后才确认到账。
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              additionalProperties: { type: string }
-      responses:
-        '200':
-          description: 已处理或已处理过，响应正文为 success
-          content:
-            text/plain:
-              schema: { type: string }
-        '400': { description: 通知校验失败 }
-        '404': { description: 支付宝收款未配置 }
-        '500': { description: 持久化失败，支付宝应重试通知 }
   /v1/llm/models:
     get:
       tags: [llm]
@@ -1380,30 +1361,54 @@ components:
   schemas:
     QuotaPurchaseOverview:
       type: object
-      required: [balance_tokens]
+      required: [balance_points, legacy_balance_tokens]
       properties:
-        balance_tokens: { type: integer, format: int64 }
-        offer:
-          type: object
-          required: [id, amount_fen, tokens, sandbox]
-          properties:
-            id: { type: string }
-            amount_fen: { type: integer, format: int64 }
-            tokens: { type: integer, format: int64 }
-            sandbox: { type: boolean }
-        latest_order: { $ref: '#/components/schemas/QuotaPurchaseOrder' }
-    QuotaPurchaseOrder:
+        product: { $ref: '#/components/schemas/QuotaPurchaseProduct' }
+        balance_points:
+          type: integer
+          format: int64
+          description: 即刻收一侧的剩余积分；未配置商品时为 0
+        legacy_balance_tokens:
+          type: integer
+          format: int64
+          description: APP 支付时期留在本服务的已购 token 余额，仍然先于积分使用
+        latest_purchase: { $ref: '#/components/schemas/QuotaPurchaseLink' }
+    QuotaPurchaseProduct:
       type: object
-      required: [id, offer_id, amount_fen, tokens, status, expires_at, payable, sandbox]
+      description: 即刻收商品；服务未配置商品或账号未验证登录方式时整体省略，是否允许购买看 capability_status
+      required: [capability_status, billing_mode, quota_unit, options]
       properties:
-        id: { type: string }
-        offer_id: { type: string }
-        amount_fen: { type: integer, format: int64 }
-        tokens: { type: integer, format: int64 }
-        status: { type: string, enum: [pending, paid, closed] }
+        capability_status:
+          type: string
+          enum: [NOT_CONFIGURED, CONFIGURING, PENDING, ACTION_REQUIRED, ENABLED, DISABLED, TERMINATED]
+        billing_mode: { type: string, enum: [ONE_TIME, ONE_TIME_DURATION, QUANTITY] }
+        quota_unit: { type: string, enum: [COUNT, POINT] }
+        options:
+          type: array
+          items: { $ref: '#/components/schemas/QuotaPurchaseOption' }
+    QuotaPurchaseOption:
+      type: object
+      required: [sku_id, display_name, price, quota_amount]
+      properties:
+        sku_id: { type: string }
+        display_name: { type: string }
+        price: { type: string, description: 展示价格，十进制，单位元，由即刻收给出 }
+        quota_amount: { type: integer, format: int64, description: 购买该档位增加的积分 }
+    QuotaPurchaseLink:
+      type: object
+      required: [out_request_no, purchase_url, expires_at]
+      properties:
+        out_request_no: { type: string, description: 本服务向即刻收发起的购买入口请求号 }
+        sku_id: { type: string }
+        purchase_url: { type: string, description: 托管购买页入口，按不透明链接打开，不解析、不拼接 }
         expires_at: { type: string, format: date-time }
-        payable: { type: boolean }
-        sandbox: { type: boolean }
+    QuotaBalance:
+      type: object
+      required: [remaining, total, used]
+      properties:
+        remaining: { type: integer, format: int64, description: 剩余积分，已排除预占 }
+        total: { type: integer, format: int64 }
+        used: { type: integer, format: int64 }
     EmbeddingRequest:
       type: object
       required: [model, input]

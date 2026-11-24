@@ -14,6 +14,7 @@ import (
 	_ "time/tzdata" // the container image may not ship zoneinfo
 
 	"github.com/BUPT521/zhixin/server/internal/config"
+	"github.com/BUPT521/zhixin/server/internal/nowpay"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/server"
@@ -35,6 +36,8 @@ func run(log *slog.Logger) error {
 	}
 
 	var stores server.Stores
+	// meter 是即刻收的积分核销执行器；没有配置商品时保持为空，结算之后不产生核销。
+	var meter *nowpay.Meter
 	if cfg.DatabaseURL == "" {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
@@ -46,6 +49,7 @@ func run(log *slog.Logger) error {
 		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{
 			Objects: objects, PurchasedQuotaEnabled: cfg.Alipay != nil,
 			PurchasedQuotaSandbox: cfg.Alipay != nil && cfg.Alipay.Sandbox(),
+			Log:                   log,
 		})
 		if err != nil {
 			return err
@@ -63,6 +67,25 @@ func run(log *slog.Logger) error {
 			if err != nil {
 				return err
 			}
+		}
+		if cfg.NowPay != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+			err := pgStore.CheckNowPaySchema(ctx)
+			cancel()
+			if err != nil {
+				return err
+			}
+			client, err := nowpay.NewClient(cfg.Alipay, cfg.NowPay.ProductID)
+			if err != nil {
+				return err
+			}
+			meter, err = nowpay.NewMeter(client, pgStore, cfg.NowPay.TokensPerPoint, log)
+			if err != nil {
+				return err
+			}
+			pgStore.SetNowPay(meter)
+			stores.Purchases = pgStore
+			stores.NowPay = client
 		}
 		log.Info("using PostgreSQL stores")
 		// 附件索引与配额写在 attachment 表里，BlobStore 负责索引与字节两件事；
@@ -110,6 +133,10 @@ func run(log *slog.Logger) error {
 	// 信号上下文，再构造处理器。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// 核销协程跟着进程退出；队列里没有来得及处理的流水留在库里，下一轮请求前补查。
+	if meter != nil {
+		meter.Start(ctx)
+	}
 
 	handler, _ := server.Build(ctx, cfg, stores, log)
 	srv := &http.Server{

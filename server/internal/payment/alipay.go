@@ -80,7 +80,7 @@ func NewGateway(appID, sellerID, notifyURL, privateKey, publicKey string, sandbo
 func (g *Gateway) Sandbox() bool { return g.sandbox }
 
 func (g *Gateway) signOrder(order Order, now time.Time) (string, error) {
-	biz := map[string]string{
+	biz := map[string]any{
 		"out_trade_no": order.ID,
 		"total_amount": fmt.Sprintf("%d.%02d", order.AmountFen/100, order.AmountFen%100),
 		"subject":      "知新聊天额度包",
@@ -90,7 +90,7 @@ func (g *Gateway) signOrder(order Order, now time.Time) (string, error) {
 	return g.sign("alipay.trade.app.pay", biz, now, g.notifyURL)
 }
 
-func (g *Gateway) sign(method string, parameters map[string]string, now time.Time, callback string) (string, error) {
+func (g *Gateway) sign(method string, parameters map[string]any, now time.Time, callback string) (string, error) {
 	biz, err := json.Marshal(parameters)
 	if err != nil {
 		return "", err
@@ -122,34 +122,12 @@ type trade struct {
 }
 
 func (g *Gateway) query(ctx context.Context, orderID string, now time.Time) (trade, error) {
-	body, err := g.sign("alipay.trade.query", map[string]string{"out_trade_no": orderID}, now, "")
+	raw, err := g.call(ctx, "alipay.trade.query", map[string]any{"out_trade_no": orderID}, now)
 	if err != nil {
 		return trade{}, err
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint, strings.NewReader(body))
-	if err != nil {
-		return trade{}, ErrGateway
-	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	response, err := g.client.Do(request)
-	if err != nil {
-		return trade{}, ErrGateway
-	}
-	defer response.Body.Close()
-	const maxResponse = 64 << 10
-	raw, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
-	if err != nil || len(raw) > maxResponse || response.StatusCode != http.StatusOK {
-		return trade{}, ErrGateway
-	}
-	var envelope struct {
-		Result    json.RawMessage `json:"alipay_trade_query_response"`
-		Signature string          `json:"sign"`
-	}
-	if json.Unmarshal(raw, &envelope) != nil || !g.verify(envelope.Result, envelope.Signature) {
-		return trade{}, ErrGateway
-	}
 	var result trade
-	if json.Unmarshal(envelope.Result, &result) != nil {
+	if json.Unmarshal(raw, &result) != nil {
 		return trade{}, ErrGateway
 	}
 	if result.Code == "40004" && result.SubCode == "ACQ.TRADE_NOT_EXIST" {
@@ -157,6 +135,47 @@ func (g *Gateway) query(ctx context.Context, orderID string, now time.Time) (tra
 	}
 	if result.Code != "10000" || result.OrderID != orderID {
 		return trade{}, ErrGateway
+	}
+	return result, nil
+}
+
+// Call 向支付宝网关发起一次业务调用并返回已经验签的业务对象：method 决定接口，
+// biz 是 biz_content 的内容。即刻收直连与 APP 支付的网关、签名和公共参数一样，
+// 所以六个即刻收接口也走这里（见 internal/nowpay）。
+func (g *Gateway) Call(ctx context.Context, method string, biz map[string]any) ([]byte, error) {
+	return g.call(ctx, method, biz, time.Now())
+}
+
+// call 签名、提交、验签，返回业务对象的原始 JSON。响应里业务对象的键由 method
+// 决定，例如 alipay.trade.query 对应 alipay_trade_query_response。
+func (g *Gateway) call(ctx context.Context, method string, biz map[string]any, now time.Time) ([]byte, error) {
+	body, err := g.sign(method, biz, now, "")
+	if err != nil {
+		return nil, err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint, strings.NewReader(body))
+	if err != nil {
+		return nil, ErrGateway
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := g.client.Do(request)
+	if err != nil {
+		return nil, ErrGateway
+	}
+	defer response.Body.Close()
+	const maxResponse = 64 << 10
+	raw, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
+	if err != nil || len(raw) > maxResponse || response.StatusCode != http.StatusOK {
+		return nil, ErrGateway
+	}
+	var envelope map[string]json.RawMessage
+	if json.Unmarshal(raw, &envelope) != nil {
+		return nil, ErrGateway
+	}
+	result, ok := envelope[strings.ReplaceAll(method, ".", "_")+"_response"]
+	var signature string
+	if !ok || json.Unmarshal(envelope["sign"], &signature) != nil || !g.verify(result, signature) {
+		return nil, ErrGateway
 	}
 	return result, nil
 }

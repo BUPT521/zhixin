@@ -188,6 +188,27 @@ type ModelQuotaWallet struct {
 	BalanceTokens int64
 }
 
+type NowpayCharge struct {
+	ID           string
+	UserID       pgtype.Text
+	Day          pgtype.Date
+	Points       int64
+	BilledTokens int64
+	Status       string
+	Note         string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type NowpayPurchase struct {
+	OutRequestNo string
+	UserID       pgtype.Text
+	SkuID        string
+	PurchaseUrl  string
+	ExpiresAt    pgtype.Timestamptz
+	CreatedAt    pgtype.Timestamptz
+}
+
 type Session struct {
 	ID             string
 	UserID         string

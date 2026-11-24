@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -21,6 +22,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
+	"github.com/BUPT521/zhixin/server/internal/nowpay"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/store"
@@ -34,6 +36,7 @@ type Store struct {
 	pool    *pgxpool.Pool
 	q       *db.Queries
 	objects objectstore.Store
+	log     *slog.Logger
 
 	// dailyTokens 与 instanceDailyTokens 是配置里的默认每日额度与实例预算，由
 	// llmproxy.NewHandler 装配时经 SetQuotaLimits 注入（见 quota.go），运行期间
@@ -43,6 +46,9 @@ type Store struct {
 	instanceDailyTokens   int64
 	purchasedQuotaEnabled bool
 	purchasedQuotaSandbox bool
+	// nowpay 是即刻收的核销执行器；为空表示没有配置商品，结算之后不产生积分核销。
+	// 装配由 server.Build 在构造处理器时注入，见 SetNowPay。
+	nowpay nowpay.Recorder
 }
 
 var (
@@ -65,6 +71,9 @@ type Options struct {
 	// PurchasedQuotaEnabled requires the payment tables in schema.sql.
 	PurchasedQuotaEnabled bool
 	PurchasedQuotaSandbox bool
+	// Log 接收存储层自己发现的问题，主要是结算之后折算积分时的读失败；为空时用
+	// 标准 logger。
+	Log *slog.Logger
 }
 
 // Open 连接 PostgreSQL 并返回四个接口共用的实现。
@@ -83,8 +92,19 @@ func Open(ctx context.Context, dsn string, opts Options) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("pg: 建立连接池失败: %w", err)
 	}
-	return &Store{pool: pool, q: db.New(pool), objects: opts.Objects, purchasedQuotaEnabled: opts.PurchasedQuotaEnabled, purchasedQuotaSandbox: opts.PurchasedQuotaSandbox}, nil
+	logger := opts.Log
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Store{
+		pool: pool, q: db.New(pool), objects: opts.Objects, log: logger,
+		purchasedQuotaEnabled: opts.PurchasedQuotaEnabled, purchasedQuotaSandbox: opts.PurchasedQuotaSandbox,
+	}, nil
 }
+
+// SetNowPay 注入即刻收的核销执行器。它只影响结算之后的积分核销，装配前已经在跑的
+// 结算照常记账，下一轮请求才产生核销。
+func (s *Store) SetNowPay(recorder nowpay.Recorder) { s.nowpay = recorder }
 
 // Ping 报告数据库是否可达，供 /readyz 使用。
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }

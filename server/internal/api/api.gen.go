@@ -274,21 +274,72 @@ func (e ProblemCode) Valid() bool {
 	}
 }
 
-// Defines values for QuotaPurchaseOrderStatus.
+// Defines values for QuotaPurchaseProductBillingMode.
 const (
-	Closed  QuotaPurchaseOrderStatus = "closed"
-	Paid    QuotaPurchaseOrderStatus = "paid"
-	Pending QuotaPurchaseOrderStatus = "pending"
+	ONETIME         QuotaPurchaseProductBillingMode = "ONE_TIME"
+	ONETIMEDURATION QuotaPurchaseProductBillingMode = "ONE_TIME_DURATION"
+	QUANTITY        QuotaPurchaseProductBillingMode = "QUANTITY"
 )
 
-// Valid indicates whether the value is a known member of the QuotaPurchaseOrderStatus enum.
-func (e QuotaPurchaseOrderStatus) Valid() bool {
+// Valid indicates whether the value is a known member of the QuotaPurchaseProductBillingMode enum.
+func (e QuotaPurchaseProductBillingMode) Valid() bool {
 	switch e {
-	case Closed:
+	case ONETIME:
 		return true
-	case Paid:
+	case ONETIMEDURATION:
 		return true
-	case Pending:
+	case QUANTITY:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for QuotaPurchaseProductCapabilityStatus.
+const (
+	ACTIONREQUIRED QuotaPurchaseProductCapabilityStatus = "ACTION_REQUIRED"
+	CONFIGURING    QuotaPurchaseProductCapabilityStatus = "CONFIGURING"
+	DISABLED       QuotaPurchaseProductCapabilityStatus = "DISABLED"
+	ENABLED        QuotaPurchaseProductCapabilityStatus = "ENABLED"
+	NOTCONFIGURED  QuotaPurchaseProductCapabilityStatus = "NOT_CONFIGURED"
+	PENDING        QuotaPurchaseProductCapabilityStatus = "PENDING"
+	TERMINATED     QuotaPurchaseProductCapabilityStatus = "TERMINATED"
+)
+
+// Valid indicates whether the value is a known member of the QuotaPurchaseProductCapabilityStatus enum.
+func (e QuotaPurchaseProductCapabilityStatus) Valid() bool {
+	switch e {
+	case ACTIONREQUIRED:
+		return true
+	case CONFIGURING:
+		return true
+	case DISABLED:
+		return true
+	case ENABLED:
+		return true
+	case NOTCONFIGURED:
+		return true
+	case PENDING:
+		return true
+	case TERMINATED:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for QuotaPurchaseProductQuotaUnit.
+const (
+	COUNT QuotaPurchaseProductQuotaUnit = "COUNT"
+	POINT QuotaPurchaseProductQuotaUnit = "POINT"
+)
+
+// Valid indicates whether the value is a known member of the QuotaPurchaseProductQuotaUnit enum.
+func (e QuotaPurchaseProductQuotaUnit) Valid() bool {
+	switch e {
+	case COUNT:
+		return true
+	case POINT:
 		return true
 	default:
 		return false
@@ -857,32 +908,67 @@ type PushResult struct {
 	Seqs []int64 `json:"seqs"`
 }
 
-// QuotaPurchaseOrder defines model for QuotaPurchaseOrder.
-type QuotaPurchaseOrder struct {
-	AmountFen int64                    `json:"amount_fen"`
-	ExpiresAt time.Time                `json:"expires_at"`
-	Id        string                   `json:"id"`
-	OfferId   string                   `json:"offer_id"`
-	Payable   bool                     `json:"payable"`
-	Sandbox   bool                     `json:"sandbox"`
-	Status    QuotaPurchaseOrderStatus `json:"status"`
-	Tokens    int64                    `json:"tokens"`
+// QuotaBalance defines model for QuotaBalance.
+type QuotaBalance struct {
+	// Remaining 剩余积分，已排除预占
+	Remaining int64 `json:"remaining"`
+	Total     int64 `json:"total"`
+	Used      int64 `json:"used"`
 }
 
-// QuotaPurchaseOrderStatus defines model for QuotaPurchaseOrder.Status.
-type QuotaPurchaseOrderStatus string
+// QuotaPurchaseLink defines model for QuotaPurchaseLink.
+type QuotaPurchaseLink struct {
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// OutRequestNo 本服务向即刻收发起的购买入口请求号
+	OutRequestNo string `json:"out_request_no"`
+
+	// PurchaseUrl 托管购买页入口，按不透明链接打开，不解析、不拼接
+	PurchaseUrl string  `json:"purchase_url"`
+	SkuId       *string `json:"sku_id,omitempty"`
+}
+
+// QuotaPurchaseOption defines model for QuotaPurchaseOption.
+type QuotaPurchaseOption struct {
+	DisplayName string `json:"display_name"`
+
+	// Price 展示价格，十进制，单位元，由即刻收给出
+	Price string `json:"price"`
+
+	// QuotaAmount 购买该档位增加的积分
+	QuotaAmount int64  `json:"quota_amount"`
+	SkuId       string `json:"sku_id"`
+}
 
 // QuotaPurchaseOverview defines model for QuotaPurchaseOverview.
 type QuotaPurchaseOverview struct {
-	BalanceTokens int64               `json:"balance_tokens"`
-	LatestOrder   *QuotaPurchaseOrder `json:"latest_order,omitempty"`
-	Offer         *struct {
-		AmountFen int64  `json:"amount_fen"`
-		Id        string `json:"id"`
-		Sandbox   bool   `json:"sandbox"`
-		Tokens    int64  `json:"tokens"`
-	} `json:"offer,omitempty"`
+	// BalancePoints 即刻收一侧的剩余积分；未配置商品时为 0
+	BalancePoints  int64              `json:"balance_points"`
+	LatestPurchase *QuotaPurchaseLink `json:"latest_purchase,omitempty"`
+
+	// LegacyBalanceTokens APP 支付时期留在本服务的已购 token 余额，仍然先于积分使用
+	LegacyBalanceTokens int64 `json:"legacy_balance_tokens"`
+
+	// Product 即刻收商品；未配置或不可售时整体省略
+	Product *QuotaPurchaseProduct `json:"product,omitempty"`
 }
+
+// QuotaPurchaseProduct 即刻收商品；未配置或不可售时整体省略
+type QuotaPurchaseProduct struct {
+	BillingMode      QuotaPurchaseProductBillingMode      `json:"billing_mode"`
+	CapabilityStatus QuotaPurchaseProductCapabilityStatus `json:"capability_status"`
+	Options          []QuotaPurchaseOption                `json:"options"`
+	QuotaUnit        QuotaPurchaseProductQuotaUnit        `json:"quota_unit"`
+}
+
+// QuotaPurchaseProductBillingMode defines model for QuotaPurchaseProduct.BillingMode.
+type QuotaPurchaseProductBillingMode string
+
+// QuotaPurchaseProductCapabilityStatus defines model for QuotaPurchaseProduct.CapabilityStatus.
+type QuotaPurchaseProductCapabilityStatus string
+
+// QuotaPurchaseProductQuotaUnit defines model for QuotaPurchaseProduct.QuotaUnit.
+type QuotaPurchaseProductQuotaUnit string
 
 // Ready defines model for Ready.
 type Ready struct {
@@ -1193,14 +1279,8 @@ type PostV1MeIdentitiesIdVerificationConfirmJSONBody struct {
 
 // PostV1MeModelQuotaPurchasesJSONBody defines parameters for PostV1MeModelQuotaPurchases.
 type PostV1MeModelQuotaPurchasesJSONBody struct {
-	OfferId string `json:"offer_id"`
-
-	// OrderId 继续支付的原订单号，提供后不会另开新单
-	OrderId *string `json:"order_id,omitempty"`
-}
-
-// PostV1PaymentsAlipayNotifyFormdataBody defines parameters for PostV1PaymentsAlipayNotify.
-type PostV1PaymentsAlipayNotifyFormdataBody struct {
+	// SkuId 取自查商品返回的档位；省略时由用户在购买页选择
+	SkuId *string `json:"sku_id,omitempty"`
 }
 
 // DeleteV1SyncCommitsJSONBody defines parameters for DeleteV1SyncCommits.
@@ -1318,9 +1398,6 @@ type PostV1MeIdentitiesIdVerificationConfirmJSONRequestBody PostV1MeIdentitiesId
 
 // PostV1MeModelQuotaPurchasesJSONRequestBody defines body for PostV1MeModelQuotaPurchases for application/json ContentType.
 type PostV1MeModelQuotaPurchasesJSONRequestBody PostV1MeModelQuotaPurchasesJSONBody
-
-// PostV1PaymentsAlipayNotifyFormdataRequestBody defines body for PostV1PaymentsAlipayNotify for application/x-www-form-urlencoded ContentType.
-type PostV1PaymentsAlipayNotifyFormdataRequestBody PostV1PaymentsAlipayNotifyFormdataBody
 
 // DeleteV1SyncCommitsJSONRequestBody defines body for DeleteV1SyncCommits for application/json ContentType.
 type DeleteV1SyncCommitsJSONRequestBody DeleteV1SyncCommitsJSONBody
@@ -1612,18 +1689,15 @@ type ServerInterface interface {
 	// PostV1MeIdentitiesIdVerificationConfirm 用验证码确认某一种登录方式
 	// (POST /v1/me/identities/{id}/verification/confirm)
 	PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request, id string)
-	// GetV1MeModelQuotaPurchases 当前聊天 Token 包、购买余额与最近一笔订单
+	// GetV1MeModelQuotaPurchases 即刻收商品收费能力、聊天积分余额与遗留余额
 	// (GET /v1/me/model-quota-purchases)
 	GetV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request)
-	// PostV1MeModelQuotaPurchases 按已确认的报价创建支付宝 App 支付订单
+	// PostV1MeModelQuotaPurchases 获取即刻收托管购买页的购买链接
 	// (POST /v1/me/model-quota-purchases)
 	PostV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request)
-	// GetV1MeModelQuotaPurchasesId 查询本账号的支付宝订单并确认到账
-	// (GET /v1/me/model-quota-purchases/{id})
-	GetV1MeModelQuotaPurchasesId(w http.ResponseWriter, r *http.Request, id string)
-	// PostV1PaymentsAlipayNotify 接收支付宝到账通知
-	// (POST /v1/payments/alipay/notify)
-	PostV1PaymentsAlipayNotify(w http.ResponseWriter, r *http.Request)
+	// GetV1MeModelQuotaPurchasesQuota 查询本账号在即刻收一侧的积分余额
+	// (GET /v1/me/model-quota-purchases/quota)
+	GetV1MeModelQuotaPurchasesQuota(w http.ResponseWriter, r *http.Request)
 	// DeleteV1SyncCommits 清空该账号的提交序列，服务端 head 重置为 0
 	// (DELETE /v1/sync/commits)
 	DeleteV1SyncCommits(w http.ResponseWriter, r *http.Request)
@@ -2706,37 +2780,11 @@ func (siw *ServerInterfaceWrapper) PostV1MeModelQuotaPurchases(w http.ResponseWr
 	handler.ServeHTTP(w, r)
 }
 
-// GetV1MeModelQuotaPurchasesId operation middleware
-func (siw *ServerInterfaceWrapper) GetV1MeModelQuotaPurchasesId(w http.ResponseWriter, r *http.Request) {
-
-	var err error
-	_ = err
-
-	// ------------- Path parameter "id" -------------
-	var id string
-
-	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
-	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
-		return
-	}
+// GetV1MeModelQuotaPurchasesQuota operation middleware
+func (siw *ServerInterfaceWrapper) GetV1MeModelQuotaPurchasesQuota(w http.ResponseWriter, r *http.Request) {
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetV1MeModelQuotaPurchasesId(w, r, id)
-	}))
-
-	for _, middleware := range siw.HandlerMiddlewares {
-		handler = middleware(handler)
-	}
-
-	handler.ServeHTTP(w, r)
-}
-
-// PostV1PaymentsAlipayNotify operation middleware
-func (siw *ServerInterfaceWrapper) PostV1PaymentsAlipayNotify(w http.ResponseWriter, r *http.Request) {
-
-	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PostV1PaymentsAlipayNotify(w, r)
+		siw.Handler.GetV1MeModelQuotaPurchasesQuota(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3313,8 +3361,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/backups/{id}", wrapper.GetV1BackupsId)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/model-quota-purchases", wrapper.GetV1MeModelQuotaPurchases)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/me/model-quota-purchases", wrapper.PostV1MeModelQuotaPurchases)
-	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/model-quota-purchases/{id}", wrapper.GetV1MeModelQuotaPurchasesId)
-	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/payments/alipay/notify", wrapper.PostV1PaymentsAlipayNotify)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/me/model-quota-purchases/quota", wrapper.GetV1MeModelQuotaPurchasesQuota)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/models", wrapper.GetV1LlmModels)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/llm/quota", wrapper.GetV1LlmQuota)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/llm/responses", wrapper.PostV1LlmResponses)
