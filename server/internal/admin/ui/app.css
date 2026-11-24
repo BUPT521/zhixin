@@ -405,7 +405,7 @@ label.check input { flex: 0 0 auto; }
 .input-action button { flex: 0 0 auto; }
 .route-enabled, .route-remove { margin-bottom: 4px; }
 .route-remove { margin-left: auto; }
-.route-preview { display: grid; gap: 8px; padding: 12px; border-radius: var(--card-radius); background: var(--raised); }
+.route-preview { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 12px; border-radius: var(--card-radius); background: var(--raised); }
 .route-preview-head, .route-preview-list li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
 .route-preview-head { justify-content: space-between; }
 .route-preview-head .inline-field { flex-direction: row; align-items: center; min-width: 0; max-width: 100%; }
