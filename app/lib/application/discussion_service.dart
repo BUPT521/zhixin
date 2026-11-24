@@ -34,6 +34,7 @@ import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
 import 'service_runtime.dart';
+import 'used_pages.dart';
 
 import '../domain/rules/text.dart';
 
@@ -506,6 +507,7 @@ class DiscussionService {
       text: userMessage.content,
       imageRefs: userMessage.imagePaths,
       hasImages: userMessage.hasImages,
+      reusedPageKeys: await _usedPagesOfLatestAnswer(conversationId),
       history: await _promptHistory(
         conversationId,
         beforeMessageId: userMessage.id,
@@ -532,6 +534,7 @@ class DiscussionService {
     required int requestEpoch,
     required ChatMessage userMessage,
     Set<String> broughtIdentities = const {},
+    List<(String, int)> reusedPageKeys = const [],
     LlmConfig? config,
     void Function(String text)? onPartial,
     LlmCancelToken? cancelToken,
@@ -548,6 +551,7 @@ class DiscussionService {
         conversationId: conversationId,
         query: text,
         broughtIdentities: broughtIdentities,
+        reusedPageKeys: reusedPageKeys,
       ),
     );
     // 用户只追问文字时，把这条讨论里最近一次带图消息的原图一起发给模型；
@@ -698,6 +702,13 @@ class DiscussionService {
               ),
           ],
           citations: citations,
+          usedPages: answer == null
+              ? const <ChatUsedPage>[]
+              : usedPagesOf(
+                  facts,
+                  answer.providedSources,
+                  currentPage: facts.materialPage?.pageKey,
+                ),
         ),
         transaction: txn,
       );
@@ -1214,6 +1225,22 @@ class DiscussionService {
       );
     }
     return sources;
+  }
+
+  /// 上一次回答读到的材料页；重试同一条问题时按这些位置接续。
+  ///
+  /// 只看这条讨论的最后一条消息：用户消息之后还没有回答时为空，重试自然从
+  /// 原问题与当前上下文重新开始。
+  Future<List<(String, int)>> _usedPagesOfLatestAnswer(
+    String conversationId,
+  ) async {
+    final latest = await conversations.recent(conversationId, limit: 1);
+    if (latest.isEmpty || latest.last.role != MessageRole.assistant) {
+      return const [];
+    }
+    return reusedPageKeysOf(
+      latest.last.payload?.usedPages ?? const <ChatUsedPage>[],
+    );
   }
 
   Future<List<Citation>> _verifyCitations(

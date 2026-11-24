@@ -45,6 +45,10 @@ ChatMessagePayload sample() => ChatMessagePayload(
   operations: const [
     ChatOperationReceipt(commitId: 12, text: '已添加安排：用抽球问题练习条件概率'),
   ],
+  usedPages: const [
+    ChatUsedPage(materialId: 'mat-1', pageNo: 7),
+    ChatUsedPage(materialId: 'mat-2', pageNo: 3),
+  ],
 );
 
 void main() {
@@ -66,8 +70,27 @@ void main() {
     expect(restored.citations.single.materialTitle, '概率论讲义');
     expect(restored.isStepHandled('s1', '用抽球问题练习条件概率'), isTrue);
     expect(restored.operations.single.text, '已添加安排：用抽球问题练习条件概率');
+    expect(restored.usedPages.map((page) => page.pageKey), [
+      ('mat-1', 7),
+      ('mat-2', 3),
+    ]);
     // 再编码一次与第一次相同，回执清理不会改变无关字段。
     expect(restored.encode(), payload.encode());
+  });
+
+  test('读回接续页时丢掉没有材料或页码的条目', () {
+    final payload = ChatMessagePayload.decode(
+      jsonEncode({
+        'used_pages': [
+          {'material_id': 'mat-1', 'page_no': 2},
+          {'material_id': '', 'page_no': 3},
+          {'page_no': 4},
+          {'material_id': 'mat-2', 'page_no': 'x'},
+        ],
+      }),
+    )!;
+    expect(payload.usedPages.single.materialId, 'mat-1');
+    expect(payload.usedPages.single.pageNo, 2);
   });
 
   test('旧消息只有标题与编号时按原有口径判断建议是否已处理', () {

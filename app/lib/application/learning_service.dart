@@ -15,6 +15,7 @@ import '../data/repository/study_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/buddy_protocol.dart';
+import '../domain/models/chat_message_payload.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 import '../domain/models/study.dart';
@@ -32,6 +33,7 @@ import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
 import 'service_runtime.dart';
+import 'used_pages.dart';
 
 /// 一道题的当前状态：原题、尝试、一条未提交尝试，以及学习页要显示的判断与
 /// 记忆建议。
@@ -462,6 +464,12 @@ class LearningService {
         conversationId: questionId,
         query: question.stem,
         broughtIdentities: broughtIdentities,
+        // 上一次求助读到的材料页按当前位置接续：重试这次求助不必重新补搜。
+        reusedPageKeys: reusedPageKeysOf(
+          storedAttempt.helps.isEmpty
+              ? const <ChatUsedPage>[]
+              : storedAttempt.helps.last.usedPages,
+        ),
         includeEarlier: !independentRedo,
       ),
     );
@@ -553,6 +561,13 @@ class LearningService {
             fromModel: fromModel,
             notices: notices,
             failureName: run.failure?.name,
+            usedPages: answer == null
+                ? const <ChatUsedPage>[]
+                : usedPagesOf(
+                    facts,
+                    answer.providedSources,
+                    currentPage: facts.materialPage?.pageKey,
+                  ),
           ),
           transaction: txn,
         );

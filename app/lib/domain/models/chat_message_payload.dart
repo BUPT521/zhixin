@@ -25,6 +25,7 @@ class ChatMessagePayload {
     this.dismissedTitles = const <String>{},
     this.dismissedStepIds = const <String>{},
     this.operations = const [],
+    this.usedPages = const [],
   });
 
   /// 正文来源：`true` 来自模型、`false` 来自本地规则、空表示没有记录。
@@ -65,6 +66,9 @@ class ChatMessagePayload {
   /// 这次回答带来的写入回执，撤销时按提交编号清掉。
   final List<ChatOperationReceipt> operations;
 
+  /// 这次回答读到的材料页；重试同一条问题时据此接续，不再重新补搜。
+  final List<ChatUsedPage> usedPages;
+
   bool get isEmpty =>
       fromModel == null &&
       !stopped &&
@@ -79,7 +83,8 @@ class ChatMessagePayload {
       acceptedStepIds.isEmpty &&
       dismissedTitles.isEmpty &&
       dismissedStepIds.isEmpty &&
-      operations.isEmpty;
+      operations.isEmpty &&
+      usedPages.isEmpty;
 
   /// 这条建议是否已经处理：有编号时按编号判断，旧消息只有标题时按标题判断。
   bool isStepHandled(String stepId, String title) =>
@@ -124,6 +129,7 @@ class ChatMessagePayload {
       dismissedTitles: dismissedTitles,
       dismissedStepIds: dismissedStepIds,
       operations: receipts,
+      usedPages: usedPages,
     );
   }
 
@@ -146,6 +152,7 @@ class ChatMessagePayload {
             ? dismissedStepIds
             : {...dismissedStepIds, stepId},
         operations: operations,
+        usedPages: usedPages,
       );
 
   /// 更新一条记忆卡片的处理状态；没有这张卡片时返回空。
@@ -267,6 +274,7 @@ class ChatMessagePayload {
     dismissedTitles: dismissedTitles,
     dismissedStepIds: dismissedStepIds,
     operations: operations ?? this.operations,
+    usedPages: usedPages,
   );
 
   Map<String, Object?> toJson() => {
@@ -289,6 +297,8 @@ class ChatMessagePayload {
     if (dismissedStepIds.isNotEmpty) 'dismissed_ids': dismissedStepIds.toList(),
     if (operations.isNotEmpty)
       'operations': [for (final receipt in operations) receipt.toJson()],
+    if (usedPages.isNotEmpty)
+      'used_pages': [for (final page in usedPages) page.toJson()],
   };
 
   String? encode() => isEmpty ? null : jsonEncode(toJson());
@@ -348,6 +358,10 @@ class ChatMessagePayload {
                 commitId: value['commit_id'] as int,
                 text: value['text'] as String,
               ),
+      ],
+      usedPages: [
+        if (map['used_pages'] case final List raw)
+          for (final value in raw) ?ChatUsedPage.fromJson(value),
       ],
     );
   }
@@ -409,4 +423,32 @@ class ChatOperationReceipt {
   final String text;
 
   Map<String, Object?> toJson() => {'commit_id': commitId, 'text': text};
+}
+
+/// 这一次回答读到的一页材料。
+///
+/// 只记材料与页码，不记原文：重试时按当前位置重新读取当前保存的内容，材料被
+/// 删除或页码不存在时这一页自然跳过，因此接续不会把更正前的旧原文带回回答。
+class ChatUsedPage {
+  const ChatUsedPage({required this.materialId, required this.pageNo});
+
+  final String materialId;
+  final int pageNo;
+
+  (String, int) get pageKey => (materialId, pageNo);
+
+  Map<String, Object?> toJson() => {
+    'material_id': materialId,
+    'page_no': pageNo,
+  };
+
+  static ChatUsedPage? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final materialId = value['material_id'];
+    final pageNo = value['page_no'];
+    if (materialId is! String || materialId.isEmpty || pageNo is! int) {
+      return null;
+    }
+    return ChatUsedPage(materialId: materialId, pageNo: pageNo);
+  }
 }

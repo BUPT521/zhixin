@@ -151,6 +151,47 @@ void main() {
     );
   });
 
+  test('接续的材料页按位置去重，材料或页码不在时跳过', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    final tasks = TaskRepository(db);
+    final materials = MaterialRepository(db);
+    final now = DateTime(2026, 11, 7, 20);
+    final policy = TimePolicy(clock: () => now);
+    final service = ContextService(
+      tasks: tasks,
+      attempts: AttemptRepository(db),
+      schedule: ScheduleRepository(db),
+      memories: MemoryRepository(db),
+      conversations: ConversationRepository(db),
+      materials: materials,
+      runtime: testRuntime(policy: () => policy),
+    );
+    final goal = await tasks.createGoal(title: '概率');
+    final material = await materials.create(title: '概率讲义', goalId: goal);
+    await materials.addPage(
+      materialId: material,
+      pageNo: 2,
+      content: '第 2 页原文',
+    );
+
+    final context = await service.load(
+      ContextRequest(
+        goalId: goal,
+        reusedPageKeys: [
+          (material, 2),
+          (material, 2),
+          (material, 9),
+          ('missing-material', 1),
+        ],
+      ),
+    );
+
+    expect(context.materialHits.map((hit) => hit.pageKey), [(material, 2)]);
+    expect(context.materialHits.single.materialTitle, '概率讲义');
+    expect(context.materialHits.single.content, '第 2 页原文');
+  });
+
   test('同一道题答过多次时，每次尝试都进入当前讨论的最近作答', () async {
     final db = await openTestDb();
     addTearDown(db.close);

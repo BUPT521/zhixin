@@ -238,6 +238,45 @@ class ContextService {
       evidenceHits = otherHits.toList(growable: false);
     }
 
+    // 重试接续上一轮读到的材料页：按位置重新读取当前保存的原文，材料或页码
+    // 已经不在时跳过，更正过的内容按当前版本进入（docs/02 第 3.8 节）。
+    // 这些页与本次检索命中的页放在一起，排在检索结果之前，读原文的工具因此
+    // 可以直接接着读，不必先重新补搜。
+    if (request.reusedPageKeys.isNotEmpty) {
+      final reusedHits = <MaterialHit>[];
+      final seenPageKeys = {for (final hit in materialHits) hit.pageKey};
+      final materialCache = <String, Material?>{};
+      for (final key in request.reusedPageKeys) {
+        if (reusedHits.length >= maxContextMaterialHits) break;
+        if (key == excludePage || !seenPageKeys.add(key)) continue;
+        final reusedPage = await materials.page(key.$1, key.$2);
+        if (reusedPage == null) continue;
+        final reusedMaterial = materialCache.containsKey(key.$1)
+            ? materialCache[key.$1]
+            : (materialCache[key.$1] = await materials.byId(key.$1));
+        // 记录换了目标之后，原来目标下的材料页不再进入这次回答。
+        if (reusedMaterial == null ||
+            (reusedMaterial.goalId != null &&
+                reusedMaterial.goalId != goalId)) {
+          continue;
+        }
+        reusedHits.add(
+          MaterialHit(
+            materialId: reusedMaterial.id,
+            materialTitle: reusedMaterial.title,
+            pageNo: reusedPage.pageNo,
+            content: reusedPage.content,
+            label: reusedPage.label,
+            isDocx: reusedMaterial.isDocx,
+          ),
+        );
+      }
+      materialHits = [
+        ...reusedHits,
+        ...materialHits,
+      ].take(maxContextMaterialHits).toList(growable: false);
+    }
+
     return BuddyContext(
       now: now,
       persona: await personaSource?.call(),

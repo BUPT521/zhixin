@@ -12,6 +12,7 @@ import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/domain/models/assessment.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
+import 'package:zhixin/domain/models/evidence.dart';
 import 'package:zhixin/domain/models/result.dart';
 import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/ui/discussion_page.dart';
@@ -42,6 +43,44 @@ class _RetryHelpAi implements BuddyAi {
     return modes.length == 1
         ? const BuddyReply(text: '先列出已知条件', truncated: true)
         : const BuddyReply(text: '补全后的提示');
+  }
+}
+
+class _PageReuseHelpAi implements BuddyAi {
+  String? materialId;
+  final contexts = <BuddyContext>[];
+
+  @override
+  Future<Result<LlmConfig?>> config() async => const Success(LlmConfig());
+
+  @override
+  Future<BuddyReply> ask({
+    required BuddyContext context,
+    required List<ChatMessage> history,
+    required String text,
+    String? inputMessageId,
+    List<LlmImage> images = const [],
+    void Function(String text)? onText,
+    LlmCancelToken? cancelToken,
+    LlmConfigSnapshot? configSnapshot,
+  }) async {
+    contexts.add(context);
+    final materialId = this.materialId;
+    if (contexts.length == 1 && materialId != null) {
+      return BuddyReply(
+        text: '先看第二页',
+        truncated: true,
+        providedSources: [
+          CitationSource(
+            materialId: materialId,
+            pageNo: 2,
+            content: '第 2 页原文',
+            materialTitle: '概率讲义',
+          ),
+        ],
+      );
+    }
+    return const BuddyReply(text: '补全后的提示');
   }
 }
 
@@ -102,6 +141,31 @@ void main() {
     expect(helps.last.notices, isEmpty);
     expect(find.textContaining('补全后的提示', findRichText: true), findsWidgets);
     expect(retry, findsNothing);
+  });
+
+  testWidgets('重试求助接续上一次读到的材料页，原文按当前版本读取', (tester) async {
+    FlutterSecureStorage.setMockInitialValues({});
+    final ai = _PageReuseHelpAi();
+    await openApp(tester, ai: ai, size: const Size(390, 1400));
+    final reused = (await tester.runAsync(() async {
+      final material = await scope!.testing.materials.create(title: '概率讲义');
+      await scope!.testing.materials.addPage(
+        materialId: material,
+        pageNo: 2,
+        content: '第 2 页原文',
+      );
+      ai.materialId = material;
+      final id = await scope!.chat.learning.capture(stem: '原题：条件概率');
+      await scope!.chat.learning.help(questionId: id, mode: BuddyMode.hint);
+      final first = (await scope!.chat.learning.view(id)).openAttempt!.helps;
+      expect(first.single.usedPages.single.pageNo, 2);
+      await scope!.chat.learning.help(questionId: id, mode: BuddyMode.hint);
+      return ai.contexts.last.materialHits
+          .where((hit) => hit.pageNo == 2 && hit.materialId == material)
+          .toList();
+    }))!;
+    expect(reused.single.materialTitle, '概率讲义');
+    expect(reused.single.content, '第 2 页原文');
   });
 
   testWidgets('学习页可以进入先不看上次答案的独立重做', (tester) async {

@@ -20,6 +20,7 @@ class ContextRequest {
     this.conversationId,
     this.query = '',
     this.broughtIdentities = const {},
+    this.reusedPageKeys = const [],
     this.conversationFocus,
     this.includeEarlier = true,
   });
@@ -36,6 +37,10 @@ class ContextRequest {
   final String? conversationId;
   final String query;
   final Set<String> broughtIdentities;
+
+  /// 重试时接续的原轮材料页；按当前位置读取当前保存的原文，取不到的跳过。
+  final List<(String, int)> reusedPageKeys;
+
   final String? conversationFocus;
   final bool includeEarlier;
 }

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import '../rules/notices.dart';
 import '../rules/time_format.dart';
+import 'chat_message_payload.dart';
 import 'memory_draft.dart';
 
 /// 题目视图，由一条学习记录（conversation）与开始作答时确定的用户消息派生。
@@ -168,6 +169,7 @@ class HelpEntry {
     this.fromModel,
     this.notices = const [],
     this.failureName,
+    this.usedPages = const [],
   });
 
   /// `hint` / `explain` / `check` / `discuss`。
@@ -181,6 +183,9 @@ class HelpEntry {
   final List<Notice> notices;
   final String? failureName;
 
+  /// 这条帮助读到的材料页；重试同一次求助时按这些位置接续。
+  final List<ChatUsedPage> usedPages;
+
   HelpEntry withMemories(List<MemoryDraft> memories) => HelpEntry(
     kind: kind,
     content: content,
@@ -189,6 +194,7 @@ class HelpEntry {
     fromModel: fromModel,
     notices: notices,
     failureName: failureName,
+    usedPages: usedPages,
   );
 
   Map<String, Object?> toJson() => {
@@ -201,6 +207,8 @@ class HelpEntry {
     if (notices.isNotEmpty)
       'notices': [for (final notice in notices) notice.value],
     if (failureName != null) 'model_failure': failureName,
+    if (usedPages.isNotEmpty)
+      'used_pages': [for (final page in usedPages) page.toJson()],
   };
 
   static HelpEntry? fromJson(Object? value) {
@@ -230,6 +238,10 @@ class HelpEntry {
             ?noticeFromValue(notice),
       ],
       failureName: failureName is String ? failureName : null,
+      usedPages: [
+        if (value['used_pages'] case final List raw)
+          for (final page in raw) ?ChatUsedPage.fromJson(page),
+      ],
     );
   }
 

@@ -367,6 +367,88 @@ void main() {
     expect((await h.memories.list()).single.content, memory.content);
   });
 
+  test('中断之后重试接续上一轮读到的材料页，并读取当前原文', () async {
+    final h = _Harness(config: const LlmConfig(apiKey: 'test'));
+    await h.open();
+    addTearDown(h.db.close);
+    final goal = await h.tasks.createGoal(title: '概率');
+    final material = await h.materials.create(title: '概率讲义', goalId: goal);
+    for (var pageNo = 1; pageNo <= 3; pageNo++) {
+      await h.materials.addPage(
+        materialId: material,
+        pageNo: pageNo,
+        content: '第 $pageNo 页原文',
+      );
+    }
+    h.ai.reply = BuddyReply(
+      text: '先看第二页的原文',
+      interrupted: true,
+      interruptedReason: '网络不可用',
+      providedSources: [
+        CitationSource(materialId: material, pageNo: 2, content: '第 2 页原文'),
+      ],
+    );
+
+    final first = await h.service.reply(
+      text: '条件概率怎么理解？',
+      goalId: goal,
+      materialId: material,
+      pageNo: 1,
+    );
+    final id = first.userMessage.conversationId;
+    final saved = (await h.service.history(id)).last;
+    expect(saved.payload?.usedPages.map((page) => page.pageKey), [
+      (material, 2),
+    ]);
+
+    // 重试之前更正这一页：接续读到的必须是当前保存的原文。
+    final corrected = (await h.materials.page(material, 2))!;
+    await h.materials.correctPage(pageId: corrected.id, content: '第二页更正之后的内容');
+    h.ai.reply = const BuddyReply(text: '完整回答');
+
+    final retried = await h.service.reply(conversationId: id, repeatLast: true);
+    expect(retried.reply, '完整回答');
+    final reused = h.ai.lastContext!.materialHits
+        .where((hit) => hit.materialId == material && hit.pageNo == 2)
+        .single;
+    expect(reused.content, '第二页更正之后的内容');
+  });
+
+  test('记录换了目标之后不接续原目标下的材料页', () async {
+    final h = _Harness(config: const LlmConfig(apiKey: 'test'));
+    await h.open();
+    addTearDown(h.db.close);
+    final goal = await h.tasks.createGoal(title: '概率');
+    final material = await h.materials.create(title: '概率讲义', goalId: goal);
+    await h.materials.addPage(
+      materialId: material,
+      pageNo: 2,
+      content: '第 2 页原文',
+    );
+    h.ai.reply = BuddyReply(
+      text: '先看第二页的原文',
+      interrupted: true,
+      interruptedReason: '网络不可用',
+      providedSources: [
+        CitationSource(materialId: material, pageNo: 2, content: '第 2 页原文'),
+      ],
+    );
+    final first = await h.service.reply(text: '条件概率怎么理解？', goalId: goal);
+    final id = first.userMessage.conversationId;
+
+    final other = await h.tasks.createGoal(title: '矩阵');
+    await h.service.setGoal(id, other);
+    h.ai.reply = const BuddyReply(text: '完整回答');
+
+    await h.service.reply(conversationId: id, repeatLast: true);
+    expect(
+      h.ai.lastContext!.materialHits.where(
+        (hit) => hit.materialId == material && hit.pageNo == 2,
+      ),
+      isEmpty,
+    );
+  });
+
   test('长讨论只读到字数预算为止，原问题仍在历史里', () async {
     final h = _Harness(reply: const BuddyReply(text: '先看定义'));
     await h.open();
