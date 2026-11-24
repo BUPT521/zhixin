@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"golang.org/x/text/encoding/simplifiedchinese"
+
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
@@ -156,5 +158,39 @@ func TestAlipayNotificationAndQuery(t *testing.T) {
 		if _, err := amountFen(json.RawMessage(value)); err == nil {
 			t.Errorf("接受了不合法金额 %s", value)
 		}
+	}
+}
+
+// 即刻收的响应按 GB18030 回中文。签名覆盖原始字节，返回给调用方之前要转成 UTF-8，
+// 否则客户端看到的是替换字符。
+func TestCallDecodesGB18030Response(t *testing.T) {
+	g, key := testGateway(t)
+	gbk, err := simplifiedchinese.GB18030.NewEncoder().Bytes([]byte(
+		`{"code":"10000","product_name":"知新","charging_options":[{"sku_id":"S1","display_name":"拾伍"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"alipay_aipay_nowpaydirect_charge_query_response":%s,"sign":%q}`,
+			gbk, testSignature(t, key, string(gbk)))
+	}))
+	defer server.Close()
+	g.endpoint = server.URL
+
+	raw, err := g.Call(t.Context(), "alipay.aipay.nowpaydirect.charge.query", map[string]any{"out_product_id": "np_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Product string `json:"product_name"`
+		Options []struct {
+			Name string `json:"display_name"`
+		} `json:"charging_options"`
+	}
+	if err := json.Unmarshal(raw, &result); err != nil {
+		t.Fatalf("转码之后应当是合法 JSON: %v", err)
+	}
+	if result.Product != "知新" || len(result.Options) != 1 || result.Options[0].Name != "拾伍" {
+		t.Fatalf("中文没有按 GB18030 解码: %+v", result)
 	}
 }

@@ -20,6 +20,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 const (
@@ -176,6 +179,13 @@ func (g *Gateway) call(ctx context.Context, method string, biz map[string]any, n
 	var signature string
 	if !ok || json.Unmarshal(envelope["sign"], &signature) != nil || !g.verify(result, signature) {
 		return nil, ErrGateway
+	}
+	// 即刻收的响应把中文按 GB18030 回，请求里写 charset=utf-8 也不改。签名覆盖的是
+	// 原始字节，所以先验签再转码；转码失败就按原样返回，让调用方看到错误而不是乱码。
+	if !utf8.Valid(result) {
+		if decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(result); err == nil {
+			result = decoded
+		}
 	}
 	return result, nil
 }
