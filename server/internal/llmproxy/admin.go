@@ -46,18 +46,14 @@ func (a *Admin) fresh(w http.ResponseWriter, r *http.Request) (*snapshot, bool) 
 }
 
 func (a *Admin) providerView(p *liveProvider) api.AdminProvider {
-	h := a.router().health.view(p.ID)
-	state := api.AdminProviderHealthStateOk
-	switch {
-	case p.KeyBroken:
-		state = api.AdminProviderHealthStateKeyError
-	case a.router().health.cooling(p.ID):
-		state = api.AdminProviderHealthStateCooling
+	health := adminHealthView(a.router().health.view(healthKey{provider: p.ID}))
+	if p.KeyBroken {
+		health.State = api.AdminHealthStateKeyError
 	}
 	v := api.AdminProvider{
 		Id: p.ID, Name: p.Name, BaseUrl: p.BaseURL, Enabled: p.Enabled,
 		HasKey: p.APIKeySealed != "" || p.APIKey != "", Note: p.Note,
-		Health: api.AdminProviderHealth{State: state, ConsecutiveFailures: h.failures},
+		Health: health,
 	}
 	if p.KeyHint != "" {
 		hint := p.KeyHint
@@ -67,24 +63,38 @@ func (a *Admin) providerView(p *liveProvider) api.AdminProvider {
 		t := p.UpdatedAt
 		v.UpdatedAt = &t
 	}
+	return v
+}
+
+func adminHealthView(h healthView) api.AdminHealth {
+	state := api.AdminHealthStateOk
+	switch h.phase {
+	case healthCooling:
+		state = api.AdminHealthStateCooling
+	case healthProbeReady:
+		state = api.AdminHealthStateProbeReady
+	case healthProbing:
+		state = api.AdminHealthStateProbing
+	}
+	v := api.AdminHealth{State: state, ConsecutiveFailures: h.failures}
 	if h.lastError != "" {
 		msg, at := h.lastError, h.lastErrorAt
-		v.Health.LastError, v.Health.LastErrorAt = &msg, &at
+		v.LastError, v.LastErrorAt = &msg, &at
 	}
 	if !h.lastSuccessAt.IsZero() {
 		at := h.lastSuccessAt
-		v.Health.LastSuccessAt = &at
+		v.LastSuccessAt = &at
 	}
-	if !h.coolingUntil.IsZero() && a.router().health.cooling(p.ID) {
+	if h.phase == healthCooling {
 		at := h.coolingUntil
-		v.Health.CoolingUntil = &at
+		v.CoolingUntil = &at
 	}
 	return v
 }
 
 func (a *Admin) modelView(snap *snapshot, m *liveModel) api.AdminModel {
 	v := api.AdminModel{
-		Name: m.Name, Kind: api.ModelKind(m.Kind), Enabled: m.Enabled, Available: m.usable(), Note: m.Note,
+		Name: m.Name, Kind: api.ModelKind(m.Kind), Enabled: m.Enabled, Note: m.Note,
 		Routes: make([]api.AdminRoute, 0, len(m.Routes)),
 	}
 	if m.Dimensions > 0 {
@@ -95,8 +105,15 @@ func (a *Admin) modelView(snap *snapshot, m *liveModel) api.AdminModel {
 		t := m.UpdatedAt
 		v.UpdatedAt = &t
 	}
+	states := a.router().health.modelViews(m)
+	nextLive := 0
 	for _, rt := range m.Routes {
 		provider := snap.byID[rt.ProviderID]
+		var health routeHealthView
+		if provider != nil {
+			health = states[nextLive]
+			nextLive++
+		}
 		state := api.AdminRouteStateReady
 		switch {
 		case !m.Enabled || !rt.Enabled:
@@ -107,12 +124,18 @@ func (a *Admin) modelView(snap *snapshot, m *liveModel) api.AdminModel {
 			state = api.AdminRouteStateProviderDisabled
 		case provider.KeyBroken:
 			state = api.AdminRouteStateKeyError
-		case a.router().health.cooling(rt.ProviderID):
+		case health.phase() == healthCooling:
 			state = api.AdminRouteStateCooling
+		case health.phase() == healthProbing:
+			state = api.AdminRouteStateProbing
+		case health.phase() == healthProbeReady:
+			state = api.AdminRouteStateProbeReady
 		}
+		v.Available = v.Available || state == api.AdminRouteStateReady || state == api.AdminRouteStateProbeReady
 		v.Routes = append(v.Routes, api.AdminRoute{
 			ProviderId: rt.ProviderID, UpstreamModel: rt.UpstreamModel,
-			Priority: rt.Priority, Weight: rt.Weight, MaxBatch: rt.MaxBatch, Enabled: rt.Enabled, State: state,
+			Priority: rt.Priority, Weight: rt.Weight, MaxBatch: rt.MaxBatch, Enabled: rt.Enabled,
+			State: state, Health: adminHealthView(health.route),
 		})
 	}
 	return v
@@ -556,7 +579,7 @@ func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// TestModel 使用正常路由次序或指定路由发出最小请求。探测更新来源的健康状态，
+// TestModel 使用正常路由次序或指定路由发出最小请求。探测更新相应的健康状态，
 // 不计入账号额度与路由用量。
 func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, params api.PostAdminV1ModelsNameTestParams) {
 	provider, upstream := deref(params.ProviderId, ""), deref(params.UpstreamModel, "")
@@ -574,8 +597,9 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
 	}
-	out := api.AdminProbe{}
-	var cands []liveRoute
+	trace := make([]api.AdminProbeAttempt, 0)
+	out := api.AdminProbe{Attempts: &trace}
+	plan := attemptPlan{model: m, targeted: targeted, trace: &trace}
 	if targeted {
 		idx := slices.IndexFunc(m.Live, func(route liveRoute) bool {
 			return route.ProviderID == provider && route.UpstreamModel == upstream
@@ -586,17 +610,17 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 		}
 		out.ProviderId, out.UpstreamModel = stringPointer(provider), stringPointer(upstream)
 		if route := m.Live[idx]; m.Enabled && route.usable() {
-			cands = []liveRoute{route}
+			plan.candidates = []liveRoute{route}
 		}
 	} else {
-		cands = a.router().candidates(m, a.proxy.cfg.MaxAttempts)
+		plan.candidates = a.router().candidates(m)
 	}
 	fail := func(msg string) {
 		out.Error = &msg
 		httpx.WriteJSON(w, http.StatusOK, out)
 	}
-	if len(cands) == 0 {
-		fail("没有可用的路由：检查路由与来源是否启用、key 是否能解密")
+	if len(plan.candidates) == 0 {
+		fail("没有可尝试的路由，请检查启用状态、密钥和冷却状态")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -605,7 +629,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 	if m.Kind == KindEmbedding {
 		input, _ := json.Marshal([]string{"知新：把学过的内容找回来"})
 		fields := map[string]json.RawMessage{"input": input}
-		res := a.proxy.embed(ctx, m, cands, fields, []string{"知新：把学过的内容找回来"}, nil)
+		res := a.proxy.embed(ctx, &plan, fields, []string{"知新：把学过的内容找回来"})
 		out.LatencyMs = time.Since(start).Milliseconds()
 		if res.route.Provider != nil {
 			out.ProviderId, out.UpstreamModel = &res.route.Provider.ID, &res.route.UpstreamModel
@@ -616,7 +640,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 			out.Status = &status
 			fail(fmt.Sprintf("HTTP %d", status))
 		case res.err != nil:
-			fail(res.failure())
+			fail(probeFailure(trace, "没有发出嵌入请求"))
 		default:
 			status := http.StatusOK
 			out.Status, out.Ok = &status, true
@@ -632,24 +656,29 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 		"input":  json.RawMessage(`[{"type":"message","role":"user","content":"ping"}]`),
 		"stream": json.RawMessage(`false`),
 	}
-	reply, err := a.proxy.dispatch(ctx, cands, fields, false, defaultOutputTokens, nil)
+	reply, err := a.proxy.dispatch(ctx, &plan, fields, false, defaultOutputTokens)
 	out.LatencyMs = time.Since(start).Milliseconds()
-	if err != nil || reply.status < 200 || reply.status >= 300 {
+	if err != nil || reply.completion != responseCompleted {
 		if reply.route.Provider != nil {
 			out.ProviderId, out.UpstreamModel = stringPointer(reply.route.ProviderID), stringPointer(reply.route.UpstreamModel)
 		}
-		if reply.status >= 300 {
+		if reply.status != 0 {
 			out.Status = &reply.status
-			fail(fmt.Sprintf("HTTP %d", reply.status))
-			return
 		}
-		fail("没有来源返回可用的聊天响应")
+		fail(probeFailure(trace, "没有发出聊天请求"))
 		return
 	}
 	out.ProviderId, out.UpstreamModel = stringPointer(reply.route.ProviderID), stringPointer(reply.route.UpstreamModel)
 	out.Status = &reply.status
 	out.Ok = true
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func probeFailure(trace []api.AdminProbeAttempt, empty string) string {
+	if len(trace) == 0 {
+		return empty
+	}
+	return deref(trace[len(trace)-1].Error, "没有来源返回可用的响应")
 }
 
 func deref[T any](p *T, def T) T {

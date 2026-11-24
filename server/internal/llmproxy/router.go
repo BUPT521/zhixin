@@ -64,7 +64,7 @@ func (s *snapshot) model(name string) (*liveModel, bool) {
 	return m, ok
 }
 
-// Router 持有当前路由表与各来源的健康状态。
+// Router 持有当前路由表与来源、路由的健康状态。
 type Router struct {
 	catalog Catalog
 	box     *secretbox.Box
@@ -159,15 +159,15 @@ func (r *Router) build(providers []ProviderRecord, models []ModelRecord) *snapsh
 	return s
 }
 
-// candidates 给出一次请求依次尝试的路由：按优先级从小到大分组，组内按权重
-// 随机排列；正在冷却的来源挪到最后，只在其余来源都失败时才试。最多 max 条。
-func (r *Router) candidates(m *liveModel, max int) []liveRoute {
+// candidates 按优先级分组，组内按权重随机排列。执行前还要重新检查健康状态并占用试探名额。
+func (r *Router) candidates(m *liveModel) []liveRoute {
 	if !m.Enabled {
 		return nil
 	}
 	var usable []liveRoute
-	for _, rt := range m.Live {
-		if rt.usable() {
+	states := r.health.modelViews(m)
+	for i, rt := range m.Live {
+		if rt.usable() && states[i].phase().eligible() {
 			usable = append(usable, rt)
 		}
 	}
@@ -180,19 +180,7 @@ func (r *Router) candidates(m *liveModel, max int) []liveRoute {
 		r.shuffle(usable[start:end])
 		start = end
 	}
-	var fresh, cooling []liveRoute
-	for _, rt := range usable {
-		if r.health.cooling(rt.Provider.ID) {
-			cooling = append(cooling, rt)
-		} else {
-			fresh = append(fresh, rt)
-		}
-	}
-	out := append(fresh, cooling...)
-	if max > 0 && len(out) > max {
-		out = out[:max]
-	}
-	return out
+	return usable
 }
 
 // weightedShuffle 按权重做不放回抽样（Efraimidis–Spirakis）：权重大的更常
@@ -224,80 +212,6 @@ func keyHint(key string) string {
 		return ""
 	}
 	return key[len(key)-4:]
-}
-
-// healthBook 记录各来源最近的调用结果。连续失败三次之后进入冷却，冷却时间从
-// 30 秒起每次翻倍，最长 5 分钟；成功一次清零。只在本进程内有效。
-type healthBook struct {
-	mu  sync.Mutex
-	m   map[string]*providerHealth
-	now func() time.Time
-}
-
-type providerHealth struct {
-	failures      int
-	coolingUntil  time.Time
-	lastError     string
-	lastErrorAt   time.Time
-	lastSuccessAt time.Time
-}
-
-const (
-	coolAfterFailures = 3
-	coolBase          = 30 * time.Second
-	coolMax           = 5 * time.Minute
-)
-
-func newHealthBook(now func() time.Time) *healthBook {
-	return &healthBook{m: map[string]*providerHealth{}, now: now}
-}
-
-func (h *healthBook) get(id string) *providerHealth {
-	ph, ok := h.m[id]
-	if !ok {
-		ph = &providerHealth{}
-		h.m[id] = ph
-	}
-	return ph
-}
-
-func (h *healthBook) fail(id, reason string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ph := h.get(id)
-	now := h.now()
-	ph.failures++
-	ph.lastError = reason
-	ph.lastErrorAt = now
-	if ph.failures >= coolAfterFailures {
-		d := coolBase << min(ph.failures-coolAfterFailures, 4)
-		ph.coolingUntil = now.Add(min(d, coolMax))
-	}
-}
-
-func (h *healthBook) succeed(id string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ph := h.get(id)
-	ph.failures = 0
-	ph.coolingUntil = time.Time{}
-	ph.lastSuccessAt = h.now()
-}
-
-func (h *healthBook) cooling(id string) bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ph, ok := h.m[id]
-	return ok && h.now().Before(ph.coolingUntil)
-}
-
-func (h *healthBook) view(id string) providerHealth {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if ph, ok := h.m[id]; ok {
-		return *ph
-	}
-	return providerHealth{}
 }
 
 // routeNames 是错误信息里列出的模型名，只含可用的指定种类。

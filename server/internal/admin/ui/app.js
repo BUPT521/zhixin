@@ -150,6 +150,7 @@ async function loadAll() {
   state.models = m.data;
   renderProviders();
   renderModels();
+  if ($('#model-dialog').open) renderRoutePreview();
 }
 
 function refresh() {
@@ -304,8 +305,8 @@ function renderProviders() {
     } else if (health.state === 'key_error') {
       badge = '密钥异常';
       tone = 'key_error';
-    } else if (health.state === 'cooling') {
-      badge = '冷却中';
+    } else if (['cooling', 'probe_ready', 'probing'].includes(health.state)) {
+      badge = routeState[health.state];
       tone = 'cooling';
     }
     if (p.enabled) {
@@ -499,11 +500,11 @@ async function testProvider(p) {
 
 // ---- 模型 ----
 const routeState = {
-  ready: '可用', cooling: '冷却中', disabled: '路由停用',
+  ready: '可用', cooling: '冷却中', probe_ready: '待试探', probing: '试探中', disabled: '路由停用',
   provider_disabled: '来源停用', key_error: '密钥异常', provider_missing: '来源缺失',
 };
 const routeBadge = {
-  ready: 'ok', cooling: 'cooling', disabled: 'off',
+  ready: 'ok', cooling: 'cooling', probe_ready: 'cooling', probing: 'cooling', disabled: 'off',
   provider_disabled: 'off', key_error: 'key_error', provider_missing: 'key_error',
 };
 const kindName = { chat: '聊天', embedding: '嵌入' };
@@ -531,19 +532,18 @@ function providerHealth(id) {
 }
 
 function routeHealthText(route) {
-  const health = providerHealth(route.provider_id);
-  const parts = [];
-  if (route.state === 'cooling' && health.cooling_until) parts.push('冷却到 ' + clock(health.cooling_until));
-  if (health.consecutive_failures) parts.push(`连续失败 ${health.consecutive_failures} 次`);
-  if (!parts.length && health.last_error && route.state !== 'ready' && route.state !== 'disabled') {
-    parts.push('最近错误：' + health.last_error);
-  }
-  return parts.join(' · ');
+  if (['disabled', 'provider_disabled', 'provider_missing', 'key_error'].includes(route.state)) return [];
+  return [['来源', providerHealth(route.provider_id)], ['路由', route.health]].flatMap(([label, health]) => {
+    if (!health?.consecutive_failures) return [];
+    const until = health.cooling_until ? `，冷却到 ${clock(health.cooling_until)}` : '';
+    return [el('span', { class: 'route-health', title: health.last_error || '' },
+      `${label}连续失败 ${health.consecutive_failures} 次${until}`)];
+  });
 }
 
 function modelNeedsAttention(m) {
   return !m.enabled || !m.available ||
-    m.routes.some((r) => ['cooling', 'key_error', 'provider_disabled', 'provider_missing'].includes(r.state)) ||
+    m.routes.some((r) => r.state !== 'ready' && r.state !== 'disabled') ||
     m.routes.every((r) => !r.enabled);
 }
 
@@ -586,9 +586,9 @@ function renderModels() {
     return;
   }
   for (const m of shown) {
-    const usable = m.routes.filter((r) => r.state === 'ready' || r.state === 'cooling').length;
+    const usable = m.routes.filter(routeEligible).length;
     const tone = !m.enabled ? 'off' : m.available ? 'ok' : 'warn';
-    const label = !m.enabled ? '已停用' : m.available ? '可调用' : '无可用路由';
+    const label = !m.enabled ? '已停用' : m.available ? '可调用' : '当前无可用路由';
     const updated = moment(m.updated_at);
     body.append(el('tr', {},
       el('td', { class: 'model-cell' },
@@ -629,11 +629,13 @@ function routeGroups(routes) {
   return [...groups].sort(([a], [b]) => a - b);
 }
 
-// 与 Router.candidates 一致，先按组尝试未冷却的路由，再按同样的组顺序尝试冷却路由。
+function routeEligible(route) {
+  return route.state === 'ready' || route.state === 'probe_ready';
+}
+
 function candidateGroups(groups) {
-  return ['ready', 'cooling'].flatMap((state) => groups.map(({ name, routes }) => ({
-    name, state, routes: routes.filter((route) => route.state === state),
-  }))).filter((group) => group.routes.length);
+  return groups.map(({ name, routes }) => ({ name, routes: routes.filter(routeEligible) }))
+    .filter((group) => group.routes.length);
 }
 
 function routeWeight(routes) {
@@ -653,31 +655,34 @@ function renderRouteList(m) {
   const total = routeWeight(first);
   const out = [];
   for (const { name, routes } of groups) {
+    const groupTotal = routeWeight(routes.filter((route) => route.enabled));
     const ordered = [...routes].sort((a, b) =>
       a.provider_id.localeCompare(b.provider_id) || a.upstream_model.localeCompare(b.upstream_model));
     out.push(el('div', { class: 'route-group' }, name));
     for (const route of ordered) {
       const share = first.includes(route) ? route.weight / total : null;
-      out.push(routeRow(m, route, share));
+      const configuredShare = route.enabled ? route.weight / groupTotal : null;
+      out.push(routeRow(m, route, share, configuredShare));
     }
   }
   return out;
 }
 
-function routeRow(m, r, firstShare) {
+function routeRow(m, r, firstShare, configuredShare) {
   const meta = [];
-  if (firstShare !== null) meta.push(`首选 ${routeShare(firstShare)}`);
+  if (configuredShare !== null) meta.push(`同组配置比例 ${routeShare(configuredShare)}`);
+  if (firstShare !== null) meta.push(`当前首选 ${routeShare(firstShare)}`);
+  else if (routeEligible(r)) meta.push('仅在失败后尝试');
   if (m.kind === 'embedding' && r.max_batch) meta.push(`每批 ${r.max_batch} 条`);
-  const health = routeHealthText(r);
-  return el('div', { class: 'route' + (r.state === 'ready' || r.state === 'cooling' ? '' : ' is-off') },
+  return el('div', { class: 'route' + (routeEligible(r) ? '' : ' is-off') },
     el('div', { class: 'route-main' },
       el('span', { class: 'mono route-name', title: r.provider_id }, providerLabel(r.provider_id) + ' → ' + r.upstream_model),
       el('span', { class: 'badge ' + (routeBadge[r.state] || 'off') }, routeState[r.state] || r.state),
       meta.length ? el('span', { class: 'route-meta' }, meta.join(' · ')) : null,
-      health ? el('span', { class: 'route-health', title: providerHealth(r.provider_id).last_error || '' }, health) : null,
+      routeHealthText(r),
     ),
     el('span', { class: 'route-ops' },
-      el('button', { type: 'button', class: 'link', disabled: !(r.state === 'ready' || r.state === 'cooling'),
+      el('button', { type: 'button', class: 'link', disabled: !(routeEligible(r) || r.state === 'cooling'),
         'aria-label': `探测 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由`,
         onclick: () => testModel(m, r) }, '探测'),
       el('button', { type: 'button', class: 'link', 'aria-label': `查看 ${m.name} 的 ${r.provider_id} / ${r.upstream_model} 路由用量`,
@@ -749,7 +754,10 @@ $('#add-route').addEventListener('click', () => {
   updateRouteControls();
   row.querySelector('[name="provider_id"]').focus();
 });
-$('#model-form').elements.kind.addEventListener('change', syncKind);
+$('#model-form').elements.kind.addEventListener('change', () => {
+  syncKind();
+  renderRoutePreview();
+});
 $('#model-form').addEventListener('input', (event) => {
   clearError('model-error');
   if (event.target.closest('#route-rows') || event.target.name === 'enabled') renderRoutePreview();
@@ -914,15 +922,18 @@ function readRouteRow(row) {
 }
 
 function renderRoutePreview() {
-  const modelEnabled = $('#model-form').elements.enabled.checked;
+  const fields = $('#model-form').elements;
+  const modelEnabled = fields.enabled.checked;
   const providers = new Map(state.providers.map((provider) => [provider.id, provider]));
+  const current = editingModel && state.models.find((model) => model.name === editingModel.name && model.kind === fields.kind.value);
+  const currentRoutes = new Map((current?.routes || []).map((r) => [JSON.stringify([r.provider_id, r.upstream_model]), r.health.state]));
   const groups = [...$('#route-rows').children].map((group, index) => {
     const rows = [...group.querySelectorAll('.route-edit')];
     const routes = rows.map(readRouteRow);
     const total = routeWeight(routes.filter((route) => route.enabled));
     for (const [i, route] of routes.entries()) {
       rows[i].querySelector('.route-config-share').textContent = route.enabled && total > 0
-        ? `组内 ${routeShare(route.weight / total)}` : '';
+        ? `同组配置比例 ${routeShare(route.weight / total)}` : '';
     }
     return { name: routeGroupName(index), routes };
   });
@@ -940,40 +951,51 @@ function renderRoutePreview() {
   for (const { routes } of groups) {
     for (const route of routes) {
       const provider = providers.get(route.provider_id);
-      const cooling = provider?.health.state === 'cooling' || scenario === 'all' || scenario === `source:${route.provider_id}` ||
+      const localState = currentRoutes.get(JSON.stringify([route.provider_id, route.upstream_model]));
+      const health = [provider?.health.state, localState];
+      const simulatedCooling = scenario === 'all' || scenario === `source:${route.provider_id}` ||
         (scenario === 'primary' && primarySources.has(route.provider_id));
-      route.state = modelEnabled && route.enabled && provider?.enabled && provider.health.state !== 'key_error'
-        ? (cooling ? 'cooling' : 'ready') : 'disabled';
+      if (!modelEnabled || !route.enabled) route.state = 'disabled';
+      else if (!provider) route.state = 'provider_missing';
+      else if (!provider.enabled) route.state = 'provider_disabled';
+      else if (health.includes('key_error')) route.state = 'key_error';
+      else if (simulatedCooling || health.includes('cooling')) route.state = 'cooling';
+      else if (health.includes('probing')) route.state = 'probing';
+      else if (health.includes('probe_ready')) route.state = 'probe_ready';
+      else route.state = 'ready';
     }
   }
   const result = $('#route-preview-result');
-  const candidates = candidateGroups(groups);
-  if (candidates.length === 0) {
-    result.replaceChildren(el('p', { class: 'field-hint' }, modelEnabled ? '当前没有可尝试的路由。' : '模型停用后暂停路由。'));
+  if (!modelEnabled) {
+    result.replaceChildren(el('p', { class: 'field-hint' }, '模型停用后暂停路由。'));
     return;
   }
   if (groups.some(({ routes }) => routes.some((route) => route.enabled && !route.upstream_model))) {
     result.replaceChildren(el('p', { class: 'field-hint' }, '填写启用路由的来源侧模型名后即可预览。'));
     return;
   }
-  const first = candidates[0];
-  const total = routeWeight(first.routes);
-  if (!Number.isFinite(total)) {
+  if (groups.some(({ routes }) => routes.some((route) => route.enabled && !Number.isFinite(route.weight)))) {
     result.replaceChildren(el('p', { class: 'field-hint warn' }, '请使用 1 到 1000 的整数作为权重。'));
     return;
   }
-  const order = candidates.map((group) => group.name + (group.state === 'cooling' ? '（冷却中）' : '')).join(' → ');
+  const candidates = candidateGroups(groups);
+  const first = candidates[0]?.routes || [];
+  const total = routeWeight(first);
+  const order = candidates.map((group) => group.name).join(' → ');
   result.replaceChildren(
-    el('p', { class: 'field-hint' }, `候选组顺序 ${order}`),
-    el('ul', { class: 'route-preview-list' }, first.routes.map((route) => {
-      const name = `${providerLabel(route.provider_id)} → ${route.upstream_model}`;
-      const share = route.weight / total;
+    el('p', { class: 'field-hint' }, order ? `候选组顺序 ${order}` : '当前没有可尝试的路由。'),
+    el('ul', { class: 'route-preview-list' }, groups.flatMap(({ name, routes }) => routes.filter((route) => route.enabled).map((route) => {
+      const label = `${name} · ${providerLabel(route.provider_id)} → ${route.upstream_model}`;
+      const share = first.includes(route) ? route.weight / total : null;
+      const status = share !== null
+        ? `首选 ${routeShare(share)}`
+        : routeEligible(route) ? '仅在失败后尝试' : routeState[route.state];
       return el('li', {},
-        el('span', { class: 'route-preview-name' }, name),
-        el('progress', { max: 1, value: share, 'aria-hidden': 'true' }),
-        el('span', { class: 'route-preview-share' }, routeShare(share)),
+        el('span', { class: 'route-preview-name' }, label),
+        share !== null ? el('progress', { max: 1, value: share, 'aria-hidden': 'true' }) : null,
+        el('span', { class: 'route-preview-share' }, status + (route.state === 'probe_ready' ? ' · 待试探' : '')),
       );
-    })),
+    }))),
   );
 }
 
@@ -1004,6 +1026,7 @@ function editModel(m, { copy = false } = {}) {
   checkModelName();
   clearError('model-error');
   $('#model-dialog').showModal();
+  refresh();
   markClean(form);
   (editingModel ? f.kind : f.name).focus();
 }
@@ -1109,12 +1132,19 @@ async function testModel(m, route) {
   try {
     const r = await api('POST', '/models/' + encodeURIComponent(m.name) + '/test' + query, null, signal);
     if (signal.aborted) return;
+    const attempts = r.attempts || [];
     showProbe(title,
       el('p', {}, el('span', { class: r.ok ? 'ok' : 'bad' }, r.ok ? '可用' : '不可用'),
         `　耗时 ${r.latency_ms} ms`, r.status ? `　HTTP ${r.status}` : ''),
-      r.provider_id ? el('p', { class: 'mono' }, `实际走的路由：${r.provider_id} → ${r.upstream_model}`) : null,
+      attempts.length ? el('ol', { class: 'probe-attempts', 'aria-label': '实际尝试顺序' }, attempts.map((attempt) =>
+        el('li', {},
+          el('span', { class: 'mono' }, `${attempt.provider_id} → ${attempt.upstream_model}`),
+          el('span', { class: attempt.ok ? 'ok' : 'bad' }, attempt.ok ? '成功' : attempt.error || '失败'),
+          attempt.status && attempt.error !== `HTTP ${attempt.status}` ? el('span', { class: 'sub' }, `HTTP ${attempt.status}`) : null,
+          attempt.recovery_probe ? el('span', { class: 'sub' }, '恢复试探') : null,
+        ))) : null,
       r.dimensions ? el('p', {}, `返回向量 ${r.dimensions} 维` + (m.dimensions && m.dimensions !== r.dimensions ? `，与配置的 ${m.dimensions} 维不一致` : '')) : null,
-      r.error ? el('p', {}, r.error) : null,
+      r.error && r.error !== attempts.at(-1)?.error ? el('p', {}, r.error) : null,
     );
     refresh();
   } catch (err) {

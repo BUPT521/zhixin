@@ -1220,11 +1220,25 @@ components:
         models: { type: array, items: { type: string }, description: 来源 /models 返回的模型名，最多 500 个 }
         dimensions: { type: integer, description: 嵌入模型实际返回的维度 }
         error: { type: string, description: 失败原因，不含 key }
-    AdminProviderHealth:
+        attempts:
+          type: array
+          description: 模型测试实际执行的路由，按尝试顺序列出
+          items: { $ref: "#/components/schemas/AdminProbeAttempt" }
+    AdminProbeAttempt:
+      type: object
+      required: [provider_id, upstream_model, ok, recovery_probe]
+      properties:
+        provider_id: { type: string }
+        upstream_model: { type: string }
+        ok: { type: boolean }
+        recovery_probe: { type: boolean, description: 本次使用来源或路由的恢复试探名额 }
+        status: { type: integer }
+        error: { type: string, description: 服务端给出的失败原因，不含上游响应正文 }
+    AdminHealth:
       type: object
       required: [state, consecutive_failures]
       properties:
-        state: { type: string, enum: [ok, cooling, key_error] }
+        state: { type: string, enum: [ok, cooling, probe_ready, probing, key_error] }
         consecutive_failures: { type: integer }
         last_error: { type: string }
         last_error_at: { type: string, format: date-time }
@@ -1242,7 +1256,7 @@ components:
         key_hint: { type: string, description: key 的末四位 }
         note: { type: string }
         updated_at: { type: string, format: date-time }
-        health: { $ref: "#/components/schemas/AdminProviderHealth" }
+        health: { $ref: "#/components/schemas/AdminHealth" }
     AdminProviderList:
       type: object
       required: [data]
@@ -1305,7 +1319,7 @@ components:
           items: { $ref: "#/components/schemas/AdminUsageRoute" }
     AdminRoute:
       type: object
-      required: [provider_id, upstream_model, priority, weight, max_batch, enabled, state]
+      required: [provider_id, upstream_model, priority, weight, max_batch, enabled, state, health]
       properties:
         provider_id: { type: string }
         upstream_model: { type: string, description: 来源侧的模型名，例如 BAAI/bge-m3 }
@@ -1313,7 +1327,8 @@ components:
         weight: { type: integer, description: 同一优先级内按权重分流 }
         max_batch: { type: integer, description: 嵌入一次发给来源的最多条数，0 表示不拆分 }
         enabled: { type: boolean }
-        state: { type: string, enum: [ready, cooling, disabled, provider_disabled, key_error, provider_missing] }
+        state: { type: string, enum: [ready, cooling, probe_ready, probing, disabled, provider_disabled, key_error, provider_missing] }
+        health: { $ref: "#/components/schemas/AdminHealth", description: 这条路由自身的健康状态 }
     AdminRouteInput:
       type: object
       required: [provider_id, upstream_model]

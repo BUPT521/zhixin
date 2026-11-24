@@ -16,21 +16,27 @@ import (
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
 
-// Defines values for AdminProviderHealthState.
+// Defines values for AdminHealthState.
 const (
-	AdminProviderHealthStateCooling  AdminProviderHealthState = "cooling"
-	AdminProviderHealthStateKeyError AdminProviderHealthState = "key_error"
-	AdminProviderHealthStateOk       AdminProviderHealthState = "ok"
+	AdminHealthStateCooling    AdminHealthState = "cooling"
+	AdminHealthStateKeyError   AdminHealthState = "key_error"
+	AdminHealthStateOk         AdminHealthState = "ok"
+	AdminHealthStateProbeReady AdminHealthState = "probe_ready"
+	AdminHealthStateProbing    AdminHealthState = "probing"
 )
 
-// Valid indicates whether the value is a known member of the AdminProviderHealthState enum.
-func (e AdminProviderHealthState) Valid() bool {
+// Valid indicates whether the value is a known member of the AdminHealthState enum.
+func (e AdminHealthState) Valid() bool {
 	switch e {
-	case AdminProviderHealthStateCooling:
+	case AdminHealthStateCooling:
 		return true
-	case AdminProviderHealthStateKeyError:
+	case AdminHealthStateKeyError:
 		return true
-	case AdminProviderHealthStateOk:
+	case AdminHealthStateOk:
+		return true
+	case AdminHealthStateProbeReady:
+		return true
+	case AdminHealthStateProbing:
 		return true
 	default:
 		return false
@@ -42,6 +48,8 @@ const (
 	AdminRouteStateCooling          AdminRouteState = "cooling"
 	AdminRouteStateDisabled         AdminRouteState = "disabled"
 	AdminRouteStateKeyError         AdminRouteState = "key_error"
+	AdminRouteStateProbeReady       AdminRouteState = "probe_ready"
+	AdminRouteStateProbing          AdminRouteState = "probing"
 	AdminRouteStateProviderDisabled AdminRouteState = "provider_disabled"
 	AdminRouteStateProviderMissing  AdminRouteState = "provider_missing"
 	AdminRouteStateReady            AdminRouteState = "ready"
@@ -55,6 +63,10 @@ func (e AdminRouteState) Valid() bool {
 	case AdminRouteStateDisabled:
 		return true
 	case AdminRouteStateKeyError:
+		return true
+	case AdminRouteStateProbeReady:
+		return true
+	case AdminRouteStateProbing:
 		return true
 	case AdminRouteStateProviderDisabled:
 		return true
@@ -289,6 +301,19 @@ func (e TokensTokenType) Valid() bool {
 	}
 }
 
+// AdminHealth defines model for AdminHealth.
+type AdminHealth struct {
+	ConsecutiveFailures int              `json:"consecutive_failures"`
+	CoolingUntil        *time.Time       `json:"cooling_until,omitempty"`
+	LastError           *string          `json:"last_error,omitempty"`
+	LastErrorAt         *time.Time       `json:"last_error_at,omitempty"`
+	LastSuccessAt       *time.Time       `json:"last_success_at,omitempty"`
+	State               AdminHealthState `json:"state"`
+}
+
+// AdminHealthState defines model for AdminHealth.State.
+type AdminHealthState string
+
 // AdminModel defines model for AdminModel.
 type AdminModel struct {
 	// Available 模型启用且至少一条路由可参与转发，包含冷却中的备用路由
@@ -322,6 +347,9 @@ type AdminModelList struct {
 
 // AdminProbe defines model for AdminProbe.
 type AdminProbe struct {
+	// Attempts 模型测试实际执行的路由，按尝试顺序列出
+	Attempts *[]AdminProbeAttempt `json:"attempts,omitempty"`
+
 	// Dimensions 嵌入模型实际返回的维度
 	Dimensions *int `json:"dimensions,omitempty"`
 
@@ -339,13 +367,26 @@ type AdminProbe struct {
 	UpstreamModel *string `json:"upstream_model,omitempty"`
 }
 
+// AdminProbeAttempt defines model for AdminProbeAttempt.
+type AdminProbeAttempt struct {
+	// Error 服务端给出的失败原因，不含上游响应正文
+	Error      *string `json:"error,omitempty"`
+	Ok         bool    `json:"ok"`
+	ProviderId string  `json:"provider_id"`
+
+	// RecoveryProbe 本次使用来源或路由的恢复试探名额
+	RecoveryProbe bool   `json:"recovery_probe"`
+	Status        *int   `json:"status,omitempty"`
+	UpstreamModel string `json:"upstream_model"`
+}
+
 // AdminProvider defines model for AdminProvider.
 type AdminProvider struct {
-	BaseUrl string              `json:"base_url"`
-	Enabled bool                `json:"enabled"`
-	HasKey  bool                `json:"has_key"`
-	Health  AdminProviderHealth `json:"health"`
-	Id      string              `json:"id"`
+	BaseUrl string      `json:"base_url"`
+	Enabled bool        `json:"enabled"`
+	HasKey  bool        `json:"has_key"`
+	Health  AdminHealth `json:"health"`
+	Id      string      `json:"id"`
 
 	// KeyHint key 的末四位
 	KeyHint   *string    `json:"key_hint,omitempty"`
@@ -353,19 +394,6 @@ type AdminProvider struct {
 	Note      string     `json:"note"`
 	UpdatedAt *time.Time `json:"updated_at,omitempty"`
 }
-
-// AdminProviderHealth defines model for AdminProviderHealth.
-type AdminProviderHealth struct {
-	ConsecutiveFailures int                      `json:"consecutive_failures"`
-	CoolingUntil        *time.Time               `json:"cooling_until,omitempty"`
-	LastError           *string                  `json:"last_error,omitempty"`
-	LastErrorAt         *time.Time               `json:"last_error_at,omitempty"`
-	LastSuccessAt       *time.Time               `json:"last_success_at,omitempty"`
-	State               AdminProviderHealthState `json:"state"`
-}
-
-// AdminProviderHealthState defines model for AdminProviderHealth.State.
-type AdminProviderHealthState string
 
 // AdminProviderInput defines model for AdminProviderInput.
 type AdminProviderInput struct {
@@ -390,6 +418,9 @@ type AdminProviderList struct {
 // AdminRoute defines model for AdminRoute.
 type AdminRoute struct {
 	Enabled bool `json:"enabled"`
+
+	// Health 这条路由自身的健康状态
+	Health AdminHealth `json:"health"`
 
 	// MaxBatch 嵌入一次发给来源的最多条数，0 表示不拆分
 	MaxBatch int `json:"max_batch"`

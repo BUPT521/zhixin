@@ -394,9 +394,11 @@ func TestChatFailsOverToNextSource(t *testing.T) {
 	if primary.keys[0] != "Bearer sk-primary" || backup.keys[0] != "Bearer sk-backup" {
 		t.Fatalf("各来源应收到自己的 key：%v %v", primary.keys, backup.keys)
 	}
-	// 连续失败三次之后主来源进入冷却，第四次直接先试备用来源。
-	if !env.proxy.router.health.cooling("primary") {
-		t.Fatal("主来源连续失败三次后应进入冷却")
+	// HTTP 503 可能是模型故障，连续三次后只冷却这条路由。
+	model, _ := env.proxy.router.current().model("zhixin-chat")
+	states := env.proxy.router.health.modelViews(model)
+	if states[0].route.phase != healthCooling || states[0].source.phase != healthReady {
+		t.Fatalf("主路由应单独进入冷却：%+v", states[0])
 	}
 	before := primary.calls.Load()
 	env.c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil)
@@ -456,6 +458,35 @@ func TestChatUnreachableSourcesGive502(t *testing.T) {
 	}
 }
 
+func TestChatConnectionFailureSkipsSiblingRoutes(t *testing.T) {
+	backup := newFakeSource(t, "backup")
+	dead := httptest.NewServer(http.NotFoundHandler())
+	dead.Close()
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "primary", dead.URL, "sk-primary")
+		putProvider(t, c, box, "backup", backup.URL, "sk-backup")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{
+			{ProviderID: "primary", UpstreamModel: "a", Priority: 0},
+			{ProviderID: "primary", UpstreamModel: "b", Priority: 1},
+			{ProviderID: "primary", UpstreamModel: "c", Priority: 2},
+			{ProviderID: "backup", UpstreamModel: "d", Priority: 3},
+		}})
+	})
+	token := signIn(t, env.authSvc, "connect@example.test")
+	var out struct{ Tag string }
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "m", "input": []any{}}, &out); code != http.StatusOK || out.Tag != "backup" {
+		t.Fatalf("连接失败后应跳过同来源路由并调用备用来源：%d %+v", code, out)
+	}
+	health := env.proxy.router.health.view(healthKey{provider: "primary"})
+	if health.failures != 1 {
+		t.Fatalf("主来源只应尝试一次：%+v", health)
+	}
+	env.proxy.cfg.MaxAttempts = 1
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "m", "input": []any{}}, nil); code != http.StatusBadGateway || backup.calls.Load() != 1 {
+		t.Fatalf("实际尝试用完后应停止切换：状态 %d，备用调用 %d", code, backup.calls.Load())
+	}
+}
+
 func TestCandidatesOrder(t *testing.T) {
 	a := &liveProvider{ProviderRecord: ProviderRecord{ID: "a", Enabled: true}}
 	b := &liveProvider{ProviderRecord: ProviderRecord{ID: "b", Enabled: true}}
@@ -470,7 +501,8 @@ func TestCandidatesOrder(t *testing.T) {
 		{Route: Route{Priority: 1, Weight: 1, Enabled: true}, Provider: b},
 		{Route: Route{Priority: 0, Weight: 1, Enabled: true}, Provider: broken},
 	}}
-	r := &Router{health: newHealthBook(time.Now), shuffle: func([]liveRoute) {}}
+	now := time.Now()
+	r := &Router{health: newHealthBook(func() time.Time { return now }), shuffle: func([]liveRoute) {}}
 	ids := func(rs []liveRoute) string {
 		var s []string
 		for _, rt := range rs {
@@ -478,21 +510,22 @@ func TestCandidatesOrder(t *testing.T) {
 		}
 		return strings.Join(s, ",")
 	}
-	if got := ids(r.candidates(m, 0)); got != "a,b,c" {
+	if got := ids(r.candidates(m)); got != "a,b,c" {
 		t.Fatalf("按优先级排列并跳过停用与 key 损坏的来源：%s", got)
 	}
-	if got := ids(r.candidates(m, 2)); got != "a,b" {
-		t.Fatalf("应截到 max 条：%s", got)
-	}
 	for range coolAfterFailures {
-		r.health.fail("a", "HTTP 503")
+		lease, ok := r.health.acquire(m, m.Live[2], false)
+		if !ok {
+			t.Fatal("冷却前应能尝试")
+		}
+		r.health.complete(lease, false, healthOutcome{reason: "无法连接", scope: sourceFailure})
 	}
-	if got := ids(r.candidates(m, 0)); got != "b,c,a" {
-		t.Fatalf("冷却中的来源应排到最后：%s", got)
+	if got := ids(r.candidates(m)); got != "b,c" {
+		t.Fatalf("冷却中的来源应跳过：%s", got)
 	}
-	r.health.succeed("a")
-	if got := ids(r.candidates(m, 0)); got != "a,b,c" {
-		t.Fatalf("成功一次后冷却解除：%s", got)
+	now = now.Add(coolBase)
+	if got := ids(r.candidates(m)); got != "a,b,c" {
+		t.Fatalf("冷却到期后按原优先级试探：%s", got)
 	}
 }
 
@@ -691,6 +724,35 @@ func TestEmbeddingsFailoverRedoesWholeRequest(t *testing.T) {
 	}
 }
 
+func TestEmbeddingsSharedCredentialFailureLeavesAttemptForBackup(t *testing.T) {
+	var rejected atomic.Int64
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rejected.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer primary.Close()
+	backup := newEmbedSource(t, 2, 4)
+	cfg := baseConfig()
+	cfg.MaxAttempts = 2
+	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "primary", primary.URL, "sk-1")
+		putProvider(t, c, box, "backup", backup.URL, "sk-2")
+		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Dimensions: 4, Routes: []Route{
+			{ProviderID: "primary", UpstreamModel: "first"},
+			{ProviderID: "primary", UpstreamModel: "second", Priority: 1},
+			{ProviderID: "backup", UpstreamModel: "backup", Priority: 2},
+		}})
+	})
+	token := signIn(t, env.authSvc, "embed-retry@example.test")
+	var out embedOut
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": inputs(1)}, &out); code != http.StatusOK || len(out.Data) != 1 || len(out.Data[0].Embedding) != 4 || out.Data[0].Embedding[0] != 2 {
+		t.Fatalf("共享密钥被拒后应切换到备用来源：%d %+v", code, out)
+	}
+	if rejected.Load() != 1 || backup.calls.Load() != 1 {
+		t.Fatalf("unexpected attempt count: primary %d, backup %d", rejected.Load(), backup.calls.Load())
+	}
+}
+
 func TestEmbeddingsDimensionMismatchTriesNextSource(t *testing.T) {
 	wrong := newEmbedSource(t, 1, 3)
 	right := newEmbedSource(t, 2, 4)
@@ -706,8 +768,8 @@ func TestEmbeddingsDimensionMismatchTriesNextSource(t *testing.T) {
 	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": inputs(2)}, &out); code != http.StatusOK || out.Data[0].Embedding[0] != 2 {
 		t.Fatalf("维度不符应换来源：%d %+v", code, out)
 	}
-	if h := env.proxy.router.health.view("wrong"); h.failures != 1 || !strings.Contains(h.lastError, "dimensions") {
-		t.Fatalf("维度不符应记为来源失败：%+v", h)
+	if h := env.proxy.router.health.view(healthKey{provider: "wrong", model: "emb", upstream: "m", kind: KindEmbedding}); h.failures != 1 || !strings.Contains(h.lastError, "dimensions") {
+		t.Fatalf("维度不符应记为路由失败：%+v", h)
 	}
 }
 

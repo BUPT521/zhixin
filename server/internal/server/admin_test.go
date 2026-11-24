@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
@@ -68,7 +69,12 @@ func TestAdminDisabledWithoutToken(t *testing.T) {
 }
 
 func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
+	var rejectProbe atomic.Bool
 	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rejectProbe.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		var in struct{ Stream bool }
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if in.Stream {
@@ -179,6 +185,33 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	if !probe.Ok || probe.UpstreamModel == nil || *probe.UpstreamModel != backupModel {
 		t.Fatalf("targeted probe did not reach the selected model: %+v", probe)
 	}
+	rejectProbe.Store(true)
+	probe = api.AdminProbe{}
+	admin("POST", probePath, nil, &probe, http.StatusOK)
+	if !probe.Ok || probe.Attempts == nil || len(*probe.Attempts) != 2 {
+		t.Fatalf("expected two probe attempts: %+v", probe)
+	}
+	first, fallback := (*probe.Attempts)[0], (*probe.Attempts)[1]
+	if first.ProviderId != "primary" || first.Ok || first.Error == nil || *first.Error != "HTTP 503" ||
+		fallback.ProviderId != "backup" || fallback.UpstreamModel != backupModel || !fallback.Ok {
+		t.Fatalf("wrong probe sequence: %+v", *probe.Attempts)
+	}
+	for range 2 {
+		admin("POST", probePath, nil, nil, http.StatusOK)
+	}
+	var health api.AdminModelList
+	admin("GET", "/admin/v1/models", nil, &health, http.StatusOK)
+	chat := health.Data[0]
+	if chat.Name != "chat-test" || !chat.Available || chat.Routes[0].State != api.AdminRouteStateCooling ||
+		chat.Routes[0].Health.State != api.AdminHealthStateCooling || chat.Routes[1].State != api.AdminRouteStateReady {
+		t.Fatalf("route cooldown should leave the backup available: %+v", chat)
+	}
+	rejectProbe.Store(false)
+	probe = api.AdminProbe{}
+	admin("POST", probePath+"?provider_id=primary&upstream_model=first", nil, &probe, http.StatusOK)
+	if !probe.Ok || probe.Attempts == nil || len(*probe.Attempts) != 1 || !(*probe.Attempts)[0].RecoveryProbe {
+		t.Fatalf("targeted probe should be able to recover a cooling route: %+v", probe)
+	}
 	admin("GET", "/admin/v1/usage?days=1", nil, &report, http.StatusOK)
 	if len(report.Daily) != 1 || len(report.Routes) != 3 {
 		t.Fatalf("route usage: %+v", report)
@@ -187,7 +220,8 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	// 三次对话请求：流式那一次先被 primary 的故障页挡回来、由 backup 接住，
 	// 后两次探针各走一条指定路由。数位按各来源自己的用量核对，所以这里只核对
 	// 次数与「实际用量不低于估算」。
-	if day.Chat.Attempts != 3 || day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
+	if day.Chat.Attempts != 3 ||
+		day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
 		day.Chat.Tokens < day.Chat.EstimatedTokens || day.Embedding != (api.AdminUsageCounts{
 		Attempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3,
 	}) {

@@ -21,8 +21,10 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
@@ -312,6 +314,7 @@ type attemptResult struct {
 	// A negative token count keeps the reservation when usage is unknown.
 	tokens, estimated int64
 	success           bool
+	notSent           bool
 }
 
 type finishAttempt func(attemptResult)
@@ -343,19 +346,18 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 			return nil, ErrQuotaExceeded
 		}
 		return func(result attemptResult) {
+
 			if result.tokens < 0 {
 				result.tokens, result.estimated = reserved, reserved
 			}
 			p.settle(r, userID, day, model.Kind, reserved, result.tokens)
-			if p.usage != nil {
+			if p.usage != nil && !result.notSent {
 				p.recordRouteUsage(r.Context(), RouteUsage{
 					Day: day,
 					RouteUsageKey: RouteUsageKey{
 						Kind: model.Kind, Model: model.Name, ProviderID: route.ProviderID, UpstreamModel: route.UpstreamModel,
 					},
-					UsageCounts: UsageCounts{
-						Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated,
-					},
+					UsageCounts: UsageCounts{Attempts: 1, Tokens: result.tokens, EstimatedTokens: result.estimated},
 				}, result.success)
 			}
 		}, nil
@@ -442,7 +444,8 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 		reqCtx, cancel = context.WithTimeout(reqCtx, p.cfg.StreamTotalTimeout)
 		defer cancel()
 	}
-	reply, err := p.dispatch(reqCtx, p.router.candidates(model, p.cfg.MaxAttempts), fields, stream, output, reserve)
+	plan := attemptPlan{model: model, candidates: p.router.candidates(model), reserve: reserve}
+	reply, err := p.dispatch(reqCtx, &plan, fields, stream, output)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return // client went away
@@ -486,13 +489,13 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request) {
 	if p.cfg.MaxResponseBytes > 0 {
 		body = io.LimitReader(body, p.cfg.MaxResponseBytes)
 	}
-	result, clientWriteFailed := p.copyStream(w, body)
-	if result.success {
-		p.router.health.succeed(reply.route.ProviderID)
-	} else if r.Context().Err() == nil && !clientWriteFailed {
-		p.router.health.fail(reply.route.ProviderID, "流式响应提前结束")
+	result, end, clientWriteFailed := p.copyStream(w, body)
+	outcome := end.outcome()
+	outcome.sourceReached = true
+	if r.Context().Err() != nil || clientWriteFailed {
+		outcome = healthOutcome{reason: "客户端已取消请求"}
 	}
-	reply.finish(result)
+	p.finishAttempt(&plan, reply.attempt, result, reply.status, outcome)
 }
 
 // responsesOutputLimit 检查输出上限；没给时补上 defaultOutputTokens，用量估算
@@ -617,35 +620,41 @@ func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, erro
 }
 
 type chatReply struct {
-	route  liveRoute
-	status int
-	body   []byte
-	stream io.ReadCloser
-	finish finishAttempt
+	route      liveRoute
+	status     int
+	body       []byte
+	stream     io.ReadCloser
+	attempt    routeAttempt
+	completion responseCompletion
 }
 
 // dispatch tries the next candidate while a response can still be replaced.
-// For a stream, ownership of its body and its settlement moves to Chat.
-func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[string]json.RawMessage, stream bool, output int64, reserve attemptBudget) (chatReply, error) {
+// For a stream, ownership of its body and its settlement moves to Responses.
+func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[string]json.RawMessage, stream bool, output int64) (chatReply, error) {
 	var lastErr error = errors.New("no usable route")
 	var reply chatReply
-	for i, rt := range cands {
-		reply = chatReply{route: rt}
+	for _, rt := range plan.candidates {
+		if !p.attemptsRemain(plan) {
+			break
+		}
 		body, err := withModel(fields, rt.UpstreamModel)
 		if err != nil {
 			return reply, err
 		}
-		finish, err := reserve.start(rt, int64(len(body))+output)
+		attempt, started, err := p.beginAttempt(ctx, plan, rt, int64(len(body))+output)
 		if err != nil {
 			return reply, err
 		}
+		if !started {
+			continue
+		}
+		reply = chatReply{route: rt, attempt: attempt}
 		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream)
 		if err != nil {
-			finish(attemptResult{tokens: -1})
+			p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, 0, requestFailure(ctx, err))
 			if ctx.Err() != nil {
 				return reply, ctx.Err()
 			}
-			p.router.health.fail(rt.ProviderID, "无法连接模型来源")
 			lastErr = err
 			continue
 		}
@@ -654,34 +663,33 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 		// 来源回一份页面或 problem+json 错误时，换下一个来源：网关的故障页与
 		// 来源自己的错误体都不是客户端的对话响应，照抄给客户端只会让调用方按
 		// 格式错误结束。流式请求另有下面的流式类型检查，这里只管整段响应。
-		if !stream && (mediaType == "text/html" || mediaType == "application/problem+json") {
+		if !stream && reply.status != http.StatusUnauthorized && (mediaType == "text/html" || mediaType == "application/problem+json") {
 			resp.Body.Close()
-			finish(attemptResult{tokens: -1})
-			p.router.health.fail(rt.ProviderID, "响应类型不可用")
+			outcome := httpFailure(reply.status, resp.Header.Get("Retry-After"))
+			outcome.reason, outcome.scope = "响应类型不可用", routeFailure
+			p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, reply.status, outcome)
 			lastErr = errors.New("provider did not return a usable response")
 			continue
 		}
 		if reply.status < 200 || reply.status >= 300 {
 			resp.Body.Close()
-			finish(attemptResult{tokens: rejectedUsage(reply.status)})
+			p.finishAttempt(plan, attempt, attemptResult{tokens: rejectedUsage(reply.status)}, reply.status,
+				httpFailure(reply.status, resp.Header.Get("Retry-After")))
 			if retryable(reply.status) {
-				p.router.health.fail(rt.ProviderID, fmt.Sprintf("HTTP %d", reply.status))
-				if i < len(cands)-1 {
-					continue
-				}
+				lastErr = nil
+				continue
 			}
 			return reply, nil
 		}
 		if stream {
-			mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 			if mediaType == "application/json" || mediaType == "text/html" || mediaType == "application/problem+json" {
 				resp.Body.Close()
-				finish(attemptResult{tokens: -1})
-				p.router.health.fail(rt.ProviderID, "流式响应类型不可用")
+				p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, reply.status,
+					healthOutcome{reason: "流式响应类型不可用", scope: routeFailure, sourceReached: true})
 				lastErr = errors.New("provider did not return a chat stream")
 				continue
 			}
-			reply.stream, reply.finish = resp.Body, finish
+			reply.stream = resp.Body
 			return reply, nil
 		}
 		// 非流式响应要整段读进内存再写回客户端：先按上限从实例预算里预留，
@@ -689,31 +697,43 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 		release, reserved := p.mem.reserve(p.cfg.MaxResponseBytes)
 		if !reserved {
 			resp.Body.Close()
-			finish(attemptResult{tokens: -1})
+			p.finishAttempt(plan, attempt, attemptResult{tokens: -1}, reply.status,
+				healthOutcome{reason: "服务端响应预算不足", sourceReached: true})
 			return reply, errInstanceBusy
 		}
 		b, err := readResponse(resp.Body, p.cfg.MaxResponseBytes)
 		resp.Body.Close()
 		release()
-		if err == nil && !isResponsesBody(b) {
-			err = errors.New("invalid response object")
+		var response responseObject
+		if err == nil {
+			response, err = parseResponseObject(b)
 		}
 		used := usageTokens(b, KindChat)
 		if used <= 0 {
 			used = -1
 		}
 		if err != nil {
-			finish(attemptResult{tokens: used})
+			outcome := healthOutcome{reason: "聊天响应不可用", scope: routeFailure, sourceReached: true}
 			if ctx.Err() != nil {
+				p.finishAttempt(plan, attempt, attemptResult{tokens: used}, reply.status,
+					healthOutcome{reason: "请求已取消或超时"})
 				return reply, ctx.Err()
 			}
-			p.router.health.fail(rt.ProviderID, "聊天响应不可用")
+			p.finishAttempt(plan, attempt, attemptResult{tokens: used}, reply.status, outcome)
 			lastErr = err
 			continue
 		}
-		finish(attemptResult{tokens: used, success: true})
-		p.router.health.succeed(rt.ProviderID)
-		reply.body = b
+		end := responseEnd(response.Status, response.IncompleteDetails)
+		outcome := end.outcome()
+		outcome.sourceReached = true
+		p.finishAttempt(plan, attempt, attemptResult{
+			tokens: used, success: end == responseCompleted,
+		}, reply.status, outcome)
+		if outcome.scope == routeFailure {
+			lastErr = errors.New(outcome.reason)
+			continue
+		}
+		reply.body, reply.completion = b, end
 		return reply, nil
 	}
 	return reply, lastErr
@@ -724,14 +744,18 @@ func (p *Proxy) dispatch(ctx context.Context, cands []liveRoute, fields map[stri
 const upstreamResponsesPath = "/responses"
 
 // attempt 向一个来源发一次请求。headerDeadline 为真时，响应头必须在
-// HeaderTimeout 内到达，否则按连接失败处理，便于换下一个来源；非流式聊天
+// HeaderTimeout 内到达，否则尝试下一条路由；非流式聊天
 // 要等整段回答生成完才有响应头，不设这个期限。
 func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, headerDeadline bool) (*http.Response, error) {
 	actx, cancel := context.WithCancel(ctx)
+	var gotConnection atomic.Bool
+	actx = httptrace.WithClientTrace(actx, &httptrace.ClientTrace{
+		GotConn: func(httptrace.GotConnInfo) { gotConnection.Store(true) },
+	})
 	req, err := http.NewRequestWithContext(actx, http.MethodPost, prov.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, sourceConnectionError{err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if prov.APIKey != "" {
@@ -751,10 +775,13 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 			resp.Body.Close()
 		}
 		cancel()
-		return nil, fmt.Errorf("no response within %s", p.cfg.HeaderTimeout)
+		resp, err = nil, fmt.Errorf("no response within %s", p.cfg.HeaderTimeout)
 	}
 	if err != nil {
 		cancel()
+		if !gotConnection.Load() {
+			err = sourceConnectionError{err}
+		}
 		return nil, err
 	}
 	resp.Body = cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
@@ -833,18 +860,68 @@ func (u usageEnvelope) tokens(kind Kind) int64 {
 	return 0
 }
 
-// isResponsesBody 检查整段响应是不是一个 Response 对象：非流式请求必须给出
-// 对象形状，否则换下一个来源。
-func isResponsesBody(b []byte) bool {
-	var env struct {
-		ID     string                       `json:"id"`
-		Object string                       `json:"object"`
-		Output []map[string]json.RawMessage `json:"output"`
+type incompleteDetails struct {
+	Reason string `json:"reason"`
+}
+
+type responseObject struct {
+	ID                string                       `json:"id"`
+	Object            string                       `json:"object"`
+	Output            []map[string]json.RawMessage `json:"output"`
+	Status            string                       `json:"status"`
+	IncompleteDetails incompleteDetails            `json:"incomplete_details"`
+}
+
+func parseResponseObject(b []byte) (responseObject, error) {
+	var env responseObject
+	if err := json.Unmarshal(b, &env); err != nil {
+		return env, err
 	}
-	if json.Unmarshal(b, &env) != nil {
-		return false
+	if env.Output == nil && env.Object != "response" && env.ID == "" {
+		return env, errors.New("invalid response object")
 	}
-	return env.Output != nil || env.Object == "response" || env.ID != ""
+	return env, nil
+}
+
+type responseCompletion uint8
+
+const (
+	responseInterrupted responseCompletion = iota
+	responseCompleted
+	responseOutputLimit
+	responseIncomplete
+	responseFailed
+)
+
+func responseEnd(status string, details incompleteDetails) responseCompletion {
+	switch status {
+	case "", "completed":
+		return responseCompleted
+	case "failed":
+		return responseFailed
+	case "incomplete":
+		if details.Reason == "max_output_tokens" {
+			return responseOutputLimit
+		}
+		return responseIncomplete
+	default:
+		return responseIncomplete
+	}
+}
+
+func (end responseCompletion) outcome() healthOutcome {
+	switch end {
+	case responseCompleted:
+		return healthOutcome{}
+	case responseOutputLimit:
+		return healthOutcome{reason: "回答达到输出上限"}
+	case responseIncomplete:
+		return healthOutcome{reason: "上游未完成回答", scope: routeFailure}
+	case responseFailed:
+		return healthOutcome{reason: "上游报告回答失败", scope: routeFailure}
+	default:
+		return healthOutcome{reason: "流式响应提前结束", scope: routeFailure}
+	}
 }
 
 // errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用
@@ -933,38 +1010,26 @@ func (g *streamGuard) stop() {
 }
 
 // copyStream forwards SSE line by line, flushing at each blank line (event
-// boundary), and picks the last usage object it sees. A terminal response event
-// distinguishes an upstream completion from a dropped connection.
-func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemptResult, clientWriteFailed bool) {
+// boundary), and picks the last usage object it sees. Failed or incomplete
+// terminal events take precedence over a trailing [DONE] marker.
+func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemptResult, end responseCompletion, clientWriteFailed bool) {
 	flusher, _ := w.(http.Flusher)
 	rd := bufio.NewReaderSize(body, 64*1024)
 	result.tokens = -1
-	var done bool
 	for {
 		line, err := rd.ReadBytes('\n')
 		if len(line) > 0 {
 			trimmed := bytes.TrimRight(line, "\r\n")
 			if data, ok := bytes.CutPrefix(trimmed, []byte("data:")); ok {
 				data = bytes.TrimSpace(data)
-				done = done || terminalEvent(data)
-				var envelope struct {
-					usageEnvelope
-					Response *usageEnvelope `json:"response"`
-				}
-				if bytes.Contains(data, []byte(`"usage"`)) && json.Unmarshal(data, &envelope) == nil {
-					used := envelope.tokens(KindChat)
-					if envelope.Response != nil {
-						if inner := envelope.Response.tokens(KindChat); inner > 0 {
-							used = inner
-						}
-					}
-					if used > 0 {
-						result.tokens = used
-					}
+				completion, used := streamData(data)
+				end = max(end, completion)
+				if used > 0 {
+					result.tokens = used
 				}
 			}
 			if _, werr := w.Write(line); werr != nil {
-				return result, true
+				return result, end, true
 			}
 			if len(trimmed) == 0 && flusher != nil {
 				flusher.Flush()
@@ -974,30 +1039,41 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 			if flusher != nil {
 				flusher.Flush()
 			}
-			result.success = done && errors.Is(err, io.EOF)
-			return result, false
+			if end == responseCompleted && !errors.Is(err, io.EOF) {
+				end = responseInterrupted
+			}
+			result.success = end == responseCompleted
+			return result, end, false
 		}
 	}
 }
 
-// terminalEvent 报告一个流式负载是不是结束事件：Responses 的成功、失败与未完成
-// 都算，数据里没写 type 时按 OpenAI 的 [DONE] 收尾。
-func terminalEvent(data []byte) bool {
+func streamData(data []byte) (responseCompletion, int64) {
 	if bytes.Equal(data, []byte("[DONE]")) {
-		return true
-	}
-	if !bytes.Contains(data, []byte(`"type"`)) {
-		return false
+		return responseCompleted, 0
 	}
 	var event struct {
-		Type string `json:"type"`
+		usageEnvelope
+		Type     string `json:"type"`
+		Response struct {
+			usageEnvelope
+			IncompleteDetails incompleteDetails `json:"incomplete_details"`
+		} `json:"response"`
 	}
 	if json.Unmarshal(data, &event) != nil {
-		return false
+		return responseInterrupted, 0
+	}
+	tokens := event.Response.tokens(KindChat)
+	if tokens <= 0 {
+		tokens = event.tokens(KindChat)
 	}
 	switch event.Type {
-	case "response.completed", "response.incomplete", "response.failed":
-		return true
+	case "response.completed":
+		return responseCompleted, tokens
+	case "response.incomplete":
+		return responseEnd("incomplete", event.Response.IncompleteDetails), tokens
+	case "response.failed":
+		return responseFailed, tokens
 	}
-	return false
+	return responseInterrupted, tokens
 }
