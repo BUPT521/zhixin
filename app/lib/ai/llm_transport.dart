@@ -118,6 +118,7 @@ class HttpLlmClient implements LlmClient {
               allowToolCalls: allowToolCalls,
               abortTrigger: lifecycle.abortTrigger,
               roundBudget: lifecycle.remaining,
+              roundSession: lifecycle.sessionId,
             ),
           ),
         );
@@ -183,6 +184,7 @@ class HttpLlmClient implements LlmClient {
               allowToolCalls: allowToolCalls,
               abortTrigger: attempt.abortTrigger,
               roundBudget: lifecycle.remaining,
+              roundSession: lifecycle.sessionId,
             ),
           ),
         );
@@ -267,6 +269,7 @@ class HttpLlmClient implements LlmClient {
     required bool allowToolCalls,
     required Future<void> abortTrigger,
     required Duration roundBudget,
+    String? roundSession,
   }) {
     final request = http.AbortableRequest(
       'POST',
@@ -280,6 +283,10 @@ class HttpLlmClient implements LlmClient {
       // 本轮剩余预算，单位毫秒；服务端按自己的上限截断，并把它用作整段回答与
       // 等待首个有效输出的时限，两端的期限因此落在同一份预算里。
       'X-Zhixin-Round-Budget-Ms': '${roundBudget.inMilliseconds}',
+      // 这条讨论的稳定标识：服务端据此把追问与工具步骤分到同一条来源，复用
+      // 上游已经处理过的前缀；没有归属的请求不带这个头。
+      if (roundSession != null && roundSession.trim().isNotEmpty)
+        'X-Zhixin-Session-Id': roundSession.trim(),
     });
     request.bodyBytes = utf8.encode(
       jsonEncode(

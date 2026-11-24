@@ -613,7 +613,7 @@ func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, p
 			plan.candidates = []liveRoute{route}
 		}
 	} else {
-		plan.candidates = a.router().candidates(m)
+		plan.candidates = a.router().candidates(m, "")
 	}
 	fail := func(msg string) {
 		out.Error = &msg

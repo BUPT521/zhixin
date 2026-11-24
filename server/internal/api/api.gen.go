@@ -1045,6 +1045,12 @@ type PostV1LlmResponsesParams struct {
 	// 空闲等待与每次尝试等待首个有效输出都收在这份预算以内；省略时只按本机
 	// 时限执行。值 0 表示这一轮预算已经用完，服务端不再发起上游尝试。
 	XZhixinRoundBudgetMs *int64 `json:"X-Zhixin-Round-Budget-Ms,omitempty"`
+
+	// XZhixinSessionId 客户端为一条讨论生成的稳定标识，最长 64 个字符，只参与主用组内的路由
+	// 选择：同一讨论的追问与工具步骤因此落到同一条来源，复用上游已经处理过
+	// 的前缀。服务端按账号再散列一次，日志与上游都不携带原值；省略、空白或
+	// 超过 64 个字符时按没有标识处理，每次请求按权重重新随机。
+	XZhixinSessionId *string `json:"X-Zhixin-Session-Id,omitempty"`
 }
 
 // DeleteV1MeJSONBody defines parameters for DeleteV1Me.
@@ -2272,6 +2278,25 @@ func (siw *ServerInterfaceWrapper) PostV1LlmResponses(w http.ResponseWriter, r *
 		}
 
 		params.XZhixinRoundBudgetMs = &XZhixinRoundBudgetMs
+
+	}
+
+	// ------------- Optional header parameter "X-Zhixin-Session-Id" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-Zhixin-Session-Id")]; found {
+		var XZhixinSessionId string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "X-Zhixin-Session-Id", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-Zhixin-Session-Id", valueList[0], &XZhixinSessionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "X-Zhixin-Session-Id", Err: err})
+			return
+		}
+
+		params.XZhixinSessionId = &XZhixinSessionId
 
 	}
 

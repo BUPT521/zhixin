@@ -65,6 +65,7 @@ class BuddyContext {
     this.crossSessionNotes = const [],
     this.conversationFocus,
     this.sourceSearch,
+    this.sessionId,
   });
 
   final DateTime now;
@@ -112,6 +113,10 @@ class BuddyContext {
   /// 跨次综合时缺少的证据或未说明的独立性；回答需要说明这些内容待确认。
   final List<String> crossSessionNotes;
   final String? conversationFocus;
+
+  /// 这条讨论的稳定标识，只用于服务端把追问与工具步骤分到同一条来源：同一讨论
+  /// 的请求因此复用上游处理过的前缀。没有归属时为空，服务端照旧按权重分流。
+  final String? sessionId;
 
   Iterable<MaterialPage> get uniqueOutlinePages =>
       identity.uniqueById(outlinePages, (page) => page.pageKey);

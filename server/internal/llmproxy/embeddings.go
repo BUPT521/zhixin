@@ -78,7 +78,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request) {
 	// 缓存代次必须在调用来源之前读：清除可能发生在嵌入进行中，那时请求已经
 	// 拿到旧代次，写回时对不上就丢弃这次写入（ADR-0037）。
 	generation, generationOK := p.embeddingCacheGeneration(ctx, r, userID)
-	plan := attemptPlan{model: m, candidates: p.router.candidates(m), reserve: p.budget(r, userID, day, m)}
+	plan := attemptPlan{model: m, candidates: p.router.candidates(m, ""), reserve: p.budget(r, userID, day, m)}
 	res := p.embed(ctx, &plan, fields, inputs)
 	var budgetError quotaReservationError
 	switch {

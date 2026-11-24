@@ -13,6 +13,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +25,7 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -397,18 +400,26 @@ func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, reserved,
 	}
 }
 
+// RequestOptions 是请求头里与调度有关的选项，由路由层从契约参数转进来。
+type RequestOptions struct {
+	// RoundBudgetMs 是客户端带来的本轮剩余预算，单位毫秒，见 roundDeadline。
+	RoundBudgetMs *int64
+	// SessionID 是客户端为一条讨论生成的稳定标识，见 sessionKey。
+	SessionID *string
+}
+
 // Responses 转发客户端唯一的对话请求（ADR-0052）。服务端做字段白名单校验、
 // 按上限校验或补齐 max_output_tokens、替换模型名并结算额度，事件原样转发；
-// 请求体、响应体与流里的用量都不记录。roundBudgetMs 是客户端带来的本轮剩余
-// 预算，整段回答、空闲等待与首字等待都收在它以内，见 roundDeadline。
-func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, roundBudgetMs *int64) {
+// 请求体、响应体与流里的用量都不记录。本轮预算与讨论标识随 opts 传入，前者
+// 约束整段回答、空闲等待与首字等待，后者让同一讨论的追问落到同一条来源。
+func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOptions) {
 	userID := auth.MustPrincipal(r.Context()).UserID
 	done, ok := p.beginRequest(w, r, userID)
 	if !ok {
 		return
 	}
 	defer done()
-	deadline := p.roundDeadline(roundBudgetMs)
+	deadline := p.roundDeadline(opts.RoundBudgetMs)
 	fields, ok := p.readBody(w, r)
 	if !ok {
 		return
@@ -464,7 +475,11 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, roundBudgetMs 
 		reqCtx, cancel = context.WithTimeout(reqCtx, total)
 		defer cancel()
 	}
-	plan := attemptPlan{model: model, candidates: p.router.candidates(model), reserve: reserve}
+	plan := attemptPlan{
+		model:      model,
+		candidates: p.router.candidates(model, sessionKey(userID, opts.SessionID)),
+		reserve:    reserve,
+	}
 	reply, err := p.dispatch(reqCtx, &plan, fields, stream, output, deadline)
 	if err != nil {
 		if r.Context().Err() != nil {
@@ -537,6 +552,25 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, roundBudgetMs 
 func writeRoundExpired(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteProblem(w, r, http.StatusGatewayTimeout, httpx.CodeUpstreamFailed,
 		"this round's time budget is used up before a model source answered")
+}
+
+// maxSessionIDBytes 是客户端讨论标识的长度上限。超长或为空的标识按没有处理，
+// 不让它影响路由选择，也不写进日志。
+const maxSessionIDBytes = 64
+
+// sessionKey 把账号与客户端给的讨论标识收成一个只在代理内使用的调度键：同一
+// 账号的同一讨论永远得到同一个键，换账号不会共享；键是散列值，日志与上游都
+// 看不到原标识。没有标识时返回空串，路由按原样重新随机。
+func sessionKey(userID string, raw *string) string {
+	if raw == nil {
+		return ""
+	}
+	id := strings.TrimSpace(*raw)
+	if id == "" || len(id) > maxSessionIDBytes {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(userID + "\x00" + id))
+	return hex.EncodeToString(sum[:16])
 }
 
 // roundDeadline 把客户端带来的本轮剩余预算换成截止时间：客户端不给值时返回零

@@ -2,6 +2,8 @@ package llmproxy
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"log/slog"
 	"math"
 	"math/rand/v2"
@@ -159,8 +161,10 @@ func (r *Router) build(providers []ProviderRecord, models []ModelRecord) *snapsh
 	return s
 }
 
-// candidates 按优先级分组，组内按权重随机排列。执行前还要重新检查健康状态并占用试探名额。
-func (r *Router) candidates(m *liveModel) []liveRoute {
+// candidates 按优先级分组，组内按权重排列。执行前还要重新检查健康状态并占用
+// 试探名额。session 非空时组内顺序由会话与权重确定，同一会话的追问与工具步骤
+// 因此落到同一条来源；为空时每次请求重新随机，管理端探测与旧客户端照旧分流。
+func (r *Router) candidates(m *liveModel, session string) []liveRoute {
 	if !m.Enabled {
 		return nil
 	}
@@ -177,7 +181,11 @@ func (r *Router) candidates(m *liveModel) []liveRoute {
 		for end < len(usable) && usable[end].Priority == usable[start].Priority {
 			end++
 		}
-		r.shuffle(usable[start:end])
+		if session == "" {
+			r.shuffle(usable[start:end])
+		} else {
+			sessionOrder(usable[start:end], session)
+		}
 		start = end
 	}
 	return usable
@@ -195,6 +203,26 @@ func weightedShuffle(rs []liveRoute) {
 		// u^(1/w) 越大越靠前；u 取 (0,1]。
 		keys[i] = math.Pow(1-rand.Float64(), 1/w)
 	}
+	sortByKey(rs, keys)
+}
+
+// sessionOrder 按会话给同一优先级内的候选排一个确定的顺序：会话与每条候选各算
+// 一个 (0,1] 的数，再按权重做同样的不放回抽样。同一会话每次得到同一个顺序，
+// 同组权重表示会话落到各条路由的比例，不再是每次请求的抽签比例；会话进入冷却
+// 或停用之后，它按这个顺序落到下一条还能用的候选上，顺序本身仍然稳定。
+func sessionOrder(rs []liveRoute, session string) {
+	if len(rs) < 2 {
+		return
+	}
+	keys := make([]float64, len(rs))
+	for i, rt := range rs {
+		keys[i] = math.Pow(sessionUnit(session, rt), 1/float64(max(rt.Weight, 1)))
+	}
+	sortByKey(rs, keys)
+}
+
+// sortByKey 按 key 从大到小重排 rs，顺序稳定。
+func sortByKey(rs []liveRoute, keys []float64) {
 	idx := make([]int, len(rs))
 	for i := range idx {
 		idx[i] = i
@@ -205,6 +233,15 @@ func weightedShuffle(rs []liveRoute) {
 		sorted[i] = rs[k]
 	}
 	copy(rs, sorted)
+}
+
+// sessionUnit 把会话与一条候选映射成 (0,1] 之间的数。同一会话与同一候选永远
+// 得到同一个数，换会话或换候选就换成另一组数。用 SHA-256 的高 53 位：散列均匀
+// 才能让加权抽样按权重分开会话，取 53 位是因为 float64 的尾数正好是 53 位。
+func sessionUnit(session string, rt liveRoute) float64 {
+	sum := sha256.Sum256([]byte(session + "\x00" + rt.Provider.ID + "\x00" + rt.UpstreamModel))
+	value := binary.BigEndian.Uint64(sum[:8]) >> 11
+	return (float64(value) + 1) / (float64(uint64(1)<<53) + 1)
 }
 
 func keyHint(key string) string {

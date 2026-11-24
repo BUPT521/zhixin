@@ -33,7 +33,7 @@ type testAPI struct {
 func (a testAPI) GetV1LlmModels(w http.ResponseWriter, r *http.Request) { a.p.Models(w, r) }
 func (a testAPI) GetV1LlmQuota(w http.ResponseWriter, r *http.Request)  { a.p.QuotaStatus(w, r) }
 func (a testAPI) PostV1LlmResponses(w http.ResponseWriter, r *http.Request, params api.PostV1LlmResponsesParams) {
-	a.p.Responses(w, r, params.XZhixinRoundBudgetMs)
+	a.p.Responses(w, r, RequestOptions{RoundBudgetMs: params.XZhixinRoundBudgetMs, SessionID: params.XZhixinSessionId})
 }
 func (a testAPI) PostV1LlmEmbeddings(w http.ResponseWriter, r *http.Request, _ api.PostV1LlmEmbeddingsParams) {
 	a.p.Embeddings(w, r)
@@ -535,7 +535,7 @@ func TestCandidatesOrder(t *testing.T) {
 		}
 		return strings.Join(s, ",")
 	}
-	if got := ids(r.candidates(m)); got != "a,b,c" {
+	if got := ids(r.candidates(m, "")); got != "a,b,c" {
 		t.Fatalf("按优先级排列并跳过停用与 key 损坏的来源：%s", got)
 	}
 	for range coolAfterFailures {
@@ -545,11 +545,11 @@ func TestCandidatesOrder(t *testing.T) {
 		}
 		r.health.complete(lease, false, healthOutcome{reason: "无法连接", scope: sourceFailure})
 	}
-	if got := ids(r.candidates(m)); got != "b,c" {
+	if got := ids(r.candidates(m, "")); got != "b,c" {
 		t.Fatalf("冷却中的来源应跳过：%s", got)
 	}
 	now = now.Add(coolBase)
-	if got := ids(r.candidates(m)); got != "a,b,c" {
+	if got := ids(r.candidates(m, "")); got != "a,b,c" {
 		t.Fatalf("冷却到期后按原优先级试探：%s", got)
 	}
 }

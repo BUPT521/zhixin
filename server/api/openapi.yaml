@@ -746,6 +746,15 @@ paths:
             空闲等待与每次尝试等待首个有效输出都收在这份预算以内；省略时只按本机
             时限执行。值 0 表示这一轮预算已经用完，服务端不再发起上游尝试。
           schema: { type: integer, format: int64, minimum: 0 }
+        - name: X-Zhixin-Session-Id
+          in: header
+          required: false
+          description: |
+            客户端为一条讨论生成的稳定标识，最长 64 个字符，只参与主用组内的路由
+            选择：同一讨论的追问与工具步骤因此落到同一条来源，复用上游已经处理过
+            的前缀。服务端按账号再散列一次，日志与上游都不携带原值；省略、空白或
+            超过 64 个字符时按没有标识处理，每次请求按权重重新随机。
+          schema: { type: string, maxLength: 64 }
       requestBody:
         required: true
         content:

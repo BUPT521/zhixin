@@ -162,7 +162,10 @@ class AiChatService implements BuddyAi {
         system: system,
         messages: messages,
         tools: tools.registry,
-        budget: LlmRequestBudget.answer(cancelToken: cancelToken),
+        budget: LlmRequestBudget.answer(
+          cancelToken: cancelToken,
+          sessionId: context.sessionId,
+        ),
         contextBudget: LlmContextBudget(current),
         onText: onText,
       );

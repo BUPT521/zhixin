@@ -260,6 +260,7 @@ class ContextService {
       evidence: evidenceHits,
       crossSessionNotes: crossSessionNotes,
       conversationFocus: conversationFocus,
+      sessionId: conversationId,
       sourceSearch: evidenceService == null
           ? null
           : (query, limit) async {

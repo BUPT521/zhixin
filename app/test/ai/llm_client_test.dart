@@ -323,6 +323,33 @@ void main() {
     expect(second, greaterThan(0));
   });
 
+  test('请求带上讨论标识，没有归属时不带', () async {
+    Future<String?> headerFor(LlmRequestBudget? template) async {
+      String? session;
+      final client = HttpLlmClient(
+        config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
+        budget: template,
+        httpClient: MockClient.streaming((request, body) async {
+          session = request.headers['X-Zhixin-Session-Id'];
+          return http.StreamedResponse(
+            Stream.value(utf8.encode('${textDelta('好')}${completed()}')),
+            200,
+            headers: {'content-type': 'text/event-stream'},
+          );
+        }),
+      );
+      await client.stream(system: 's', messages: _hi).drain<void>();
+      return session;
+    }
+
+    // 构造时给的期限模板每次请求会重启一份，讨论标识要跟着一起带过去。
+    expect(
+      await headerFor(LlmRequestBudget(sessionId: 'discussion-7')),
+      'discussion-7',
+    );
+    expect(await headerFor(null), isNull);
+  });
+
   test('正文之后的空闲超时按超时返回，已经显示的部分保留', () async {
     var requests = 0;
     final aborted = Completer<void>();

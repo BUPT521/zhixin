@@ -842,7 +842,7 @@ function addRouteRow(route, group) {
     }
   });
   const priority = el('select', { name: 'priority', onchange: () => moveRoute(row, priority.value) });
-  const weight = el('input', { name: 'weight', type: 'number', min: 1, max: 1000, step: 1, inputmode: 'numeric', value: route.weight ?? 1 });
+  const weight = el('input', { name: 'weight', type: 'number', min: 1, max: 1000, step: 1, inputmode: 'numeric', value: route.weight ?? 1, title: '同一讨论固定从同一条路由开始，权重决定会话落到各条路由的比例' });
   const batch = el('input', { name: 'max_batch', type: 'number', min: 0, max: 2048, step: 1, inputmode: 'numeric', value: route.max_batch ?? 0, title: '0 表示不拆分' });
   const enabled = el('input', { name: 'route_enabled', type: 'checkbox', checked: route.enabled ?? true });
   const row = el('div', { class: 'route-edit', 'data-position': suffix },
@@ -860,7 +860,7 @@ function addRouteRow(route, group) {
       priority,
     ),
     el('label', { class: 'route-field field-weight' },
-      el('span', { class: 'field-label' }, '权重'),
+      el('span', { class: 'field-label' }, '会话权重'),
       el('span', { class: 'weight-input' }, weight, el('span', { class: 'field-hint route-config-share', 'aria-hidden': 'true' })),
     ),
     el('label', { class: 'route-field field-num emb-only' },

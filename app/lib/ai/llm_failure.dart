@@ -93,14 +93,18 @@ class LlmRequestBudget {
     this.firstOutputTimeout = defaultFirstOutputTimeout,
     this.idleTimeout = defaultIdleTimeout,
     this.cancelToken,
+    this.sessionId,
   });
 
   /// 一次讨论回答：整段 90 秒，首字与空闲沿用默认值。
-  factory LlmRequestBudget.answer({LlmCancelToken? cancelToken}) =>
-      LlmRequestBudget(
-        timeout: const Duration(seconds: 90),
-        cancelToken: cancelToken,
-      );
+  factory LlmRequestBudget.answer({
+    LlmCancelToken? cancelToken,
+    String? sessionId,
+  }) => LlmRequestBudget(
+    timeout: const Duration(seconds: 90),
+    cancelToken: cancelToken,
+    sessionId: sessionId,
+  );
 
   /// 设置页连接测试：只发一次最小请求，15 秒内必须返回。
   factory LlmRequestBudget.probe() =>
@@ -118,6 +122,11 @@ class LlmRequestBudget {
   final Duration firstOutputTimeout;
   final Duration idleTimeout;
   final LlmCancelToken? cancelToken;
+
+  /// 这条讨论的稳定标识；不为空时随请求带给服务端，同一讨论的追问与工具步骤
+  /// 因此落到同一条模型来源。没有归属的请求为空。
+  final String? sessionId;
+
   final Stopwatch _clock = Stopwatch()..start();
   final _expired = Completer<void>();
   late final Future<void> abortTrigger = Future.any<void>([
@@ -132,6 +141,7 @@ class LlmRequestBudget {
     firstOutputTimeout: firstOutputTimeout,
     idleTimeout: idleTimeout,
     cancelToken: cancelToken,
+    sessionId: sessionId,
   );
 
   Duration get _remaining {
