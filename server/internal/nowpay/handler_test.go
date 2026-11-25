@@ -32,12 +32,8 @@ func (f *fakePurchases) InsertPurchaseLink(_ context.Context, _ string, purchase
 	return nil
 }
 
-type fakeLegacy struct{ balance int64 }
-
-func (f fakeLegacy) PurchaseBalance(context.Context, string) (int64, error) { return f.balance, nil }
-
-func newTestHandler(client *Client, purchases *fakePurchases, legacy LegacyBalance) *Handler {
-	handler := NewHandler(client, purchases, legacy, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 1000)
+func newTestHandler(client *Client, purchases *fakePurchases) *Handler {
+	handler := NewHandler(client, purchases, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 1000)
 	handler.limit, handler.global = ratelimit.Disabled(), ratelimit.Disabled()
 	return handler
 }
@@ -58,16 +54,16 @@ func decode[T any](t *testing.T, response *httptest.ResponseRecorder) T {
 	return value
 }
 
-func TestOverviewWithoutProductReturnsTheLegacyBalanceOnly(t *testing.T) {
-	handler := newTestHandler(nil, &fakePurchases{}, fakeLegacy{balance: 5000})
+func TestOverviewWithoutProductReturnsTheDefaultRatio(t *testing.T) {
+	handler := newTestHandler(nil, &fakePurchases{})
 	response := httptest.NewRecorder()
 	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
 	if response.Code != http.StatusOK {
 		t.Fatalf("未配置商品时应返回 200，得到 %d", response.Code)
 	}
 	view := decode[api.QuotaPurchaseOverview](t, response)
-	if view.Product != nil || view.BalancePoints != 0 || view.LegacyBalanceTokens != 5000 {
-		t.Fatalf("未配置商品时只回遗留余额: %+v", view)
+	if view.Product != nil || view.BalancePoints != 0 {
+		t.Fatalf("未配置商品时不回商品与积分: %+v", view)
 	}
 	if view.TokensPerPoint != 1000 {
 		t.Fatalf("未配置商品时仍按默认比例返回: %+v", view)
@@ -75,7 +71,7 @@ func TestOverviewWithoutProductReturnsTheLegacyBalanceOnly(t *testing.T) {
 }
 
 func TestOverviewReturnsTheConfiguredTokensPerPoint(t *testing.T) {
-	handler := NewHandler(nil, &fakePurchases{}, fakeLegacy{}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 500)
+	handler := NewHandler(nil, &fakePurchases{}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 500)
 	handler.limit, handler.global = ratelimit.Disabled(), ratelimit.Disabled()
 	response := httptest.NewRecorder()
 	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
@@ -92,7 +88,7 @@ func TestOverviewReportsProductStatusAndPointsBalance(t *testing.T) {
 		methodQuota: `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
 	}}
 	purchases := &fakePurchases{}
-	handler := newTestHandler(newTestClient(t, caller), purchases, fakeLegacy{balance: 200})
+	handler := newTestHandler(newTestClient(t, caller), purchases)
 	response := httptest.NewRecorder()
 	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
 	if response.Code != http.StatusOK {
@@ -105,8 +101,8 @@ func TestOverviewReportsProductStatusAndPointsBalance(t *testing.T) {
 	if len(view.Product.Options) != 1 || view.Product.Options[0].QuotaAmount != 100 {
 		t.Fatalf("档位应原样带出: %+v", view.Product.Options)
 	}
-	if view.BalancePoints != 55 || view.LegacyBalanceTokens != 200 {
-		t.Fatalf("余额与遗留余额都应返回: %+v", view)
+	if view.BalancePoints != 55 {
+		t.Fatalf("余额应返回: %+v", view)
 	}
 }
 
@@ -115,7 +111,7 @@ func TestOverviewFailsLoudlyWhenTheBalanceCannotBeRead(t *testing.T) {
 		methodCharge: `{"code":"10000","capability_status":"ENABLED","billing_mode":"QUANTITY","quota_unit":"POINT","charging_options":[]}`,
 		methodQuota:  `{"code":"20000","sub_code":"isp.unknow-error","sub_msg":"系统繁忙"}`,
 	}}
-	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{}, nil)
+	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
 	response := httptest.NewRecorder()
 	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
 	if response.Code != http.StatusServiceUnavailable {
@@ -124,7 +120,7 @@ func TestOverviewFailsLoudlyWhenTheBalanceCannotBeRead(t *testing.T) {
 }
 
 func TestPurchaseRequiresVerifiedContact(t *testing.T) {
-	handler := newTestHandler(newTestClient(t, &fakeCaller{}), &fakePurchases{}, nil)
+	handler := newTestHandler(newTestClient(t, &fakeCaller{}), &fakePurchases{})
 	r := httptest.NewRequest(http.MethodPost, "/v1/me/model-quota-purchases", strings.NewReader(`{}`))
 	r = r.WithContext(auth.WithPrincipal(r.Context(), auth.Principal{UserID: "user_1"}))
 	response := httptest.NewRecorder()
@@ -138,7 +134,7 @@ func TestPurchaseRejectsProductsThatAreNotOnSale(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodCharge: `{"code":"10000","capability_status":"PENDING","billing_mode":"QUANTITY","quota_unit":"POINT","charging_options":[{"sku_id":"S1","display_name":"100 积分","price":"6.00","quota_amount":100}]}`,
 	}}
-	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{}, nil)
+	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
 	response := httptest.NewRecorder()
 	handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", `{"sku_id":"S1"}`))
 	if response.Code != http.StatusConflict {
@@ -150,7 +146,7 @@ func TestPurchaseRejectsUnknownSKU(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodCharge: `{"code":"10000","capability_status":"ENABLED","billing_mode":"QUANTITY","quota_unit":"POINT","charging_options":[{"sku_id":"S1","display_name":"100 积分","price":"6.00","quota_amount":100}]}`,
 	}}
-	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{}, nil)
+	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
 	response := httptest.NewRecorder()
 	handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", `{"sku_id":"S9"}`))
 	if response.Code != http.StatusConflict {
@@ -164,7 +160,7 @@ func TestPurchaseReturnsTheHostedLinkAndReusesIt(t *testing.T) {
 		methodPurchase: `{"code":"10000","purchase_url":"alipays://platformapi/startapp?appId=1","purchase_qr_code":"https://mobilecodec.alipay.com/show.htm?code=x","expire_time":"2026-11-25 10:30:00"}`,
 	}}
 	purchases := &fakePurchases{}
-	handler := newTestHandler(newTestClient(t, caller), purchases, nil)
+	handler := newTestHandler(newTestClient(t, caller), purchases)
 	response := httptest.NewRecorder()
 	handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", `{"sku_id":"S1"}`))
 	if response.Code != http.StatusOK {
@@ -192,7 +188,7 @@ func TestBalanceEndpointReturnsTheCurrentPoints(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodQuota: `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
 	}}
-	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{}, nil)
+	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
 	response := httptest.NewRecorder()
 	handler.Balance(response, request(http.MethodGet, "/v1/me/model-quota-purchases/quota", ""))
 	balance := decode[api.QuotaBalance](t, response)

@@ -91,7 +91,6 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
         if (purchases == null) return;
         _purchases = QuotaPurchaseOverview(
           balancePoints: balance.remaining,
-          legacyBalanceTokens: purchases.legacyBalanceTokens,
           tokensPerPoint: purchases.tokensPerPoint,
           product: purchases.product,
           latestPurchase: purchases.latestPurchase,
@@ -147,8 +146,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     final product = purchases.product;
     final options = product?.purchasable == true ? product!.options : const [];
     final hasPoints = purchases.balancePoints > 0;
-    final hasLegacy = purchases.legacyBalanceTokens > 0;
-    if (product == null && !hasPoints && !hasLegacy) {
+    if (product == null && !hasPoints) {
       return const SizedBox.shrink();
     }
     final theme = context.zhixin;
@@ -167,7 +165,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
         legend =
             '1 积分 = ${tokenAmount(ratio)} 计费 token；'
             '今天的免费额度是 ${tokenAmount(daily)} 计费 token，'
-            '约 ${groupDigits(daily ~/ ratio)} 积分。';
+            '约 ${groupDigits(quotaPoints(daily, ratio))} 积分。';
       }
     }
     return Padding(
@@ -179,11 +177,6 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text('可用积分 ${groupDigits(purchases.balancePoints)} 分'),
-              if (hasLegacy)
-                Text(
-                  '已购聊天额度 '
-                  '${tokenAmount(purchases.legacyBalanceTokens)} 计费 token',
-                ),
               if (legend != null)
                 Text(
                   legend,

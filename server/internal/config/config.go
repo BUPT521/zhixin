@@ -32,9 +32,9 @@ type Config struct {
 	// DatabaseURL is the PostgreSQL DSN. Empty means the in-memory store,
 	// which is only for local development and tests.
 	DatabaseURL string
-	Alipay      *payment.Gateway
-	AlipayOffer payment.Offer
-	// NowPay 是即刻收直连的商品配置；为空表示不卖积分包，购买接口只回本地余额。
+	// Alipay 是即刻收复用的支付宝应用凭证；为空表示这个实例没有配置收款。
+	Alipay *payment.Gateway
+	// NowPay 是即刻收直连的商品配置；为空表示不卖积分包，购买接口只回空余额。
 	NowPay *NowPayConfig
 	// Location decides where a "day" starts for the model quota.
 	Location *time.Location
@@ -198,20 +198,14 @@ type NowPayConfig struct {
 	// CallbackURL 只在购买页返回之后跳转用，不是到账通知；留空时由客户端自己回到
 	// 应用。配置时必须是 HTTPS 地址。
 	CallbackURL string
-	// TokensPerPoint 是一个积分覆盖的计费 token 数：每轮结束按 Usage.Billed 折算，
-	// 向上取整核销。默认 1000。
-	TokensPerPoint int64
 }
 
-// parseNowPay 读即刻收的三个配置项并做自检。商品 ID 走 32 个字符以内的字母数字与
-// 连接符，保持与支付宝返回的形态一致，也避免把配置错误带进签名。
+// parseNowPay 读即刻收的商品配置并做自检。商品 ID 走 128 个字符以内的字母数字与
+// 连接符，保持与支付宝返回的形态一致，也避免把配置错误带进签名。积分折算比例在
+// LLMConfig 里统一读取，购买、核销与前台展示共用同一个值。
 func parseNowPay(get func(string, string) string, productID string) (*NowPayConfig, error) {
 	if len(productID) > 128 || !productIDPattern.MatchString(productID) {
 		return nil, errors.New("ZHIXIN_NOWPAY_PRODUCT_ID 必须是「即刻收」小程序里的商品 ID")
-	}
-	perPoint, err := strconv.ParseInt(get("ZHIXIN_NOWPAY_TOKENS_PER_POINT", "1000"), 10, 64)
-	if err != nil || perPoint < 1 || perPoint > 1000000000 {
-		return nil, errors.New("ZHIXIN_NOWPAY_TOKENS_PER_POINT 必须是 1 到 10 亿之间的整数")
 	}
 	callback := strings.TrimSpace(get("ZHIXIN_NOWPAY_CALLBACK_URL", ""))
 	if callback != "" {
@@ -221,7 +215,7 @@ func parseNowPay(get func(string, string) string, productID string) (*NowPayConf
 			return nil, errors.New("ZHIXIN_NOWPAY_CALLBACK_URL 必须是 HTTPS 地址，且不带账号信息与片段")
 		}
 	}
-	return &NowPayConfig{ProductID: productID, CallbackURL: callback, TokensPerPoint: perPoint}, nil
+	return &NowPayConfig{ProductID: productID, CallbackURL: callback}, nil
 }
 
 var productIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{4,128}$`)
@@ -237,6 +231,9 @@ type LLMConfig struct {
 	// DailyTokens is the per-account daily chat token budget. The real number
 	// is still to be decided (ADR-0008); this is only a configurable default.
 	DailyTokens int64
+	// TokensPerPoint 是一个积分覆盖的计费 token 数：即刻收按它把 Usage.Billed
+	// 折算成积分核销，客户端按它把 token 用量换算成积分展示（ADR-0068）。
+	TokensPerPoint int64
 	// InstanceDailyTokens 是整个实例一天的总 token 预算；用尽之后所有账号的
 	// 托管请求都返回 429，防止单个实例的提供方账单失控。
 	InstanceDailyTokens int64
@@ -416,6 +413,7 @@ func Load(getenv func(string) string) (Config, error) {
 		LLM: LLMConfig{
 			RestrictProviders:         get("ZHIXIN_DATABASE_URL", "") != "",
 			DailyTokens:               num("ZHIXIN_LLM_DAILY_TOKENS", "320000"),
+			TokensPerPoint:            num("ZHIXIN_TOKENS_PER_POINT", "1000"),
 			InstanceDailyTokens:       num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "32000000"),
 			MaxRequestBytes:           num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
 			RequireVerifiedContact:    get("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1") == "1",
@@ -444,6 +442,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.LLM.ForegroundReserved < 0 {
 		errs = append(errs, errors.New("ZHIXIN_LLM_FOREGROUND_RESERVED: want a non-negative number"))
+	}
+	if cfg.LLM.TokensPerPoint > 1000000000 {
+		errs = append(errs, errors.New("ZHIXIN_TOKENS_PER_POINT 必须是 1 到 10 亿之间的整数"))
 	}
 	if cfg.LLM.BackgroundInstancePercent < 0 || cfg.LLM.BackgroundInstancePercent > 100 {
 		errs = append(errs, errors.New("ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT: want 0 to 100"))
@@ -502,37 +503,20 @@ func Load(getenv func(string) string) (Config, error) {
 			errs = append(errs, errors.New("ZHIXIN_TELEMETRY_SECRET is required when ZHIXIN_DATABASE_URL is set: install hashes would change on restart"))
 		}
 	}
-	amountFen, amountErr := strconv.ParseInt(get("ZHIXIN_ALIPAY_QUOTA_AMOUNT_FEN", "0"), 10, 64)
-	tokens, tokensErr := strconv.ParseInt(get("ZHIXIN_ALIPAY_QUOTA_TOKENS", "0"), 10, 64)
-	cfg.AlipayOffer = payment.Offer{AmountFen: amountFen, Tokens: tokens}
-	if (cfg.AlipayOffer.AmountFen == 0) != (cfg.AlipayOffer.Tokens == 0) ||
-		amountErr != nil || tokensErr != nil || amountFen < 0 || tokens < 0 ||
-		amountFen > 99999999 || tokens > 1000000000000 {
-		errs = append(errs, errors.New("支付宝额度包价格（分）与 token 数须同时配置，或同时设为 0"))
-	}
 	appID := get("ZHIXIN_ALIPAY_APP_ID", "")
-	sellerID := get("ZHIXIN_ALIPAY_SELLER_ID", "")
-	notifyURL := get("ZHIXIN_ALIPAY_NOTIFY_URL", "")
 	privateKey := get("ZHIXIN_ALIPAY_PRIVATE_KEY", "")
 	publicKey := get("ZHIXIN_ALIPAY_PUBLIC_KEY", "")
-	if appID != "" || sellerID != "" || notifyURL != "" || privateKey != "" || publicKey != "" || cfg.AlipayOffer.Tokens > 0 {
-		if cfg.DatabaseURL == "" {
-			errs = append(errs, errors.New("支付宝收款需要 ZHIXIN_DATABASE_URL 保存订单和额度"))
-		}
-		mode := get("ZHIXIN_ALIPAY_MODE", "sandbox")
-		if mode != "sandbox" && mode != "production" {
-			errs = append(errs, errors.New("ZHIXIN_ALIPAY_MODE 必须是 sandbox 或 production"))
-		}
-		gateway, err := payment.NewGateway(appID, sellerID, notifyURL, privateKey, publicKey, mode == "sandbox")
+	if appID != "" || privateKey != "" || publicKey != "" {
+		gateway, err := payment.NewGateway(appID, privateKey, publicKey)
 		if err != nil {
 			errs = append(errs, err)
 		}
 		cfg.Alipay = gateway
 	}
 
-	// 即刻收直连沿用同一个支付宝应用的应用凭证：网关、RSA2 签名与公共参数与 APP
-	// 支付一样，商品 ID 从「即刻收」小程序商品详情复制，应用不能自己生成
-	// （ADR-0067）。没有商品 ID 表示不卖积分包。
+	// 即刻收直连沿用同一个支付宝应用的应用凭证：网关、RSA2 签名与公共参数相同，
+	// 商品 ID 从「即刻收」小程序商品详情复制，应用不能自己生成（ADR-0067）。
+	// 没有商品 ID 表示不卖积分包。
 	productID := strings.TrimSpace(get("ZHIXIN_NOWPAY_PRODUCT_ID", ""))
 	if productID != "" {
 		nowPay, err := parseNowPay(get, productID)

@@ -24,7 +24,6 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
-	"github.com/BUPT521/zhixin/server/internal/payment"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
@@ -41,16 +40,15 @@ const ClientSchemaVersion = 32
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
 type Stores struct {
-	Auth     auth.Store
-	Sync     syncsvc.Store
-	Backups  backup.Store
-	Blobs    blobs.Store
-	Quota    llmproxy.Quota
-	Usage    llmproxy.UsageStore
-	Payments payment.Store
+	Auth    auth.Store
+	Sync    syncsvc.Store
+	Backups backup.Store
+	Blobs   blobs.Store
+	Quota   llmproxy.Quota
+	Usage   llmproxy.UsageStore
 	// Purchases 保存即刻收的购买入口与积分核销流水；只有 PostgreSQL 装配时提供。
 	Purchases nowpay.PurchaseStore
-	// NowPay 是即刻收的调用入口；没有配置商品时保持为空，购买接口只返回本地余额。
+	// NowPay 是即刻收的调用入口；没有配置商品时保持为空，购买接口只返回空余额。
 	NowPay *nowpay.Client
 	// Catalog 保存管理后台配置的模型来源与路由（ADR-0029）。
 	Catalog llmproxy.Catalog
@@ -102,25 +100,20 @@ func MemoryStores() Stores {
 	}
 }
 
-// newPurchaseHandler 装配购买接口。即时收的商品 ID 来自配置，没有配置时接口只回
-// 本地余额；APP 支付时期的余额仍从 Payments 读，用来先于积分使用（ADR-0065）。
+// newPurchaseHandler 装配购买接口。即刻收的商品 ID 来自配置，没有配置时接口只回
+// 空余额与档位。
 func newPurchaseHandler(cfg config.Config, st Stores, log *slog.Logger) *nowpay.Handler {
-	var legacy nowpay.LegacyBalance
-	if st.Payments != nil {
-		legacy = st.Payments
-	}
 	callback := ""
-	tokensPerPoint := int64(1000)
+	tokensPerPoint := cfg.LLM.TokensPerPoint
 	if cfg.NowPay != nil {
 		callback = cfg.NowPay.CallbackURL
-		tokensPerPoint = cfg.NowPay.TokensPerPoint
 		if st.NowPay == nil {
-			// 配了商品却没有客户端时购买接口只会回本地余额，等于卖不了；这条日志
+			// 配了商品却没有客户端时购买接口只会回空余额，等于卖不了；这条日志
 			// 让装配漏项在启动时就看得见，而不是等用户点购买才发现。
-			log.Error("ZHIXIN_NOWPAY_PRODUCT_ID is set but no nowpay client is wired: purchases only return the legacy balance")
+			log.Error("ZHIXIN_NOWPAY_PRODUCT_ID is set but no nowpay client is wired: purchases only return an empty balance")
 		}
 	}
-	return nowpay.NewHandler(st.NowPay, st.Purchases, legacy, callback, log, cfg.RateLimitKeys, tokensPerPoint)
+	return nowpay.NewHandler(st.NowPay, st.Purchases, callback, log, cfg.RateLimitKeys, tokensPerPoint)
 }
 
 // DeleteAccountData 把各存储的账号清理合成一次操作：auth.Service 在删除账号行

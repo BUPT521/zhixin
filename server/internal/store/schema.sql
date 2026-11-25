@@ -282,46 +282,19 @@ CREATE TABLE install_active (
 -- 按账号调整每日模型额度：没有行或者某一列为空时用 ZHIXIN_LLM_DAILY_TOKENS
 -- 与 ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS。管理员直接写这张表调整个别账号，不重启
 -- 服务。
-CREATE TABLE model_quota_purchase (
-  id          TEXT PRIMARY KEY,
-  user_id     TEXT REFERENCES app_user(id) ON DELETE SET NULL,
-  amount_fen  BIGINT NOT NULL CHECK (amount_fen > 0),
-  tokens      BIGINT NOT NULL CHECK (tokens > 0),
-  app_id      TEXT NOT NULL,
-  seller_id   TEXT NOT NULL,
-  sandbox     BOOLEAN NOT NULL,
-  status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'closed')),
-  trade_id    TEXT,
-  created_at  TIMESTAMPTZ NOT NULL,
-  expires_at  TIMESTAMPTZ NOT NULL,
-  UNIQUE (sandbox, trade_id),
-  CHECK (expires_at > created_at),
-  CHECK ((status = 'pending') = (trade_id IS NULL))
-);
-CREATE INDEX model_quota_purchase_user_created_idx
-  ON model_quota_purchase (user_id, sandbox, created_at DESC, id DESC) WHERE user_id IS NOT NULL;
-
-CREATE TABLE model_quota_wallet (
-  user_id        TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
-  sandbox        BOOLEAN NOT NULL,
-  balance_tokens BIGINT NOT NULL CHECK (balance_tokens >= 0),
-  PRIMARY KEY (user_id, sandbox)
-);
-
-CREATE TABLE model_quota_paid_usage (
-  user_id TEXT NOT NULL,
-  sandbox BOOLEAN NOT NULL,
-  day     DATE NOT NULL,
-  tokens  BIGINT NOT NULL CHECK (tokens >= 0),
-  PRIMARY KEY (user_id, sandbox, day),
-  FOREIGN KEY (user_id, sandbox) REFERENCES model_quota_wallet(user_id, sandbox) ON DELETE CASCADE
+CREATE TABLE llm_quota (
+  user_id                 TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  daily_tokens            BIGINT CHECK (daily_tokens > 0),
+  embedding_daily_tokens  BIGINT CHECK (embedding_daily_tokens > 0),
+  note                    TEXT NOT NULL DEFAULT '',
+  updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- 即刻收积分核销流水（ADR-0067）。id 同时是提交给即刻收的 out_request_no：结果
 -- 未知时只能用原号查询或重试，换号会多扣一次，所以幂等号必须落在本地。points 按
--- 「1 积分 = 配置的计费 token 数」向上取整折算，只对超出免费额度与遗留已购余额的
--- 部分申请；status 为 failed 的流水不再计入当天已申请量，下一次结算重新算差额。
--- 账号删除时解除关联而不删行，留作对账。
+-- 「1 积分 = 配置的计费 token 数」向上取整折算，只对超出免费额度的部分申请；
+-- status 为 failed 的流水不再计入当天已申请量，下一次结算重新算差额。账号删除时
+-- 解除关联而不删行，留作对账。
 CREATE TABLE nowpay_charge (
   id            TEXT PRIMARY KEY,
   user_id       TEXT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -349,14 +322,6 @@ CREATE TABLE nowpay_purchase (
 );
 CREATE INDEX nowpay_purchase_user_created_idx
   ON nowpay_purchase (user_id, created_at DESC) WHERE user_id IS NOT NULL;
-
-CREATE TABLE llm_quota (
-  user_id                 TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
-  daily_tokens            BIGINT CHECK (daily_tokens > 0),
-  embedding_daily_tokens  BIGINT CHECK (embedding_daily_tokens > 0),
-  note                    TEXT NOT NULL DEFAULT '',
-  updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 
 -- 附件索引：字节在对象存储的 attachments/<user_id>/<sha256>，这张表只记“这个
 -- 账号有这份内容、占多少字节”。账号总量配额按它求和；同一账号相同内容只有一行，

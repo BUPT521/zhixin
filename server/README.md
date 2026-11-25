@@ -84,7 +84,7 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 |---|---|---|
 | `api_key` | 模型代理的接入密钥，给用户自己的脚本或第三方工具调用 `/v1/llm` 下的模型接口，不参与登录，也不持有学习数据；与访问令牌共用 Bearer 头，靠 `zx_` 前缀区分 | `user_id` 外键级联删除，`key_hash` 唯一且只存整个密钥的 SHA-256，`prefix` 是前 11 位用于展示，`revoked_at` 记录撤销并保留这一行，撤销超过 30 天的行由每日清理删除，`last_used_at` 按十分钟粒度更新；没有有效期列，每账号最多 20 把有效密钥，删号时随外键级联删除 |
 
-增加支付宝支付的三张表后，服务端共 28 张表；[ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md) 又增加 `nowpay_charge` 与 `nowpay_purchase` 两张，现在是 30 张表，购买数据的归属与用途见[即刻收收款](#即刻收收款)。
+增加即刻收的 `nowpay_charge` 与 `nowpay_purchase` 两张表后，服务端共 27 张表，购买数据的归属与用途见[即刻收收款](#即刻收收款)。
 
 | 表 | 用途 | 关键列与约束 |
 |---|---|---|
@@ -231,28 +231,23 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 ## 即刻收收款
 
-聊天额度按支付宝「即刻收」直连模式的积分包卖出，见 [ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md)。商品、收费模式、档位与价格都在「即刻收」小程序里配置，审核发布之后把商品详情页的 `out_product_id` 填进配置；应用不能自己定价，也不能生成商品 ID。三档的名称、价格与发放积分见 [00 第 7 章](../docs/00-产品定义.md#7-边界) 与 [ADR-0068](../docs/adr/0068-聊天积分包的档位与价格.md)，应用不保存价格，改档位只改小程序。概览接口同时返回一个积分覆盖的计费 token 数（`tokens_per_point`，取自 `ZHIXIN_NOWPAY_TOKENS_PER_POINT`），客户端据此把积分换算成 token 与天数。网关、RSA2 签名与公共参数与 APP 支付完全一样，所以服务端复用同一个支付宝应用的应用凭证，`internal/payment` 的签名与验签是唯一实现，`internal/nowpay` 只按接口名提交 `biz_content`。
+聊天额度按支付宝「即刻收」直连模式的积分包卖出，见 [ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md)。商品、收费模式、档位与价格都在「即刻收」小程序里配置，审核发布之后把商品详情页的 `out_product_id` 填进配置；应用不能自己定价，也不能生成商品 ID。三档的名称、价格与发放积分见 [00 第 7 章](../docs/00-产品定义.md#7-边界) 与 [ADR-0068](../docs/adr/0068-聊天积分包的档位与价格.md)，应用不保存价格，改档位只改小程序。概览接口与额度接口都返回一个积分覆盖的计费 token 数（`tokens_per_point`，取自 `ZHIXIN_TOKENS_PER_POINT`），客户端据此把积分换算成 token 与天数，也把当天用量换算成积分展示。网关、RSA2 签名与公共参数沿用支付宝开放平台的同一套应用凭证，`internal/payment` 的签名与验签是唯一实现，`internal/nowpay` 只按接口名提交 `biz_content`。
 
 服务端用到五个接口：`charge.query` 查收费能力与档位，`quota.query` 查积分余额，`purchase.create` 取托管购买页链接，`quota.verify` 核销，`quota.refresh` 用原请求号查询核销结果。买断与时长包要用的 `purchase.consult` 没有接，因为商品按积分包配置。即刻收的响应把中文按 GB18030 回，请求里写 `charset=utf-8` 也不改，所以网关先验签再转码，调用方拿到的是 UTF-8；签名覆盖的始终是原始字节。
 
-契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与遗留余额，`POST /v1/me/model-quota-purchases` 取购买链接，`GET /v1/me/model-quota-purchases/quota` 只查余额。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；`internal/payment` 的通知与查单处理器、Android 侧的 SDK 通道都保留着，需要切回 APP 支付时接线即可。
+契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与折算比例，`POST /v1/me/model-quota-purchases` 取购买链接，`GET /v1/me/model-quota-purchases/quota` 只查余额。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；通知与查单处理器、Android 侧的 SDK 通道、订单表与钱包表都已删除，`internal/payment` 只保留签名、验签与网关调用。
 
 `nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，同一账号同一档位在链接有效期内复用。两张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
 
-核销在交付之后。每轮对话结算提交之后，服务端按当天用量算出应当由积分承担的计费 token 数（先减免费额度，再减 `model_quota_wallet` 里遗留的已购用量），按“一个积分等于 `ZHIXIN_NOWPAY_TOKENS_PER_POINT` 个计费 token”向上取整，差额写一条 `pending` 流水并排进核销队列。`SUCCEEDED` 记成功；`FAILED` 与 `NOW_PAY_QUOTA_INSUFFICIENT` 记失败，下一次结算重新算差额；`PROCESSING`、超时与网关错误保持原状态，下一轮对话开工前用 `quota.refresh` 补查。核销不提供撤销与返还，交付失败时只能由下一次结算的差额或人工处理。
+核销在交付之后。每轮对话结算提交之后，服务端按当天用量算出应当由积分承担的计费 token 数（先减免费额度，超出部分才折成积分），按“一个积分等于 `ZHIXIN_TOKENS_PER_POINT` 个计费 token”向上取整，差额写一条 `pending` 流水并排进核销队列。`SUCCEEDED` 记成功；`FAILED` 与 `NOW_PAY_QUOTA_INSUFFICIENT` 记失败，下一次结算重新算差额；`PROCESSING`、超时与网关错误保持原状态，下一轮对话开工前用 `quota.refresh` 补查。核销不提供撤销与返还，交付失败时只能由下一次结算的差额或人工处理。
 
 | 环境变量 | 用途 |
 |---|---|
-| `ZHIXIN_ALIPAY_MODE` | `sandbox`（默认）或 `production`；即刻收只有正式网关，联调时保持 `production` |
 | `ZHIXIN_ALIPAY_APP_ID` | 支付宝应用 ID，与即刻收商品属于同一商户 |
-| `ZHIXIN_ALIPAY_SELLER_ID` | 与该应用配套的收款方支付宝用户 ID |
 | `ZHIXIN_ALIPAY_PRIVATE_KEY` | RSA2 应用私钥，支持 PEM 或 Base64 DER |
 | `ZHIXIN_ALIPAY_PUBLIC_KEY` | 支付宝公钥，支持 PEM 或 Base64 DER |
-| `ZHIXIN_ALIPAY_NOTIFY_URL` | 支付宝可访问的 HTTPS 通知地址；APP 支付停售后只剩配置校验，切回时才用到 |
-| `ZHIXIN_ALIPAY_QUOTA_AMOUNT_FEN` | APP 支付的单份售价，单位分；停售时与下一项同时设 0 |
-| `ZHIXIN_ALIPAY_QUOTA_TOKENS` | APP 支付的单份发放量；设 0 表示停售新单，遗留余额继续可用 |
+| `ZHIXIN_TOKENS_PER_POINT` | 一个积分覆盖的计费 token 数，默认 `1000`；核销与前台展示共用 |
 | `ZHIXIN_NOWPAY_PRODUCT_ID` | 「即刻收」小程序里的商品 ID；为空表示不卖积分包 |
-| `ZHIXIN_NOWPAY_TOKENS_PER_POINT` | 一个积分覆盖的计费 token 数，默认 `1000` |
 | `ZHIXIN_NOWPAY_CALLBACK_URL` | 可选，购买页返回后的跳转地址，必须是 HTTPS；它不是到账通知 |
 
 配置了商品 ID 时启动会检查 `nowpay_charge` 与 `nowpay_purchase` 两张表是否存在，缺表直接退出。在独立实例上先用增量语句建表，再改 `api.env` 并重启，核对 `/readyz` 返回 200。核对购买通道时用已验证邮箱的账号在真机上买一笔最小档位：`GET /v1/me/model-quota-purchases` 的 `balance_points` 增加，客户端回到前台后余额跟着刷新；再发一次对话，`nowpay_charge` 出现一条 `succeeded` 的流水，`quota.query` 的剩余积分按 `Usage.Billed` 折算后减少；同一轮重复发请求不会多扣，`PROCESSING` 时补查用的是同一行的 `id`。

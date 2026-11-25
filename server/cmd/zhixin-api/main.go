@@ -49,9 +49,7 @@ func run(log *slog.Logger) error {
 			return err
 		}
 		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{
-			Objects: objects, PurchasedQuotaEnabled: cfg.Alipay != nil,
-			PurchasedQuotaSandbox: cfg.Alipay != nil && cfg.Alipay.Sandbox(),
-			Log:                   log,
+			Objects: objects, Log: log,
 		})
 		if err != nil {
 			return err
@@ -59,14 +57,6 @@ func run(log *slog.Logger) error {
 		defer pgStore.Close()
 		if cfg.ApplySchema {
 			if err := pgStore.ApplySchema(context.Background()); err != nil {
-				return err
-			}
-		}
-		if cfg.Alipay != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			err := pgStore.CheckPurchaseSchema(ctx)
-			cancel()
-			if err != nil {
 				return err
 			}
 		}
@@ -81,7 +71,7 @@ func run(log *slog.Logger) error {
 			if err != nil {
 				return err
 			}
-			meter, err = nowpay.NewMeter(client, pgStore, cfg.NowPay.TokensPerPoint, log)
+			meter, err = nowpay.NewMeter(client, pgStore, cfg.LLM.TokensPerPoint, log)
 			if err != nil {
 				return err
 			}
@@ -116,9 +106,6 @@ func run(log *slog.Logger) error {
 				}
 				return objects.Ping(ctx)
 			},
-		}
-		if cfg.Alipay != nil {
-			stores.Payments = pgStore
 		}
 		// 即刻收的购买入口、流水与调用入口在整体装配之后补上：这里的赋值必须在
 		// stores 赋值之后，否则会被上面那份字面量覆盖掉。

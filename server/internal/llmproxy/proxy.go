@@ -206,7 +206,15 @@ func (p *Proxy) Models(w http.ResponseWriter, r *http.Request) {
 func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 	pr := auth.MustPrincipal(r.Context())
 	day := p.day()
-	out := api.LLMQuota{Day: openapi_types.Date{Time: p.dayTime()}}
+	// 比例缺失时按契约的默认值一千返回，客户端才不会把 0 当成有效比例算出 0 积分。
+	tokensPerPoint := p.cfg.TokensPerPoint
+	if tokensPerPoint <= 0 {
+		tokensPerPoint = 1000
+	}
+	out := api.LLMQuota{
+		Day:            openapi_types.Date{Time: p.dayTime()},
+		TokensPerPoint: tokensPerPoint,
+	}
 	for _, k := range []Kind{KindChat, KindEmbedding} {
 		used, err := p.quota.Used(r.Context(), pr.UserID, day, k)
 		if err != nil {

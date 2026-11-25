@@ -611,6 +611,7 @@ class ServerQuota {
     required this.dailyTokens,
     this.embeddingUsedTokens = 0,
     this.embeddingDailyTokens = 0,
+    this.tokensPerPoint,
   });
 
   factory ServerQuota.fromJson(Map<String, Object?> json) => ServerQuota(
@@ -620,17 +621,27 @@ class ServerQuota {
     embeddingUsedTokens: (json['embedding_used_tokens'] as num?)?.toInt() ?? 0,
     embeddingDailyTokens:
         (json['embedding_daily_tokens'] as num?)?.toInt() ?? 0,
+    tokensPerPoint: _ratio(json['tokens_per_point']),
   );
+
+  /// 比例缺失或不是正数时按缺失处理，界面退回按 token 显示，不显示成 0 积分。
+  static int? _ratio(Object? value) {
+    final number = (value as num?)?.toInt();
+    return number != null && number > 0 ? number : null;
+  }
 
   final String day;
 
-  /// 聊天当天已用与每日额度。
+  /// 聊天当天已用与每日额度，按计费 token 计；界面按 [tokensPerPoint] 折成积分。
   final int usedTokens;
   final int dailyTokens;
 
   /// 嵌入当天已用与每日额度；旧版服务端没有这两项，读作 0。
   final int embeddingUsedTokens;
   final int embeddingDailyTokens;
+
+  /// 一个积分覆盖的计费 token 数；旧版服务端不返回时为 null，这时界面只显示 token。
+  final int? tokensPerPoint;
 }
 
 /// 服务端模型的用途：聊天模型给回答用，嵌入模型给语义索引用。
@@ -1330,7 +1341,6 @@ class ServerClient {
     final latest = json['latest_purchase'] as Map<String, Object?>?;
     return QuotaPurchaseOverview(
       balancePoints: json['balance_points'] as int,
-      legacyBalanceTokens: json['legacy_balance_tokens'] as int,
       tokensPerPoint: (json['tokens_per_point'] as num?)?.toInt(),
       product: product == null ? null : _quotaProduct(product),
       latestPurchase: latest == null ? null : _quotaLink(latest),

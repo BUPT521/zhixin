@@ -22,4 +22,14 @@ void main() {
     expect(groupDigits(9000), '9,000');
     expect(groupDigits(0), '0');
   });
+
+  test('计费 token 按比例折成积分并向上取整', () {
+    expect(quotaPoints(0, 1000), 0);
+    expect(quotaPoints(1000, 1000), 1);
+    expect(quotaPoints(1001, 1000), 2);
+    expect(quotaPoints(320000, 1000), 320);
+    expect(quotaPoints(12480, 1000), 13);
+    expect(quotaPoints(1000, null), 0);
+    expect(quotaPoints(1000, 0), 0);
+  });
 }

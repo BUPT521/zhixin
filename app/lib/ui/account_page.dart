@@ -746,6 +746,43 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  /// 聊天额度按积分显示：服务端只报计费 token，折算比例由 `tokens_per_point` 给出。
+  /// 旧版服务端没有这一项时退回 token，避免把“不知道比例”显示成 0 积分。
+  String _chatQuotaText() {
+    final quota = _quota;
+    if (quota == null) return '额度暂时无法读取';
+    final ratio = quota.tokensPerPoint;
+    if (ratio == null) {
+      return '聊天今日已用 ${quota.usedTokens} token · '
+          '每日免费额度 ${quota.dailyTokens} token';
+    }
+    return '聊天今日已用 ${quotaPoints(quota.usedTokens, ratio)} 积分 · '
+        '每日免费额度 ${quotaPoints(quota.dailyTokens, ratio)} 积分';
+  }
+
+  String _embeddingQuotaText() {
+    final quota = _quota;
+    if (quota == null) return '';
+    final ratio = quota.tokensPerPoint;
+    if (ratio == null) {
+      return '嵌入今日已用 ${quota.embeddingUsedTokens} / '
+          '${quota.embeddingDailyTokens} token';
+    }
+    return '嵌入今日已用 '
+        '${quotaPoints(quota.embeddingUsedTokens, ratio)} / '
+        '${quotaPoints(quota.embeddingDailyTokens, ratio)} 积分';
+  }
+
+  String _quotaDetailText() {
+    final quota = _quota;
+    if (quota == null) return '可以稍后重新进入这一页；备份与同步不受影响。';
+    final ratio = quota.tokensPerPoint;
+    final scale = ratio == null
+        ? ''
+        : '1 积分 = ${groupDigits(ratio)} 计费 token，用量向上取整；';
+    return '$scale按 ${quota.day} 统计，重置时间以服务端时区为准。';
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
@@ -1186,24 +1223,13 @@ class _AccountPageState extends State<AccountPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                _quota == null
-                    ? '额度暂时无法读取'
-                    : '聊天今日已用 ${_quota!.usedTokens} token · 每日免费额度 ${_quota!.dailyTokens} token',
-                style: theme.text.bodyMedium,
-              ),
+              Text(_chatQuotaText(), style: theme.text.bodyMedium),
               // 旧版服务端不返回嵌入额度，读作 0，这时不显示这一行。
               if ((_quota?.embeddingDailyTokens ?? 0) > 0)
-                Text(
-                  '嵌入今日已用 ${_quota!.embeddingUsedTokens} / '
-                  '${_quota!.embeddingDailyTokens} token',
-                  style: theme.text.bodyMedium,
-                ),
+                Text(_embeddingQuotaText(), style: theme.text.bodyMedium),
               SizedBox(height: theme.space.xs),
               Text(
-                _quota == null
-                    ? '可以稍后重新进入这一页；备份与同步不受影响。'
-                    : '按 ${_quota!.day} 统计，重置时间以服务端时区为准。',
+                _quotaDetailText(),
                 style: theme.text.bodySmall.copyWith(
                   color: theme.colors.onSurfaceVariant,
                 ),

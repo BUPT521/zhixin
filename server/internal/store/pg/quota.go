@@ -55,20 +55,10 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if err != nil {
 		return 0, err
 	}
-	var paid purchasedQuota
-	if s.purchasedQuotaEnabled && kind == llmproxy.KindChat && limited {
-		if _, err := q.LockPurchaseOwner(ctx, userID); err != nil {
-			return 0, err
-		}
-		paid, err = s.lockPurchasedQuota(ctx, q, userID, date)
-		if err != nil {
-			return 0, err
-		}
-	}
-	free := max(0, limit-(used-paid.used))
+	free := max(0, limit-used)
 	reserved := want
 	if limited {
-		reserved = min(reserved, free+paid.balance)
+		reserved = min(reserved, free)
 	}
 	if s.instanceDailyTokens > 0 {
 		instanceUsed, err := q.InstanceTokens(ctx, date)
@@ -79,11 +69,6 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	}
 	if reserved <= 0 {
 		return 0, llmproxy.ErrQuotaExceeded
-	}
-	if limited {
-		if err := s.adjustPurchasedQuota(ctx, q, userID, date, max(0, reserved-free)); err != nil {
-			return 0, err
-		}
 	}
 	if err := q.AddTokens(ctx, db.AddTokensParams{
 		UserID: userID, Day: date, Kind: string(kind), ApiKeyID: keyID, Tokens: reserved,
@@ -143,11 +128,6 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := db.New(tx)
-	if s.purchasedQuotaEnabled && kind == llmproxy.KindChat {
-		if err := s.settlePurchasedQuota(ctx, tx, q, userID, day, date, delta); err != nil {
-			return err
-		}
-	}
 	if err := q.SettleTokens(ctx, db.SettleTokensParams{
 		UserID: userID, Day: date, Kind: string(kind), ApiKeyID: keyID,
 		Delta: delta, InputTokens: usage.Input, CachedTokens: usage.Cached,
@@ -166,40 +146,6 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 		s.chargeNowPay(ctx, userID, day, date)
 	}
 	return nil
-}
-
-// 与预留共用当日的锁；负差额优先退回已预留的购买额度，余额和日用量一起提交。
-func (s *Store) settlePurchasedQuota(ctx context.Context, tx pgx.Tx, q *db.Queries, userID, day string, date pgtype.Date, delta int64) error {
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "llm_usage:"+day); err != nil {
-		return err
-	}
-	if _, err := q.LockPurchaseOwner(ctx, userID); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// 账号已删除，账号用量写入会失去外键，沿用原来的结算行为。
-			return nil
-		}
-		return err
-	}
-	paid, err := s.lockPurchasedQuota(ctx, q, userID, date)
-	if err != nil {
-		return err
-	}
-	if delta < 0 {
-		return s.adjustPurchasedQuota(ctx, q, userID, date, -min(paid.used, -delta))
-	}
-	if paid.balance == 0 {
-		return nil
-	}
-	limit, limited, err := s.accountLimit(ctx, q, userID, llmproxy.KindChat)
-	if err != nil || !limited {
-		return err
-	}
-	used, err := usedTokens(ctx, q, userID, date, llmproxy.KindChat)
-	if err != nil {
-		return err
-	}
-	free := max(0, limit-(used-paid.used))
-	return s.adjustPurchasedQuota(ctx, q, userID, date, min(paid.balance, max(0, delta-free)))
 }
 
 // InstanceUsed 返回实例当天的总用量，供实例预算与展示使用。读数来自

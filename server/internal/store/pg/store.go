@@ -41,11 +41,9 @@ type Store struct {
 	// dailyTokens 与 instanceDailyTokens 是配置里的默认每日额度与实例预算，由
 	// llmproxy.NewHandler 装配时经 SetQuotaLimits 注入（见 quota.go），运行期间
 	// 不再修改，因此不加锁。
-	dailyTokens           int64
-	embeddingDailyTokens  int64
-	instanceDailyTokens   int64
-	purchasedQuotaEnabled bool
-	purchasedQuotaSandbox bool
+	dailyTokens          int64
+	embeddingDailyTokens int64
+	instanceDailyTokens  int64
 	// nowpay 是即刻收的核销执行器；为空表示没有配置商品，结算之后不产生积分核销。
 	// 装配由 server.Build 在构造处理器时注入，见 SetNowPay。
 	nowpay nowpay.Recorder
@@ -68,9 +66,6 @@ type Options struct {
 	Objects objectstore.Store
 	// MaxConns 为空时用 pgxpool 的默认值。
 	MaxConns int32
-	// PurchasedQuotaEnabled requires the payment tables in schema.sql.
-	PurchasedQuotaEnabled bool
-	PurchasedQuotaSandbox bool
 	// Log 接收存储层自己发现的问题，主要是结算之后折算积分时的读失败；为空时用
 	// 标准 logger。
 	Log *slog.Logger
@@ -98,7 +93,6 @@ func Open(ctx context.Context, dsn string, opts Options) (*Store, error) {
 	}
 	return &Store{
 		pool: pool, q: db.New(pool), objects: opts.Objects, log: logger,
-		purchasedQuotaEnabled: opts.PurchasedQuotaEnabled, purchasedQuotaSandbox: opts.PurchasedQuotaSandbox,
 	}, nil
 }
 

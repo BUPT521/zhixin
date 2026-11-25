@@ -1,3 +1,8 @@
+// Package payment 封装支付宝网关的 RSA2 签名、验签与调用。
+//
+// 收款只剩即刻收直连模式（ADR-0067），它复用同一个支付宝应用的应用凭证，所以这里
+// 只保留一个 Call：方法名与 biz_content 由 internal/nowpay 给出，应用不再自行
+// 构造 APP 支付订单、也不再接收支付宝的异步通知。
 package payment
 
 import (
@@ -11,13 +16,11 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -25,38 +28,32 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
-const (
-	notifyPath = "/v1/payments/alipay/notify"
-	alipayTime = "2006-01-02 15:04:05"
-)
+const alipayTime = "2006-01-02 15:04:05"
 
 var (
 	chinaTime = time.FixedZone("CST", 8*60*60)
 	alipayID  = regexp.MustCompile("^[0-9]{10,32}$")
-	tradeID   = regexp.MustCompile("^[0-9]{1,64}$")
-	amount    = regexp.MustCompile("^[0-9]{1,8}(\\.[0-9]{1,2})?$")
 
-	ErrInvalidTrade = errors.New("payment: 交易数据不符")
-	ErrGateway      = errors.New("payment: 支付宝查单失败")
+	// ErrGateway 表示支付宝网关不可用、响应无法验签或业务对象解析失败。调用方
+	// 只据此判断“这次没拿到可信结果”，不把上游代码写进对外响应。
+	ErrGateway = errors.New("payment: 支付宝网关调用失败")
 )
 
+// Gateway 是一个支付宝应用的最小调用入口：应用编号、应用私钥、支付宝公钥与
+// 正式网关地址。即刻收没有沙箱网关，所以没有环境切换。
 type Gateway struct {
-	appID, sellerID, endpoint, notifyURL string
-	sandbox                              bool
-	privateKey                           *rsa.PrivateKey
-	publicKey                            *rsa.PublicKey
-	client                               *http.Client
+	appID      string
+	endpoint   string
+	privateKey *rsa.PrivateKey
+	publicKey  *rsa.PublicKey
+	client     *http.Client
 }
 
-func NewGateway(appID, sellerID, notifyURL, privateKey, publicKey string, sandbox bool) (*Gateway, error) {
-	callback, err := url.Parse(notifyURL)
-	if err != nil || callback.Scheme != "https" || callback.Hostname() == "" ||
-		callback.User != nil || callback.RawQuery != "" || callback.ForceQuery ||
-		callback.Fragment != "" || callback.EscapedPath() != notifyPath || len(notifyURL) > 256 {
-		return nil, errors.New("ZHIXIN_ALIPAY_NOTIFY_URL 必须是指向 " + notifyPath + " 的 HTTPS 地址")
-	}
-	if !alipayID.MatchString(appID) || !alipayID.MatchString(sellerID) {
-		return nil, errors.New("ZHIXIN_ALIPAY_APP_ID 与 ZHIXIN_ALIPAY_SELLER_ID 必须是支付宝分配的数字标识")
+// NewGateway 校验应用标识与一对 2048 位 RSA 密钥。应用私钥与支付宝公钥不能是
+// 同一把钥匙，否则谁也证明不了响应来自支付宝。
+func NewGateway(appID, privateKey, publicKey string) (*Gateway, error) {
+	if !alipayID.MatchString(appID) {
+		return nil, errors.New("ZHIXIN_ALIPAY_APP_ID 必须是支付宝分配的数字标识")
 	}
 	merchantKey, err := parsePrivateKey(privateKey)
 	if err != nil {
@@ -66,12 +63,8 @@ func NewGateway(appID, sellerID, notifyURL, privateKey, publicKey string, sandbo
 	if err != nil || merchantKey.N.Cmp(platformKey.N) == 0 {
 		return nil, errors.New("ZHIXIN_ALIPAY_PUBLIC_KEY 必须是支付宝的 2048 位 RSA 公钥")
 	}
-	endpoint := "https://openapi.alipay.com/gateway.do"
-	if sandbox {
-		endpoint = "https://openapi-sandbox.dl.alipaydev.com/gateway.do"
-	}
 	return &Gateway{
-		appID: appID, sellerID: sellerID, notifyURL: notifyURL, endpoint: endpoint, sandbox: sandbox,
+		appID: appID, endpoint: "https://openapi.alipay.com/gateway.do",
 		privateKey: merchantKey, publicKey: platformKey,
 		client: &http.Client{
 			Timeout:       8 * time.Second,
@@ -80,71 +73,8 @@ func NewGateway(appID, sellerID, notifyURL, privateKey, publicKey string, sandbo
 	}, nil
 }
 
-func (g *Gateway) Sandbox() bool { return g.sandbox }
-
-func (g *Gateway) signOrder(order Order, now time.Time) (string, error) {
-	biz := map[string]any{
-		"out_trade_no": order.ID,
-		"total_amount": fmt.Sprintf("%d.%02d", order.AmountFen/100, order.AmountFen%100),
-		"subject":      "知新聊天额度包",
-		"product_code": "QUICK_MSECURITY_PAY",
-		"time_expire":  order.ExpiresAt.In(chinaTime).Format(alipayTime),
-	}
-	return g.sign("alipay.trade.app.pay", biz, now, g.notifyURL)
-}
-
-func (g *Gateway) sign(method string, parameters map[string]any, now time.Time, callback string) (string, error) {
-	biz, err := json.Marshal(parameters)
-	if err != nil {
-		return "", err
-	}
-	form := url.Values{
-		"app_id": {g.appID}, "method": {method}, "charset": {"utf-8"}, "format": {"JSON"},
-		"sign_type": {"RSA2"}, "timestamp": {now.In(chinaTime).Format(alipayTime)}, "version": {"1.0"},
-		"biz_content": {string(biz)},
-	}
-	if callback != "" {
-		form.Set("notify_url", callback)
-	}
-	digest := sha256.Sum256([]byte(signContent(form, false)))
-	signature, err := rsa.SignPKCS1v15(rand.Reader, g.privateKey, crypto.SHA256, digest[:])
-	if err != nil {
-		return "", err
-	}
-	form.Set("sign", base64.StdEncoding.EncodeToString(signature))
-	return form.Encode(), nil
-}
-
-type trade struct {
-	OrderID string          `json:"out_trade_no"`
-	TradeID string          `json:"trade_no"`
-	Status  string          `json:"trade_status"`
-	Amount  json.RawMessage `json:"total_amount"`
-	Code    string          `json:"code"`
-	SubCode string          `json:"sub_code"`
-}
-
-func (g *Gateway) query(ctx context.Context, orderID string, now time.Time) (trade, error) {
-	raw, err := g.call(ctx, "alipay.trade.query", map[string]any{"out_trade_no": orderID}, now)
-	if err != nil {
-		return trade{}, err
-	}
-	var result trade
-	if json.Unmarshal(raw, &result) != nil {
-		return trade{}, ErrGateway
-	}
-	if result.Code == "40004" && result.SubCode == "ACQ.TRADE_NOT_EXIST" {
-		return trade{}, nil
-	}
-	if result.Code != "10000" || result.OrderID != orderID {
-		return trade{}, ErrGateway
-	}
-	return result, nil
-}
-
 // Call 向支付宝网关发起一次业务调用并返回已经验签的业务对象：method 决定接口，
-// biz 是 biz_content 的内容。即刻收直连与 APP 支付的网关、签名和公共参数一样，
-// 所以六个即刻收接口也走这里（见 internal/nowpay）。
+// biz 是 biz_content 的内容。
 func (g *Gateway) Call(ctx context.Context, method string, biz map[string]any) ([]byte, error) {
 	return g.call(ctx, method, biz, time.Now())
 }
@@ -152,7 +82,7 @@ func (g *Gateway) Call(ctx context.Context, method string, biz map[string]any) (
 // call 签名、提交、验签，返回业务对象的原始 JSON。响应里业务对象的键由 method
 // 决定，例如 alipay.trade.query 对应 alipay_trade_query_response。
 func (g *Gateway) call(ctx context.Context, method string, biz map[string]any, now time.Time) ([]byte, error) {
-	body, err := g.sign(method, biz, now, "")
+	body, err := g.sign(method, biz, now)
 	if err != nil {
 		return nil, err
 	}
@@ -190,25 +120,23 @@ func (g *Gateway) call(ctx context.Context, method string, biz map[string]any, n
 	return result, nil
 }
 
-func (g *Gateway) notification(form url.Values) (trade, error) {
-	for _, values := range form {
-		if len(values) != 1 {
-			return trade{}, ErrInvalidTrade
-		}
-	}
-	if form.Get("sign_type") != "RSA2" || !g.verify([]byte(signContent(form, true)), form.Get("sign")) ||
-		form.Get("app_id") != g.appID || form.Get("seller_id") != g.sellerID ||
-		form.Get("notify_type") != "trade_status_sync" || form.Get("notify_id") == "" {
-		return trade{}, ErrInvalidTrade
-	}
-	amt, err := json.Marshal(form.Get("total_amount"))
+func (g *Gateway) sign(method string, parameters map[string]any, now time.Time) (string, error) {
+	biz, err := json.Marshal(parameters)
 	if err != nil {
-		return trade{}, err
+		return "", err
 	}
-	return trade{
-		OrderID: form.Get("out_trade_no"), TradeID: form.Get("trade_no"),
-		Status: form.Get("trade_status"), Amount: amt,
-	}, nil
+	form := url.Values{
+		"app_id": {g.appID}, "method": {method}, "charset": {"utf-8"}, "format": {"JSON"},
+		"sign_type": {"RSA2"}, "timestamp": {now.In(chinaTime).Format(alipayTime)}, "version": {"1.0"},
+		"biz_content": {string(biz)},
+	}
+	digest := sha256.Sum256([]byte(signContent(form)))
+	signature, err := rsa.SignPKCS1v15(rand.Reader, g.privateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", err
+	}
+	form.Set("sign", base64.StdEncoding.EncodeToString(signature))
+	return form.Encode(), nil
 }
 
 func (g *Gateway) verify(content []byte, signature string) bool {
@@ -220,10 +148,10 @@ func (g *Gateway) verify(content []byte, signature string) bool {
 	return rsa.VerifyPKCS1v15(g.publicKey, crypto.SHA256, digest[:], decoded) == nil
 }
 
-func signContent(form url.Values, notification bool) string {
+func signContent(form url.Values) string {
 	keys := make([]string, 0, len(form))
 	for key := range form {
-		if key != "sign" && !(notification && key == "sign_type") && form.Get(key) != "" {
+		if key != "sign" && form.Get(key) != "" {
 			keys = append(keys, key)
 		}
 	}
@@ -233,20 +161,6 @@ func signContent(form url.Values, notification bool) string {
 		fields = append(fields, key+"="+form.Get(key))
 	}
 	return strings.Join(fields, "&")
-}
-
-func amountFen(raw json.RawMessage) (int64, error) {
-	value := string(raw)
-	if strings.HasPrefix(value, "\"") && json.Unmarshal(raw, &value) != nil {
-		return 0, ErrInvalidTrade
-	}
-	if !amount.MatchString(value) {
-		return 0, ErrInvalidTrade
-	}
-	yuan, cents, _ := strings.Cut(value, ".")
-	whole, _ := strconv.ParseInt(yuan, 10, 64)
-	fraction, _ := strconv.ParseInt((cents + "00")[:2], 10, 64)
-	return whole*100 + fraction, nil
 }
 
 func decodeKey(raw string) ([]byte, error) {

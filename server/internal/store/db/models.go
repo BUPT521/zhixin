@@ -161,33 +161,6 @@ type LlmUsage struct {
 	CachedTokens int64
 }
 
-type ModelQuotaPaidUsage struct {
-	UserID  string
-	Sandbox bool
-	Day     pgtype.Date
-	Tokens  int64
-}
-
-type ModelQuotaPurchase struct {
-	ID        string
-	UserID    pgtype.Text
-	AmountFen int64
-	Tokens    int64
-	AppID     string
-	SellerID  string
-	Sandbox   bool
-	Status    string
-	TradeID   pgtype.Text
-	CreatedAt pgtype.Timestamptz
-	ExpiresAt pgtype.Timestamptz
-}
-
-type ModelQuotaWallet struct {
-	UserID        string
-	Sandbox       bool
-	BalanceTokens int64
-}
-
 type NowpayCharge struct {
 	ID           string
 	UserID       pgtype.Text

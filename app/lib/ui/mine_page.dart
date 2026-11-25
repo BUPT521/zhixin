@@ -579,7 +579,12 @@ class _AccountCard extends StatelessWidget {
     if (quotaLoading) return '正在读取';
     final quota = this.quota;
     if (quota == null) return '暂时无法读取';
-    return '${quota.usedTokens} / ${quota.dailyTokens} token';
+    final ratio = quota.tokensPerPoint;
+    if (ratio == null) {
+      return '${quota.usedTokens} / ${quota.dailyTokens} token';
+    }
+    return '${quotaPoints(quota.usedTokens, ratio)} / '
+        '${quotaPoints(quota.dailyTokens, ratio)} 积分';
   }
 }
 

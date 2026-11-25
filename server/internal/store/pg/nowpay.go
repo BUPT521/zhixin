@@ -141,8 +141,8 @@ func text(value string) pgtype.Text {
 
 // chargeNowPay 算出应当由即刻收积分承担的计费 token 数，交给核销执行器。
 //
-// 顺序与 ADR-0065 一致：先用当天免费额度，再用 APP 支付时期留在本服务的已购余额，
-// 两者都不够的部分才折成积分。没有配置每日额度时免费额度不限，不产生核销。
+// 先用当天免费额度，超出部分才折成积分。没有配置每日额度时免费额度不限，不产生
+// 核销。
 func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtype.Date) {
 	limit, limited, err := s.accountLimit(ctx, s.q, userID, llmproxy.KindChat)
 	if err != nil {
@@ -157,24 +157,13 @@ func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtyp
 		s.log.Error("read the used tokens for nowpay", "user_id", userID, "error", err)
 		return
 	}
-	var paid int64
-	if s.purchasedQuotaEnabled {
-		paid, err = s.q.PurchasedTokensUsed(ctx, db.PurchasedTokensUsedParams{
-			UserID: userID, Sandbox: s.purchasedQuotaSandbox, Day: date,
-		})
-		if err != nil {
-			s.log.Error("read the purchased tokens for nowpay", "user_id", userID, "error", err)
-			return
-		}
-	}
-	if chargeable := chargeableTokens(used, limit, paid); chargeable > 0 {
+	if chargeable := chargeableTokens(used, limit); chargeable > 0 {
 		s.nowpay.Record(ctx, userID, day, chargeable)
 	}
 }
 
-// chargeableTokens 返回应当由即刻收积分承担的计费 token 数。先扣当天免费额度，再
-// 扣 APP 支付时期已由本地余额承担的用量，剩下的才折成积分：免费额度因此不会因为
-// 改成立刻收而变成摆设（ADR-0065、ADR-0067）。
-func chargeableTokens(used, limit, legacy int64) int64 {
-	return max(0, used-limit-legacy)
+// chargeableTokens 返回应当由即刻收积分承担的计费 token 数：先扣当天免费额度，
+// 剩下的才折成积分（ADR-0067）。
+func chargeableTokens(used, limit int64) int64 {
+	return max(0, used-limit)
 }

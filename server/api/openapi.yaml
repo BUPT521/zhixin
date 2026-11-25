@@ -1361,7 +1361,7 @@ components:
   schemas:
     QuotaPurchaseOverview:
       type: object
-      required: [balance_points, legacy_balance_tokens, tokens_per_point]
+      required: [balance_points, tokens_per_point]
       properties:
         product: { $ref: '#/components/schemas/QuotaPurchaseProduct' }
         tokens_per_point:
@@ -1372,10 +1372,6 @@ components:
           type: integer
           format: int64
           description: 即刻收一侧的剩余积分；未配置商品时为 0
-        legacy_balance_tokens:
-          type: integer
-          format: int64
-          description: APP 支付时期留在本服务的已购 token 余额，仍然先于积分使用
         latest_purchase: { $ref: '#/components/schemas/QuotaPurchaseLink' }
     QuotaPurchaseProduct:
       type: object
@@ -1835,13 +1831,17 @@ components:
         status: { type: string, const: ok }
     LLMQuota:
       type: object
-      required: [day, used_tokens, daily_tokens, embedding_used_tokens, embedding_daily_tokens]
+      required: [day, used_tokens, daily_tokens, embedding_used_tokens, embedding_daily_tokens, tokens_per_point]
       properties:
         day: { type: string, format: date }
         used_tokens: { type: integer, format: int64, description: 聊天当天已用 }
         daily_tokens: { type: integer, format: int64, description: 聊天每日额度 }
         embedding_used_tokens: { type: integer, format: int64, description: 嵌入当天已用 }
         embedding_daily_tokens: { type: integer, format: int64, description: 嵌入每日额度 }
+        tokens_per_point:
+          type: integer
+          format: int64
+          description: 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
     Me:
       type: object
       required: [user_id, created_at, identities]

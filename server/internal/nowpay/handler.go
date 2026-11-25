@@ -29,18 +29,11 @@ type PurchaseStore interface {
 	InsertPurchaseLink(ctx context.Context, userID string, purchase Purchase) error
 }
 
-// LegacyBalance 是 APP 支付时期留在本服务的已购 token 余额；那段余额仍然先于积分
-// 使用，所以购买页要一起显示。
-type LegacyBalance interface {
-	PurchaseBalance(ctx context.Context, userID string) (int64, error)
-}
-
 // Handler 提供查商品与余额、取购买链接、单独查余额三个接口。客户端只负责打开链接
 // 和刷新余额，能不能买、扣了多少都由服务端按即刻收的结果判断。
 type Handler struct {
 	client    *Client
 	purchases PurchaseStore
-	legacy    LegacyBalance
 	callback  string
 	log       *slog.Logger
 	limit     *ratelimit.Limiter
@@ -51,8 +44,8 @@ type Handler struct {
 	tokensPerPoint int64
 }
 
-// NewHandler 装配三个接口。client 为空表示没有配置即刻收商品，接口只返回本地余额。
-func NewHandler(client *Client, purchases PurchaseStore, legacy LegacyBalance, callback string, log *slog.Logger, rateKeys int, tokensPerPoint int64) *Handler {
+// NewHandler 装配三个接口。client 为空表示没有配置即刻收商品，接口只返回空余额。
+func NewHandler(client *Client, purchases PurchaseStore, callback string, log *slog.Logger, rateKeys int, tokensPerPoint int64) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -60,7 +53,7 @@ func NewHandler(client *Client, purchases PurchaseStore, legacy LegacyBalance, c
 		tokensPerPoint = 1000
 	}
 	return &Handler{
-		client: client, purchases: purchases, legacy: legacy, callback: callback, log: log,
+		client: client, purchases: purchases, callback: callback, log: log,
 		limit:          ratelimit.New(0.5, 6, 15*time.Minute, rateKeys),
 		global:         ratelimit.NewGlobal(ratelimit.Limit{PerSecond: 12, Burst: 24}),
 		tokensPerPoint: tokensPerPoint,
@@ -71,10 +64,7 @@ func NewHandler(client *Client, purchases PurchaseStore, legacy LegacyBalance, c
 // 按 capability_status 决定是否显示购买入口；余额查询失败不按零处理。
 func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	principal := auth.MustPrincipal(r.Context())
-	view := api.QuotaPurchaseOverview{
-		LegacyBalanceTokens: h.legacyBalance(r.Context(), principal.UserID),
-		TokensPerPoint:      h.tokensPerPoint,
-	}
+	view := api.QuotaPurchaseOverview{TokensPerPoint: h.tokensPerPoint}
 	if h.client == nil || !principal.ContactVerified {
 		httpx.WriteJSON(w, http.StatusOK, view)
 		return
@@ -191,20 +181,7 @@ func (h *Handler) Purchase(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, linkView(purchase))
 }
 
-// legacyBalance 读取 APP 支付时期的已购余额。读不到时按 0 显示并记一条日志：这一行
-// 只用于展示，不该让整页购买入口一起失败。
-func (h *Handler) legacyBalance(ctx context.Context, userID string) int64 {
-	if h.legacy == nil {
-		return 0
-	}
-	balance, err := h.legacy.PurchaseBalance(ctx, userID)
-	if err != nil {
-		h.log.Warn("read legacy purchased quota", "user_id", userID, "error", err)
-		return 0
-	}
-	return balance
-}
-
+// allow 按账号与实例两层限流；超出时回 429 并带上重试秒数。
 func (h *Handler) allow(w http.ResponseWriter, r *http.Request, userID string) bool {
 	delay := h.limit.Take(userID)
 	if delay == 0 {

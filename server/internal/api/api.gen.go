@@ -845,6 +845,9 @@ type LLMQuota struct {
 	// EmbeddingUsedTokens 嵌入当天已用
 	EmbeddingUsedTokens int64 `json:"embedding_used_tokens"`
 
+	// TokensPerPoint 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
+	TokensPerPoint int64 `json:"tokens_per_point"`
+
 	// UsedTokens 聊天当天已用
 	UsedTokens int64 `json:"used_tokens"`
 }
@@ -945,9 +948,6 @@ type QuotaPurchaseOverview struct {
 	// BalancePoints 即刻收一侧的剩余积分；未配置商品时为 0
 	BalancePoints  int64              `json:"balance_points"`
 	LatestPurchase *QuotaPurchaseLink `json:"latest_purchase,omitempty"`
-
-	// LegacyBalanceTokens APP 支付时期留在本服务的已购 token 余额，仍然先于积分使用
-	LegacyBalanceTokens int64 `json:"legacy_balance_tokens"`
 
 	// Product 即刻收商品；服务未配置商品或账号未验证登录方式时整体省略，是否允许购买看 capability_status
 	Product *QuotaPurchaseProduct `json:"product,omitempty"`

@@ -64,6 +64,14 @@ String quotaDays(double days) {
 /// 整数加千位分隔；积分这类不换算成万的数量用它。
 String groupDigits(int value) => _group(value);
 
+/// 把计费 token 换算成积分，向上取整：服务端核销按同一口径取整（ADR-0068）。
+///
+/// 比例缺失或不是正数时返回 0，调用方据此退回按 token 显示。
+int quotaPoints(int tokens, int? tokensPerPoint) {
+  if (tokens <= 0 || tokensPerPoint == null || tokensPerPoint <= 0) return 0;
+  return (tokens + tokensPerPoint - 1) ~/ tokensPerPoint;
+}
+
 String _trimZero(double value) {
   final text = value.toStringAsFixed(1);
   return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
