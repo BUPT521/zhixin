@@ -176,7 +176,7 @@ class _SettingsPageState extends State<SettingsPage> {
       final account = await scope.accountServices.account.snapshot();
       final developerMode = await scope.accountServices.account.developerMode();
       var serverModels = const <String>[];
-      if (account.signedIn) {
+      if (developerMode && account.signedIn) {
         try {
           serverModels = [
             // 嵌入模型给语义索引用，回答选不了，不放进这里的提示。
@@ -216,7 +216,7 @@ class _SettingsPageState extends State<SettingsPage> {
             configFailure,
             kind: 'settings_config_read',
             kept: '其他设置照常显示',
-            next: '可以回到这一页重新保存一次模型配置',
+            next: '可以在开发者模式中重新保存模型配置',
           );
         });
       }
@@ -357,7 +357,7 @@ class _SettingsPageState extends State<SettingsPage> {
       await AppScope.of(context).settings.edit.saveConfig(config);
       if (!mounted) return;
       setState(() => _applyConfig(config));
-      _report(_Area.model, '模型配置已保存到本机；回到原来的讨论或题目即可接着回答');
+      _report(_Area.model, '模型配置已保存，可以回到原来的讨论或题目重试');
     } on AccountSignedOut catch (error) {
       // 没有登录时先说明原因，再带着这次填的模型名去账号页；回来之后表单还在。
       if (!mounted) return;
@@ -404,7 +404,9 @@ class _SettingsPageState extends State<SettingsPage> {
           action: '测试模型连接',
           kind: 'settings_connection',
           kept: '已保存的配置没有改动',
-          next: '可以检查模型名、登录状态与网络后重试',
+          next: error.failure == LlmFailure.modelNotAllowed
+              ? '请选择服务端已启用的聊天模型后重试'
+              : '可以检查登录状态与网络后重试',
         ),
         failed: true,
       );
@@ -428,40 +430,37 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// 删除整份模型配置：清掉模型名、上下文上限与图片开关，先做危险确认。
   Future<void> _clearConfig() async {
     final confirmed = await confirmZhixin(
       context: context,
-      title: '删除模型配置',
-      content: const Text(
-        '将删除本机保存的模型名、上下文上限与图片开关，且无法撤销。'
-        '删除之后仍然可以直接提问、记录作答与安排时间，回答区给本地步骤；'
-        '之后重新填写即可恢复。',
-      ),
-      confirmLabel: '删除',
-      destructive: true,
+      title: '恢复默认模型配置',
+      content: const Text('将清除本机覆盖的模型名、上下文上限与图片开关，恢复默认配置。'),
+      confirmLabel: '恢复默认',
     );
     if (!confirmed || !mounted) return;
+    setState(() => _busy = true);
     try {
       await AppScope.of(context).settings.edit.clearConfig();
       if (!mounted) return;
       setState(() => _applyConfig(null));
-      _report(_Area.danger, '已删除本机保存的模型配置');
+      _report(_Area.model, '已恢复默认模型 ${LlmConfig.defaultModel}');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
-        _Area.danger,
+        _Area.model,
         describeFailure(
           context,
           error,
           stack,
-          action: '删除模型配置',
+          action: '恢复默认模型配置',
           kind: 'settings_model_clear',
           kept: '原来的配置没有改动',
           next: '可以再试一次',
         ),
         failed: true,
       );
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -480,9 +479,11 @@ class _SettingsPageState extends State<SettingsPage> {
       _results.remove(_Area.developer);
     });
     try {
-      await AppScope.of(context).accountServices.account
-          .setDeveloperMode(enabled);
-      if (mounted) setState(() => _developerMode = enabled);
+      final scope = AppScope.of(context);
+      await scope.accountServices.account.setDeveloperMode(enabled);
+      if (!mounted) return;
+      setState(() => _developerMode = enabled);
+      if (enabled) await _loadLocal(scope);
     } catch (_) {
       _report(_Area.developer, '开发者模式设置未保存，请重试', failed: true);
     } finally {
@@ -563,11 +564,100 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
+  Widget _modelConfiguration({required bool signedIn}) {
+    final theme = context.zhixin;
+    return forui.FCard(
+      child: Padding(
+        padding: EdgeInsets.all(theme.space.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              signedIn
+                  ? '当前模型为 ${_config?.model ?? LlmConfig.defaultModel}，请求发往 ${AccountService.responsesEndpoint(_account!.serverBaseUrl)}。'
+                  : '登录后可以通过当前知新服务调用模型。',
+              style: theme.text.bodySmall.copyWith(
+                color: theme.colors.onSurfaceVariant,
+              ),
+            ),
+            if (!signedIn) ...[
+              SizedBox(height: context.zhixin.space.sm),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: forui.FButton(
+                  variant: forui.FButtonVariant.outline,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : _openAccount,
+                  prefix: const Icon(FLucideIcons.logIn),
+                  child: const Text('登录或注册'),
+                ),
+              ),
+            ],
+            if (signedIn && _serverModels.isNotEmpty) ...[
+              SizedBox(height: context.zhixin.space.xs),
+              Text(
+                '服务端允许的模型：${_serverModels.join('、')}',
+                style: theme.text.bodySmall.copyWith(
+                  color: theme.colors.onSurfaceVariant,
+                ),
+              ),
+            ],
+            SizedBox(height: context.zhixin.space.gap),
+            forui.FTextField(
+              control: .managed(controller: _model),
+              label: const Text('模型名'),
+              description: const Text(
+                '留空使用 ${LlmConfig.defaultModel}，所选模型需要支持工具调用。',
+              ),
+            ),
+            SizedBox(height: context.zhixin.space.gap),
+            forui.FTextField(
+              control: .managed(controller: _contextWindow),
+              keyboardType: TextInputType.number,
+              label: const Text('模型上下文上限（token）'),
+              description: const Text('按模型公布的上限填写，留空使用 65536。'),
+            ),
+            SizedBox(height: context.zhixin.space.gap),
+            forui.FSwitch(
+              label: const Text('允许上传题目图片'),
+              description: const Text('请求提示、讲解或读图时发送当前图片。'),
+              value: _allowImages,
+              onChange: (value) => setState(() => _allowImages = value),
+            ),
+            SizedBox(height: context.zhixin.space.md),
+            Wrap(
+              spacing: theme.space.sm,
+              runSpacing: theme.space.sm,
+              children: [
+                forui.FButton(
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : _saveConfig,
+                  child: const Text('保存'),
+                ),
+                forui.FButton(
+                  variant: forui.FButtonVariant.outline,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : _testConfig,
+                  child: const Text('测试连接'),
+                ),
+                if (_config != null)
+                  forui.FButton(
+                    variant: forui.FButtonVariant.ghost,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: _busy ? null : _clearConfig,
+                    child: const Text('恢复默认'),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _content(BuildContext context, SettingsView? settings) {
     final theme = context.zhixin;
     final signedIn = _account?.signedIn ?? false;
-    // 模型只有知新服务一种来源，填了模型名并且已经登录才算能用（ADR-0050）。
-    final configured = (_config?.isConfigured ?? false) && signedIn;
     // 首读失败时按默认值显示，原因写在页面顶部的就地说明里。
     final cutoff = settings?.cutoffHour ?? defaultDayCutoffHour;
     final systemCamera = settings?.useSystemCamera ?? false;
@@ -576,110 +666,6 @@ class _SettingsPageState extends State<SettingsPage> {
       children: [
         if (_loadFailure != null)
           InlineNotice(message: _loadFailure!, onRetry: _retry),
-        SectionHeading(
-          title: '模型',
-          first: _loadFailure == null,
-          action: StatusTag(
-            configured ? '已配置' : '未配置',
-            tone: configured ? TagTone.accent : TagTone.muted,
-          ),
-        ),
-        forui.FCard(
-          child: Padding(
-            padding: EdgeInsets.all(theme.space.lg),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  configured
-                      ? '已配置模型：${_config!.model}。回答经知新服务（登录账号）发出，'
-                            '回到原来的讨论或题目，点「用模型重新回答」接着回答同一个问题。'
-                      : '还没有配置模型。现在可以直接提问、记录作答与安排时间，回答区给本地步骤；'
-                            '填写下面的模型名并登录之后，回到原来的讨论或题目可以接着回答同一个问题。',
-                  style: theme.text.bodySmall.copyWith(
-                    color: theme.colors.onSurfaceVariant,
-                  ),
-                ),
-                SizedBox(height: context.zhixin.space.gap),
-                Text(
-                  signedIn
-                      ? '模型调用只用知新服务（登录账号）：对话请求发到 ${_account!.serverBaseUrl}/v1/llm/responses，'
-                            '密钥由服务端保管，不保存在本机。'
-                      : '模型调用只用知新服务，需要先登录账号；登录之前回答按本地步骤给出。',
-                  style: theme.text.bodySmall.copyWith(
-                    color: signedIn
-                        ? theme.colors.onSurfaceVariant
-                        : theme.colors.error,
-                  ),
-                ),
-                if (!signedIn) ...[
-                  SizedBox(height: context.zhixin.space.sm),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: forui.FButton(
-                      variant: forui.FButtonVariant.outline,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : _openAccount,
-                      prefix: const Icon(FLucideIcons.logIn),
-                      child: const Text('登录或注册'),
-                    ),
-                  ),
-                ],
-                if (signedIn && _serverModels.isNotEmpty) ...[
-                  SizedBox(height: context.zhixin.space.xs),
-                  Text(
-                    '服务端允许的模型：${_serverModels.join('、')}',
-                    style: theme.text.bodySmall.copyWith(
-                      color: theme.colors.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-                SizedBox(height: context.zhixin.space.gap),
-                forui.FTextField(
-                  control: .managed(controller: _model),
-                  label: const Text('模型名'),
-                  description: const Text(
-                    '填服务端允许的模型名，例如 zhixin-chat；需要模型支持工具调用',
-                  ),
-                ),
-                SizedBox(height: context.zhixin.space.gap),
-                forui.FTextField(
-                  control: .managed(controller: _contextWindow),
-                  keyboardType: TextInputType.number,
-                  label: const Text('模型上下文上限（token）'),
-                  description: const Text('按模型公布的上限填写，留空使用 65536。'),
-                ),
-                SizedBox(height: context.zhixin.space.gap),
-                forui.FSwitch(
-                  label: const Text('允许上传题目图片'),
-                  description: const Text('请求提示、讲解或读图时发送当前图片。'),
-                  value: _allowImages,
-                  onChange: (value) => setState(() => _allowImages = value),
-                ),
-                SizedBox(height: context.zhixin.space.md),
-                Wrap(
-                  spacing: theme.space.sm,
-                  runSpacing: theme.space.sm,
-                  children: [
-                    forui.FButton(
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : _saveConfig,
-                      child: const Text('保存'),
-                    ),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.outline,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : _testConfig,
-                      child: const Text('测试连接'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-        ?_resultFor(_Area.model),
-        SizedBox(height: theme.space.md),
         forui.FTile(
           prefix: const LeadingIcon(FLucideIcons.network),
           title: const Text('语义索引'),
@@ -693,7 +679,7 @@ class _SettingsPageState extends State<SettingsPage> {
             padding: EdgeInsets.all(theme.space.lg),
             child: forui.FSwitch(
               label: const Text('开发者模式'),
-              description: const Text('修改知新服务地址，或为脚本和第三方工具管理知新 API Key。'),
+              description: const Text('调整知新服务地址和模型配置，管理知新 API Key。'),
               value: _developerMode ?? false,
               onChange: _busy || _developerMode == null
                   ? null
@@ -720,6 +706,10 @@ class _SettingsPageState extends State<SettingsPage> {
                 ? () => openModelApiKeys(context)
                 : _openAccount,
           ),
+          SizedBox(height: theme.space.md),
+          const SectionHeading(title: '模型配置'),
+          _modelConfiguration(signedIn: signedIn),
+          ?_resultFor(_Area.model),
         ],
         ?_resultFor(_Area.developer),
         const SectionHeading(title: '学习', subtitle: '每天的截止时间与拍照方式影响记录与拍题。'),
@@ -941,19 +931,7 @@ class _SettingsPageState extends State<SettingsPage> {
           onPress: _busy || _checkingUpdates ? null : _checkUpdates,
         ),
         ?_resultFor(_Area.updates),
-        const SectionHeading(
-          title: '危险操作',
-          subtitle: '这两项都无法撤销；删除模型配置只影响本机保存的模型设置。',
-        ),
-        forui.FTile(
-          variant: forui.FItemVariant.destructive,
-          prefix: const LeadingIcon(FLucideIcons.keyRound, tone: TagTone.muted),
-          title: const Text('删除模型配置'),
-          subtitle: const Text('删除本机保存的模型名、上下文上限与图片开关；之后的回答按本地步骤给出。'),
-          suffix: const Icon(FLucideIcons.trash2),
-          onPress: _busy || !configured ? null : _clearConfig,
-        ),
-        SizedBox(height: theme.space.sm),
+        const SectionHeading(title: '危险操作', subtitle: '清空全部记录后无法撤销。'),
         forui.FTile(
           variant: forui.FItemVariant.destructive,
           prefix: const LeadingIcon(FLucideIcons.trash2, tone: TagTone.muted),

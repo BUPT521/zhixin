@@ -70,31 +70,21 @@ void main() {
     expect(planning, contains('结束条件'));
   });
 
-  test('回答里说明登录之前能做什么、登录之后从哪里继续', () {
+  test('本地建议给出可执行步骤，调用状态由界面说明', () {
     final reply = localBuddyReply(_context(), text: '这道题怎么想？');
-
-    expect(reply, contains('登录之前可以记录题目与作答'));
-    expect(reply, contains('用模型重新回答'));
-    expect(reply, contains('不用重发'));
+    expect(reply, contains('卡住的那一步'));
+    expect(reply, isNot(contains('登录')));
+    expect(reply, isNot(contains('重试')));
   });
 
-  test('调用失败时不写成没有登录', () {
-    final failed = localBuddyReply(
-      _context(),
-      text: '这道题怎么想？',
-      modelMissing: false,
+  test('纯图片回退给出补写文字的步骤，避免推荐无关待办', () {
+    final context = _context(
+      openItems: [const PlanItem(id: 'item-1', title: '第三章作业')],
     );
-    expect(failed, contains('这次模型没有返回内容'));
-    expect(failed, isNot(contains('这次没有登录账号')));
-    expect(failed, contains('可以稍后再点一次'));
-  });
-
-  test('只发了图片时说明本地读不了图，并给出用文字写条件的做法', () {
-    final reply = localBuddyReply(_context(), hasImages: true);
-
-    expect(reply, contains('图片已保存在本次讨论中'));
-    expect(reply, contains('读不了图'));
-    expect(reply, contains('已知哪些条件'));
+    final reply = localBuddyReply(context, hasImages: true);
+    expect(reply, contains('图片已保存在本次记录中'));
+    expect(reply, contains('已知条件'));
+    expect(localNextStep(context, hasImages: true), isEmpty);
   });
 
   test('带入材料页时按页码提示核对原文', () {
@@ -114,24 +104,24 @@ void main() {
     expect(reply, contains('《概率论课件》第 12 页'));
   });
 
-  test('学习中的提示、讲解与检查各有本地说法，并给出登录后的入口', () {
+  test('学习中的提示、讲解与检查各给相应的本地步骤', () {
     final hint = localBuddyReply(
       _context(question: '求条件概率', mode: BuddyMode.hint),
     );
     expect(hint, contains('本地提示'));
-    expect(hint, contains('登录之后回到这道题'));
+    expect(hint, contains('先用它写出一步'));
 
     final explain = localBuddyReply(
       _context(question: '求条件概率', mode: BuddyMode.explain),
     );
     expect(explain, contains('本地讲解'));
-    expect(explain, contains('自己讲下来的次序'));
+    expect(explain, contains('每一步补一句理由'));
 
     final check = localBuddyReply(
       _context(question: '求条件概率', mode: BuddyMode.check),
     );
     expect(check, contains('本地检查'));
-    expect(check, contains('自查清单'));
+    expect(check, contains('代回原题'));
   });
 
   test('用过的帮助次数会写进本地提示', () {
@@ -145,7 +135,7 @@ void main() {
     final reply = localBuddyReply(
       _context(question: '求条件概率', attempt: attempt, mode: BuddyMode.hint),
     );
-    expect(reply, contains('已经用过 1 次应用内帮助'));
+    expect(reply, contains('已经使用过帮助'));
   });
 
   test('待办与最近没做对的题仍然给本地建议，标明来源', () {

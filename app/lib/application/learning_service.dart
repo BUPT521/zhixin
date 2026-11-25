@@ -503,11 +503,8 @@ class LearningService {
         omittedImages: run.omittedImages,
         failure: run.failure,
         quotaReason: run.quotaReason,
-        localFallback: () => localBuddyReply(
-          facts,
-          modelMissing: false,
-          hasImages: question.hasImages,
-        ),
+        localFallback: () =>
+            localBuddyReply(facts, hasImages: question.hasImages),
       );
       text = outcome.text;
       fromModel = outcome.fromModel;
@@ -518,11 +515,7 @@ class LearningService {
       // 没有正文就停下时不记一条空的帮助；提示条已经说明已停止。
       if (stopped && !fromModel) text = '';
     } else {
-      text = localBuddyReply(
-        facts,
-        modelMissing: run.modelMissing,
-        hasImages: question.hasImages,
-      );
+      text = localBuddyReply(facts, hasImages: question.hasImages);
     }
 
     if (text.trim().isNotEmpty) {

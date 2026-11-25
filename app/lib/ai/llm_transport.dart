@@ -393,6 +393,9 @@ class HttpLlmClient implements LlmClient {
       final code = problemCodeOf(body);
       final message = errorMessageOf(body);
       if (message != null) detail = message;
+      if (code == 'model_not_allowed') {
+        return LlmException(LlmFailure.modelNotAllowed, detail);
+      }
       if (code == 'contact_unverified') {
         return const LlmException(
           LlmFailure.contactUnverified,

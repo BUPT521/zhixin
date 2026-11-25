@@ -136,7 +136,7 @@ void main() {
     expect(find.widgetWithText(forui.FTile, pluginsPageTitle), findsNothing);
     expect(find.widgetWithText(forui.FTile, personaPageTitle), findsNothing);
 
-    // 设置页比手机屏长，危险的模型配置删除与清空单独成段，在页底。
+    // 设置页比手机屏长，清空全部记录单独成段，在页底。
     final scrollable = find
         .descendant(
           of: find.byType(SettingsPage),
@@ -144,23 +144,14 @@ void main() {
         )
         .first;
     for (var step = 0; step < 10; step++) {
-      if (find.widgetWithText(forui.FTile, '删除模型配置').evaluate().isNotEmpty) {
+      if (find.widgetWithText(forui.FTile, '清空全部记录').evaluate().isNotEmpty) {
         break;
       }
       await tester.drag(scrollable, const Offset(0, -400));
       await tester.pump(const Duration(milliseconds: 200));
     }
-    expect(find.widgetWithText(forui.FTile, '删除模型配置'), findsOneWidget);
-    expect(find.text('危险操作'), findsOneWidget);
-
-    for (var step = 0; step < 10; step++) {
-      if (find.widgetWithText(forui.FTile, '清空全部记录').evaluate().isNotEmpty) {
-        break;
-      }
-      await tester.drag(scrollable, const Offset(0, -200));
-      await tester.pump(const Duration(milliseconds: 200));
-    }
     expect(find.widgetWithText(forui.FTile, '清空全部记录'), findsOneWidget);
+    expect(find.text('危险操作'), findsOneWidget);
   });
 
   testWidgets('我的页未登录时给登录入口，并列出数据、学习与通用入口', (tester) async {

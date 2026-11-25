@@ -16,6 +16,9 @@ enum LlmFailure {
   /// 上游或实例短时繁忙，等一会儿重试即可，与当天额度用完不同。
   busy,
 
+  /// 服务端没有配置这个模型名，或者该模型不在允许列表里。
+  modelNotAllowed,
+
   badResponse,
   truncated,
 
@@ -73,6 +76,7 @@ String shortTextOf(LlmFailure failure) => switch (failure) {
   LlmFailure.contactUnverified => '还没有确认任何登录方式，托管额度未开放',
   LlmFailure.quotaExhausted => '调用额度不足',
   LlmFailure.busy => '模型服务暂时繁忙',
+  LlmFailure.modelNotAllowed => '当前实例未启用所选聊天模型',
   LlmFailure.badResponse => '模型回复格式无法识别',
   LlmFailure.truncated => '回答被截断，请再试一次',
   LlmFailure.refused => '这个问题模型不能回答，请换一种问法',

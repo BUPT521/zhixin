@@ -643,9 +643,9 @@ void main() {
     final first = await h.service.reply(text: '为什么这里需要独立性？');
     final id = first.userMessage.conversationId;
     expect(first.fromModel, isFalse);
-    // 本地回答接住这次的问题，并说明配置后可以重答。
+    // 本地回答给出学习步骤，恢复入口由结构化状态决定。
     expect(first.reply, contains('为什么这里需要独立性'));
-    expect(first.reply, contains('用模型重新回答'));
+    expect(first.notices, contains(Notice.modelNotConfigured));
 
     h.ai
       ..error = null

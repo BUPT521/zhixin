@@ -1133,8 +1133,13 @@ class DiscussionChatState extends State<DiscussionChat> {
       context,
       title: '登录后重新回答',
       content: '模型调用需要登录知新服务；现在使用的是本地规则回答，登录之后可以重新回答这个问题。',
-      onConfigure: _openModelSettings,
+      onConfigure: _openModelAccount,
     );
+  }
+
+  Future<void> _openModelAccount() async {
+    await openAccount(context);
+    if (mounted) await _readConfigured();
   }
 
   /// 打开设置页并重新读取登录状态；返回后卡片上的入口随之切换。
@@ -1164,7 +1169,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (id == null || _sending || _retrying) return;
     // 未登录时不必发请求：先给登录入口，回来之后再由按钮重新执行这一步。
     if (!_configured) {
-      await _openModelSettings();
+      await _openModelAccount();
       return;
     }
     final cancel = _beginReply(retrying: true);
@@ -1238,6 +1243,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         saved.needsConfig ||
         switch (saved.failure) {
           LlmFailure.auth ||
+          LlmFailure.modelNotAllowed ||
           LlmFailure.badResponse ||
           LlmFailure.toolUnsupported ||
           LlmFailure.unknown => true,
@@ -1267,7 +1273,7 @@ class DiscussionChatState extends State<DiscussionChat> {
             signedIn: _configured,
             primaryLabel: label,
             onPrimary: _retry,
-            onSignIn: _openModelSettings,
+            onSignIn: _openModelAccount,
             onOpenSettings: needsConfig ? _openModelSettings : null,
             onPurchasePoints: purchasePoints,
             enabled: !(_sending || _retrying),

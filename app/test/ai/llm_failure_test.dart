@@ -130,6 +130,36 @@ void main() {
     expect(requests, 1);
   });
 
+  test('模型未启用从代理的 400 归类，且不自动重试', () async {
+    var requests = 0;
+    final client = HttpLlmClient(
+      config: const LlmConfig(apiKey: 'test-key'),
+      retryDelay: Duration.zero,
+      httpClient: MockClient((request) async {
+        requests++;
+        return http.Response(
+          '{"code":"model_not_allowed","extra":{"models":["zhixin-chat"]}}',
+          400,
+          headers: {'content-type': 'application/problem+json'},
+        );
+      }),
+    );
+    await expectLater(
+      client.complete(
+        system: 's',
+        messages: const [LlmMessage(role: 'user', content: 'hi')],
+      ),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.modelNotAllowed,
+        ),
+      ),
+    );
+    expect(requests, 1);
+  });
+
   test('429 rate_limited 归为短时繁忙，并带出 Retry-After 的等待时长', () async {
     var requests = 0;
     final client = HttpLlmClient(

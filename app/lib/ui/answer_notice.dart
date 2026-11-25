@@ -73,7 +73,7 @@ String? _sentenceOf(Notice notice, _NoticeContext context) {
   switch (notice) {
     case Notice.modelConfigReadFailed:
       return '模型配置读取失败，这次先用本地规则回答；问题与本地回答会保存在本机。'
-          '可以回到设置里重新保存一次，或者重新登录。';
+          '可以在设置的开发者模式中重新保存模型配置。';
     case Notice.modelNotConfigured:
       // 没有可发送内容时由下一句一并说明，不重复讲一遍模型未配置。
       if (context.has(Notice.noSendableContent)) return null;
@@ -125,7 +125,8 @@ String _modelNextStep(LlmFailure? failure, QuotaExhaustedReason? quotaReason) =>
         QuotaExhaustedReason.syncing => '积分余额正在同步，请稍后重试，再点「重试这次回答」。',
         QuotaExhaustedReason.instance || null => '模型服务今天的额度已经用完，稍后再点「重试这次回答」。',
       },
-      LlmFailure.contextLimit => '可以缩短问题、减少图片或在设置中核对模型上下文上限。',
+      LlmFailure.contextLimit => '可以缩短问题、减少图片，或在开发者模式中核对模型上下文上限。',
+      LlmFailure.modelNotAllowed => '请在设置的开发者模式中选择当前实例已启用的聊天模型，再重试这次回答。',
       LlmFailure.badResponse ||
       LlmFailure.toolUnsupported => '请检查设置里的模型名，改好后再点「重试这次回答」。',
       _ => '可以点「重试这次回答」。',

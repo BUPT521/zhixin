@@ -8,7 +8,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/ui/discussion_chat.dart';
-import 'package:zhixin/ui/settings_page.dart';
 
 import '../support/app_scope_teardown.dart';
 import '../support/telemetry.dart';
@@ -101,32 +100,10 @@ void main() {
     expect(find.textContaining('已知量和要求的量', findRichText: true), findsWidgets);
     expect(find.widgetWithText(forui.FButton, '登录后使用模型'), findsOneWidget);
 
-    // 从回答卡片直接进入设置页，设置页说明模型要登录之后才能调用。
+    // 从回答卡片进入账号页，登录后可以重答原问题。
     await tester.tap(find.widgetWithText(forui.FButton, '登录后使用模型'));
-    await waitFor(tester, find.text('设置'));
-    // 设置页首读先放骨架，等模型段读完再核对说明。
-    await waitFor(tester, find.textContaining('模型调用只用知新服务'));
-
-    // 模型卡片只填模型名：地址与令牌由登录账号在运行时补上。
-    await tester.enterText(
-      find.descendant(
-        of: find.byType(SettingsPage),
-        matching: find.widgetWithText(forui.FTextField, '模型名'),
-      ),
-      'zhixin-chat',
-    );
-    // 设置页变长之后，直接 ensureVisible 会把按钮顶到页面头部下面；
-    // 按居中位置滚动再点，避免点击落在头部区域。
-    await Scrollable.ensureVisible(
-      tester.element(find.text('保存')),
-      alignment: 0.5,
-    );
-    await tester.pump();
-    await tester.tap(find.text('保存'));
-    await tester.pump();
-    // 没有登录时保存不下来：模型只有知新服务一条路径，先让用户登录。
-    await waitFor(tester, find.textContaining('登录'));
-    expect(storedSecret, isNull, reason: '访问令牌与地址不写进本机配置');
+    await waitFor(tester, find.text('账号与云同步'));
+    expect(storedSecret, isNull);
 
     // 回到原来的讨论：仍然没有登录，恢复入口保持登录引导，不出现重新回答。
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
@@ -165,9 +142,9 @@ void main() {
     expect(find.widgetWithText(forui.FButton, '用模型重新回答'), findsNothing);
     expect(find.widgetWithText(forui.FButton, '重试这次回答'), findsNothing);
 
-    // 未登录时点入口先进设置页；关掉之后回到讨论，回答与问题都没有变化。
+    // 未登录时点入口进入账号页；关掉之后回到讨论，回答与问题都没有变化。
     await tester.tap(find.widgetWithText(forui.FButton, '登录后使用模型').first);
-    await waitFor(tester, find.text('设置'));
+    await waitFor(tester, find.text('账号与云同步'));
     tester.state<NavigatorState>(find.byType(Navigator).first).pop();
     await waitFor(tester, find.text('登录后使用模型'));
     expect(find.text('本地规则'), findsOneWidget);
