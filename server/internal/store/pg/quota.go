@@ -194,6 +194,12 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 		return fmt.Errorf("pg: 开始额度结算事务失败: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	// 实例账本的免费段按“当前用量减这次预留”反推，读与写必须在同一个临界区：
+	// 不取锁时另一个请求的预留或结算会插在读取与写入之间，实例账与 llm_usage 的
+	// 差额会随并发放大。锁与 Reserve 用的同一把，按天串行（ADR-0070、ADR-0073）。
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "llm_usage:"+day); err != nil {
+		return fmt.Errorf("pg: 锁定当日额度失败: %w", err)
+	}
 	q := db.New(tx)
 	instanceDelta := actual - reserved
 	if limit, limited, err := s.accountLimit(ctx, q, userID, kind); err != nil {

@@ -15,11 +15,17 @@ type fakeCaller struct {
 	biz     []map[string]any
 	replies map[string]string
 	err     error
+	// blockQuota 非空时 quota.query 阻塞到它被关闭，用来验证余额刷新不占核销的时间
+	// 预算。
+	blockQuota chan struct{}
 }
 
 func (f *fakeCaller) Call(_ context.Context, method string, biz map[string]any) ([]byte, error) {
 	f.methods = append(f.methods, method)
 	f.biz = append(f.biz, biz)
+	if method == methodQuota && f.blockQuota != nil {
+		<-f.blockQuota
+	}
 	if f.err != nil {
 		return nil, f.err
 	}

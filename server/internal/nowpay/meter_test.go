@@ -22,21 +22,26 @@ type fakeLedger struct {
 	// balanceAsOf 记每次写副本带的快照时刻。
 	balanceAsOf map[string]time.Time
 
-	// available 与 balanceKnown 模拟余额副本；known 为假表示副本缺失或余额表未就绪。
-	available    int64
-	balanceKnown bool
-	// availableErr 让用例模拟读取副本失败。
-	availableErr error
-}
-
-func (f *fakeLedger) AvailablePoints(context.Context, string) (int64, bool, error) {
-	if f.availableErr != nil {
-		return 0, false, f.availableErr
-	}
-	return f.available, f.balanceKnown, nil
+	// capAt 与 capped 模拟 ReservePoints 按余额副本收口：capped 为真时申请量截到
+	// capAt，capAt 为零表示副本没有余额，不写流水。
+	capAt  int64
+	capped bool
+	// reserveErr 让用例模拟写流水失败。
+	reserveErr error
+	// statusEvents 非空时，每次落状态都往这个通道发一份，供并发用例等待结果。
+	statusEvents chan statusChange
 }
 
 func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required int64) (Charge, bool, error) {
+	if f.reserveErr != nil {
+		return Charge{}, false, f.reserveErr
+	}
+	if f.capped {
+		if f.capAt <= 0 {
+			return Charge{}, false, nil
+		}
+		required = min(required, f.capAt)
+	}
 	if required <= f.applied {
 		return Charge{}, false, nil
 	}
@@ -63,7 +68,11 @@ func (f *fakeLedger) Unsettled(context.Context, string, int) ([]Charge, error) {
 }
 
 func (f *fakeLedger) SetStatus(_ context.Context, id, status, note string) error {
-	f.statuses = append(f.statuses, statusChange{id: id, status: status, note: note})
+	change := statusChange{id: id, status: status, note: note}
+	f.statuses = append(f.statuses, change)
+	if f.statusEvents != nil {
+		f.statusEvents <- change
+	}
 	return nil
 }
 
@@ -143,58 +152,34 @@ func TestRecordWithoutChargeableTokensDoesNothing(t *testing.T) {
 	}
 }
 
-// TestRecordSkipsTheChargeWhenTheBalanceCopyIsExhausted 守住余额不足不重复申请：failed
-// 流水不计入当天已申请量，副本已知为零时再申请只会每轮多一条流水、多一次核销失败。
-func TestRecordSkipsTheChargeWhenTheBalanceCopyIsExhausted(t *testing.T) {
-	caller := &fakeCaller{}
-	ledger := &fakeLedger{balanceKnown: true}
-	meter := newTestMeter(t, ledger, caller)
-	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
-	if len(ledger.created) != 0 {
-		t.Fatalf("余额为零时不该写流水: %+v", ledger.created)
-	}
-	if len(meter.queue) != 0 || len(caller.methods) != 0 {
-		t.Fatalf("余额为零时不该排队核销或调用即刻收: queue=%d methods=%v",
-			len(meter.queue), caller.methods)
-	}
-}
-
-// TestRecordCapsTheChargeAtTheBalanceCopy 守住截断而不是跳过：副本有五积分、应扣二十
-// 积分时先申请五积分，把已有余额先扣掉，差额等余额补上后的下一次结算再算。
-func TestRecordCapsTheChargeAtTheBalanceCopy(t *testing.T) {
-	ledger := &fakeLedger{available: 5, balanceKnown: true}
+// TestRecordQueuesWhateverTheLedgerReserved 守住收口在 ReservePoints 一处：流水已经按
+// 副本截断过时，核销按截断后的积分排队；ReservePoints 说不用申请时既不写流水也不
+// 排队（ADR-0073）。
+func TestRecordQueuesWhateverTheLedgerReserved(t *testing.T) {
+	ledger := &fakeLedger{capped: true, capAt: 5}
 	meter := newTestMeter(t, ledger, &fakeCaller{})
 	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
-	if len(ledger.created) != 1 {
-		t.Fatalf("应写一条截断后的流水: %+v", ledger.created)
-	}
-	if ledger.created[0].Points != 5 {
-		t.Fatalf("应扣二十积分时只能申请副本里的五积分: %+v", ledger.created[0])
+	if len(ledger.created) != 1 || ledger.created[0].Points != 5 {
+		t.Fatalf("应写一条按副本截断后的流水: %+v", ledger.created)
 	}
 	if len(meter.queue) != 1 {
 		t.Fatalf("截断后的流水应排队核销，实际队列 %d", len(meter.queue))
 	}
-}
-
-// TestRecordChargesTheFullAmountWhenTheBalanceCopyIsUnknown 守住副本未知时不截断：
-// 没有行或余额表未就绪时沿用原来的整额申请，由核销结果再去修正副本。
-func TestRecordChargesTheFullAmountWhenTheBalanceCopyIsUnknown(t *testing.T) {
-	ledger := &fakeLedger{}
-	meter := newTestMeter(t, ledger, &fakeCaller{})
-	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
-	if len(ledger.created) != 1 || ledger.created[0].Points != 20 {
-		t.Fatalf("副本未知时应整额申请二十积分: %+v", ledger.created)
+	if next := <-meter.queue; next.charge.Points != 5 {
+		t.Fatalf("队列里的积分应为截断后的五积分: %+v", next)
 	}
 }
 
-// TestRecordChargesTheFullAmountWhenTheBalanceCopyCannotBeRead 守住读取失败按未知处理：
-// 不能因为一次读失败就少记账或跳过申请。
-func TestRecordChargesTheFullAmountWhenTheBalanceCopyCannotBeRead(t *testing.T) {
-	ledger := &fakeLedger{availableErr: errors.New("pg: 读取积分余额副本失败")}
-	meter := newTestMeter(t, ledger, &fakeCaller{})
+// TestRecordStopsWhenTheLedgerRefuses 守住余额为零时不重复申请：ReservePoints 返回
+// 不用申请时，既不排队核销，也不调用即刻收。
+func TestRecordStopsWhenTheLedgerRefuses(t *testing.T) {
+	caller := &fakeCaller{}
+	ledger := &fakeLedger{capped: true}
+	meter := newTestMeter(t, ledger, caller)
 	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
-	if len(ledger.created) != 1 || ledger.created[0].Points != 20 {
-		t.Fatalf("读取副本失败时应整额申请二十积分: %+v", ledger.created)
+	if len(ledger.created) != 0 || len(meter.queue) != 0 || len(caller.methods) != 0 {
+		t.Fatalf("余额为零时不该写流水、排队或调用即刻收: %+v queue=%d methods=%v",
+			ledger.created, len(meter.queue), caller.methods)
 	}
 }
 
@@ -338,10 +323,10 @@ func TestRefreshBalanceQueriesTheGatewayAndSavesTheCopy(t *testing.T) {
 	if !meter.RefreshBalance(context.Background(), "user_1") {
 		t.Fatal("第一次余额查询应入队")
 	}
-	if len(meter.queue) != 1 {
-		t.Fatalf("应排一次余额查询，实际 %d", len(meter.queue))
+	if len(meter.refreshQueue) != 1 {
+		t.Fatalf("应排一次余额查询，实际 %d", len(meter.refreshQueue))
 	}
-	next := <-meter.queue
+	next := <-meter.refreshQueue
 	if !next.balance || next.userID != "user_1" {
 		t.Fatalf("队列里应是一次余额查询: %+v", next)
 	}
@@ -383,8 +368,62 @@ func TestRefreshBalanceCoalescesRepeatedRequests(t *testing.T) {
 	if !meter.RefreshBalance(context.Background(), "user_2") {
 		t.Fatal("另一个账号应单独入队")
 	}
-	if len(meter.queue) != 2 {
-		t.Fatalf("同一账号的重复查询应合并，实际队列 %d", len(meter.queue))
+	if len(meter.refreshQueue) != 2 {
+		t.Fatalf("同一账号的重复查询应合并，实际队列 %d", len(meter.refreshQueue))
+	}
+}
+
+// TestBalanceRefreshDoesNotBlockCharges 守住队列拆分的目的：余额查询卡在网关时，
+// 核销仍由另一个协程完成，不占核销的时间预算（ADR-0073）。
+func TestBalanceRefreshDoesNotBlockCharges(t *testing.T) {
+	release := make(chan struct{})
+	caller := &fakeCaller{
+		blockQuota: release,
+		replies: map[string]string{
+			methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","remaining":97}`,
+			methodQuota:  `{"code":"10000","quota_unit":"POINT","remaining":10}`,
+		},
+	}
+	ledger := &fakeLedger{statusEvents: make(chan statusChange, 4)}
+	meter := newTestMeter(t, ledger, caller)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	meter.Start(ctx)
+	defer close(release)
+	if !meter.RefreshBalance(ctx, "user_1") {
+		t.Fatal("余额查询应入队")
+	}
+	meter.enqueue(job{
+		charge: Charge{ID: "nc_1", UserID: "user_1", Points: 3, Status: StatusPending},
+		verify: true,
+	})
+	select {
+	case got := <-ledger.statusEvents:
+		if got.status != StatusSucceeded {
+			t.Fatalf("核销应在刷新卡住时完成: %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("余额查询卡住时核销没有完成，说明两条队列仍互相阻塞")
+	}
+	// 刷新协程仍在等网关；这里只确认核销已经落库。
+	if len(meter.refreshQueue) != 0 {
+		t.Fatalf("刷新任务应已被取走，实际队列 %d", len(meter.refreshQueue))
+	}
+}
+
+// TestFullRefreshQueueDropsTheRefresh 守住刷新队列满时的处理：丢弃并报告没有入队，
+// 不阻塞请求，也不 panic。
+func TestFullRefreshQueueDropsTheRefresh(t *testing.T) {
+	ledger := &fakeLedger{}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	for i := 0; i < cap(meter.refreshQueue); i++ {
+		meter.refreshQueue <- job{}
+	}
+	if meter.RefreshBalance(context.Background(), "user_9") {
+		t.Fatal("刷新队列满时应报告没有入队")
+	}
+	if len(meter.refreshQueue) != cap(meter.refreshQueue) {
+		t.Fatalf("队列满时不该再放入任务，实际 %d", len(meter.refreshQueue))
 	}
 }
 

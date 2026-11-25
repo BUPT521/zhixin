@@ -35,12 +35,11 @@ type Charge struct {
 }
 
 // Ledger 保存核销流水，由 store/pg 实现。ReservePoints 必须在同一个事务里比较当天
-// 已申请量与 required 再决定写不写，否则两个并发结算会各按旧值再扣一次。
+// 已申请量与 required 再决定写不写，否则两个并发结算会各按旧值再扣一次；余额副本
+// 也要在同一个事务与同一把锁里读，收口之后的申请量不会被并发的余额更新推翻
+// （ADR-0073）。
 type Ledger interface {
 	ReservePoints(ctx context.Context, charge Charge, required int64) (Charge, bool, error)
-	// AvailablePoints 返回本地余额副本里的可用积分。known 为假表示副本缺失或余额表
-	// 未就绪，此时不能按副本截断申请量，见 Meter.Record。
-	AvailablePoints(ctx context.Context, userID string) (int64, bool, error)
 	Unsettled(ctx context.Context, userID string, limit int) ([]Charge, error)
 	SetStatus(ctx context.Context, id, status, note string) error
 	// SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本，asOf 是这份余额对应的
@@ -79,12 +78,19 @@ type Recorder interface {
 //
 // 交付与核销的先后是“先交付后核销”：模型的回答已经发给用户之后才记账，核销失败
 // 不回滚回答，留在 pending 或 processing 的流水由下一轮请求前补查，见 ADR-0067。
+// 核销与余额刷新分两条队列：余额查询是外部调用，不能占住核销的时间预算，队列满时
+// 直接丢弃并在下一次请求时重新合并（ADR-0073）。
 type Meter struct {
 	client   *Client
 	ledger   Ledger
 	perPoint int64
 	log      *slog.Logger
-	queue    chan job
+	// queue 是核销与补查队列，容量按一次补查能带上的流水数留足；满了只记日志，
+	// 流水留在本地，下一轮请求或全局补查接手。
+	queue chan job
+	// refreshQueue 是余额刷新队列。查询失败或队列满都只影响副本的同步时间，不阻塞
+	// 核销，也不阻塞请求。
+	refreshQueue chan job
 
 	// refreshAt 记每个账号最近一次排进队列的余额查询时间，键在合并窗口过去之后
 	// 清理，map 不随注册过的账号数一直增长。
@@ -101,6 +107,15 @@ type job struct {
 	userID  string
 }
 
+// 队列容量与两类任务的时间预算。余额刷新的超时短于核销，查询变慢时先放弃刷新，
+// 把时间留给已经在队列里的核销。
+const (
+	chargeQueueSize  = 256
+	refreshQueueSize = 64
+	chargeTimeout    = 20 * time.Second
+	refreshTimeout   = 8 * time.Second
+)
+
 // NewMeter 装配一个核销执行器。perPoint 是一个积分覆盖的计费 token 数，来自配置。
 func NewMeter(client *Client, ledger Ledger, perPoint int64, log *slog.Logger) (*Meter, error) {
 	if client == nil || ledger == nil {
@@ -114,35 +129,36 @@ func NewMeter(client *Client, ledger Ledger, perPoint int64, log *slog.Logger) (
 	}
 	return &Meter{
 		client: client, ledger: ledger, perPoint: perPoint, log: log,
-		queue: make(chan job, 256), refreshAt: map[string]time.Time{},
+		queue: make(chan job, chargeQueueSize), refreshQueue: make(chan job, refreshQueueSize),
+		refreshAt: map[string]time.Time{},
 	}, nil
 }
 
-// Start 启动唯一的核销协程并在 ctx 结束时退出。队列外的调用方不等待它。
+// Start 启动两个协程：核销与补查一条，余额刷新一条，ctx 结束时一起退出。队列外的
+// 调用方都不等待它们。
 func (m *Meter) Start(ctx context.Context) {
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case next := <-m.queue:
-				m.run(ctx, next)
-			}
+	go m.loop(ctx, m.queue)
+	go m.loop(ctx, m.refreshQueue)
+}
+
+func (m *Meter) loop(ctx context.Context, queue <-chan job) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case next := <-queue:
+			m.run(ctx, next)
 		}
-	}()
+	}
 }
 
 // Record 按当天累计应当由积分承担的计费 token 数核销差额，传入的不是单轮用量。
 // 当天已经申请过的积分（含待确认与处理中）先扣掉，所以同一轮结算重入不会重复扣款，
-// 一整天多记的积分也不超过一个。余额副本已知时再按它收口，余额不足的申请不会每轮
-// 重复写一条流水、再核销失败一次，见 capToBalance。
+// 一整天多记的积分也不超过一个。余额副本已知时由 ReservePoints 在同一个事务里按
+// 可用积分收口，余额不足的申请不会每轮重复写一条流水、再核销失败一次（ADR-0073）。
 func (m *Meter) Record(ctx context.Context, userID, day string, chargeableTokens int64) {
 	required := Points(chargeableTokens, m.perPoint)
 	if required <= 0 {
-		return
-	}
-	required, ok := m.capToBalance(ctx, userID, required)
-	if !ok {
 		return
 	}
 	charge := Charge{
@@ -158,29 +174,6 @@ func (m *Meter) Record(ctx context.Context, userID, day string, chargeableTokens
 		return
 	}
 	m.enqueue(job{charge: reserved, verify: true})
-}
-
-// capToBalance 按本地余额副本收口本次申请量，第二个返回值表示是否还要申请。failed
-// 流水不计入当天已申请量，余额不足时若照旧整额申请，每一轮结算都会再写一条流水、再
-// 核销失败一次；副本已知不超过零时直接不申请。副本小于 required 时截到副本，先扣掉
-// 部分余额，避免余额一直攒着不动，差额等余额补上之后的下一次结算再算。副本未知
-// （没有行或余额表未就绪）或读取失败时保持原值，与按副本放行之前的做法一致。
-func (m *Meter) capToBalance(ctx context.Context, userID string, required int64) (int64, bool) {
-	available, known, err := m.ledger.AvailablePoints(ctx, userID)
-	if err != nil {
-		m.log.Error("read the nowpay balance copy", "user_id", userID, "error", err)
-		return required, true
-	}
-	if !known {
-		return required, true
-	}
-	if available <= 0 {
-		return 0, false
-	}
-	if available < required {
-		return available, true
-	}
-	return required, true
 }
 
 // Resume 把还没有确认结果的流水排进队列：pengding 的用原参数重试核销，processing
@@ -201,13 +194,12 @@ func (m *Meter) Resume(ctx context.Context, userID string) {
 // RefreshBalance 排一次余额查询并覆盖本地副本。额度预留发现副本缺失或超过
 // BalanceRefreshAfter 时调用它；这一轮请求按旧值判断，下一次请求才能看到新余额。
 // 同一账号在 refreshInterval 内只排一次，连续被拒的请求不会各自再排。返回值表示这次
-// 是否真的入了队，429 据此给出“正在同步”（ADR-0073）。
+// 是否真的入了刷新队列，429 据此给出“正在同步”（ADR-0073）。
 func (m *Meter) RefreshBalance(_ context.Context, userID string) bool {
 	if userID == "" || !m.markRefresh(userID) {
 		return false
 	}
-	m.enqueue(job{balance: true, userID: userID})
-	return true
+	return m.enqueue(job{balance: true, userID: userID})
 }
 
 // markRefresh 记下这次余额查询并报告是否要真的排队；同一个账号在合并窗口内重复
@@ -234,20 +226,38 @@ func (m *Meter) markRefresh(userID string) bool {
 // TokensPerPoint 是一个积分覆盖的计费 token 数，额度预留按它把余额折成 token。
 func (m *Meter) TokensPerPoint() int64 { return m.perPoint }
 
-// enqueue 不阻塞：队列满时流水留在本地，下一轮请求前补查。
-func (m *Meter) enqueue(next job) {
+// enqueue 把任务放进对应的队列，不阻塞，返回是否真的入了队。核销队列满时流水留在
+// 本地，下一轮请求或全局补查接手；刷新队列满时直接丢弃，同一账号一分钟内的下一次
+// 请求会重新合并一次查询。
+func (m *Meter) enqueue(next job) bool {
+	queue := m.queue
+	if next.balance {
+		queue = m.refreshQueue
+	}
 	select {
-	case m.queue <- next:
+	case queue <- next:
+		return true
 	default:
+		if next.balance {
+			m.log.Warn("balance refresh queue is full; dropping it and merging into the next request",
+				"user_id", next.userID)
+			return false
+		}
 		m.log.Warn("nowpay queue is full; leaving the charge for the next request",
 			"charge_id", next.charge.ID)
+		return false
 	}
 }
 
 // run 执行一次核销、补查或余额刷新，并把结果落到流水或余额副本上。asOf 是发起
-// 核销的时刻，核销结果没有携带快照时间时用它写副本（ADR-0073）。
+// 核销的时刻，核销结果没有携带快照时间时用它写副本（ADR-0073）。余额刷新用更短的
+// 超时，查询变慢时放弃刷新，不占用核销的时间预算。
 func (m *Meter) run(parent context.Context, next job) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 20*time.Second)
+	timeout := chargeTimeout
+	if next.balance {
+		timeout = refreshTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), timeout)
 	defer cancel()
 	if next.balance {
 		m.refresh(ctx, next.userID)

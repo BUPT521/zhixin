@@ -97,26 +97,14 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 	return llmproxy.Points{Charged: charged, Remaining: view.points, Known: true}, nil
 }
 
-// AvailablePoints 返回本地余额副本里的可用积分，供核销侧决定这次申请多少。与
-// paidTokens 的口径一致：副本表还没建好或账号还没有同步过余额时返回 known=false，
-// 调用方按未知处理，不按副本截断申请量；读取失败只返回错误，不伪装成零余额。
-func (s *Store) AvailablePoints(ctx context.Context, userID string) (int64, bool, error) {
-	if userID == "" || !s.balanceReady.Load() {
-		return 0, false, nil
-	}
-	balance, err := s.q.BalanceForReserve(ctx, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
-	}
-	if err != nil {
-		return 0, false, fmt.Errorf("pg: 读取积分余额副本失败: %w", err)
-	}
-	return balance.RemainingPoints, true, nil
-}
-
 // ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。同一天同一账号
 // 的申请用事务级 advisory lock 排队：并发结算是不同请求，行锁管不到还没有的行，
 // 只看一次已申请量会让两笔各自再扣一次。
+//
+// 余额副本也在同一个事务与同一把锁里读，按可用积分收口申请量（ADR-0073）：可用
+// 积分为零时不写流水、不调用即刻收；副本小于应扣积分时只申请副本里的那一部分，
+// 差额等余额补上之后的下一次结算再算。副本行不存在、余额表未就绪或读取失败时保持
+// 整额申请，一次读取失败不会少记账。
 func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, required int64) (nowpay.Charge, bool, error) {
 	if required <= 0 || charge.UserID == "" || charge.ID == "" {
 		return nowpay.Charge{}, false, nil
@@ -135,6 +123,30 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 		return nowpay.Charge{}, false, fmt.Errorf("pg: 锁定当日积分核销失败: %w", err)
 	}
 	q := db.New(tx)
+	if s.balanceReady.Load() {
+		balance, err := q.BalanceForReserve(ctx, charge.UserID)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			// 还没有副本行，按未知处理，保持整额申请。
+		case err != nil:
+			s.log.Error("read the nowpay balance copy for the charge",
+				"user_id", charge.UserID, "error", err)
+		default:
+			unreflected, err := q.UnreflectedChargePoints(ctx, db.UnreflectedChargePointsParams{
+				UserID: text(charge.UserID), AsOf: balance.SyncedAt,
+			})
+			if err != nil {
+				s.log.Error("read the unreflected nowpay charges",
+					"user_id", charge.UserID, "error", err)
+			} else {
+				available := max(balance.RemainingPoints-unreflected, 0)
+				if available <= 0 {
+					return nowpay.Charge{}, false, nil
+				}
+				required = min(required, available)
+			}
+		}
+	}
 	applied, err := q.AppliedChargePoints(ctx, db.AppliedChargePointsParams{UserID: text(charge.UserID), Day: date})
 	if err != nil {
 		return nowpay.Charge{}, false, fmt.Errorf("pg: 读取当日已申请积分失败: %w", err)

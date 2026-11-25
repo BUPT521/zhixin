@@ -3,6 +3,7 @@ package pg
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -285,30 +286,130 @@ func TestPostgresSaveBalanceClampsNegative(t *testing.T) {
 	}
 }
 
-// TestPostgresAvailablePointsReadsTheBalanceCopy 守住核销侧的读法：余额表未建好或
-// 账号还没有副本行时按未知返回，有行时返回副本里的剩余积分，核销据此决定是否按
-// 副本收口申请量（ADR-0069）。
-func TestPostgresAvailablePointsReadsTheBalanceCopy(t *testing.T) {
+// TestPostgresReservePointsCapsAtTheBalanceCopy 守住核销侧按可用积分收口：副本五
+// 积分、应扣二十积分时只写五积分；同一天再申请时副本已经被这笔流水占满，不再写
+// 新流水（ADR-0073）。
+func TestPostgresReservePointsCapsAtTheBalanceCopy(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	// 余额副本表还没建好：按未知返回，不报错。
-	if points, known, err := st.AvailablePoints(ctx, "u1"); err != nil || known || points != 0 {
-		t.Fatalf("余额表未建好时应按未知返回，得到 %d %v %v", points, known, err)
-	}
 	enablePaidQuota(t, st)
-	// 表已建好但账号还没有副本行：同样按未知返回。
-	if points, known, err := st.AvailablePoints(ctx, "u1"); err != nil || known || points != 0 {
-		t.Fatalf("没有副本行时应按未知返回，得到 %d %v %v", points, known, err)
-	}
-	if err := st.SaveBalance(ctx, "u1", 7, time.Now()); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
-	points, known, err := st.AvailablePoints(ctx, "u1")
-	if err != nil || !known || points != 7 {
-		t.Fatalf("有副本时应返回剩余积分 7，得到 %d %v %v", points, known, err)
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
+	}, 20)
+	if err != nil || !ok || charge.Points != 5 {
+		t.Fatalf("应只申请副本里的五积分: %+v %v %v", charge, ok, err)
+	}
+	if _, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_2", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
+	}, 20); err != nil || ok {
+		t.Fatalf("副本已被占满时不该再写流水: %v %v", ok, err)
+	}
+}
+
+// TestPostgresReservePointsSubtractsUnreflectedCharges 守住副本之外还没有反映的核销
+// 也占着余额：副本五积分、两积分待确认时，当天合计最多申请三积分，这次只补一积分
+// （ADR-0073）。
+func TestPostgresReservePointsSubtractsUnreflectedCharges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status)
+		 VALUES ('nc_old', 'u1', '2026-11-25'::date, 2, 20000, 'pending')`); err != nil {
+		t.Fatalf("insert charge: %v", err)
+	}
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
+	}, 20)
+	if err != nil || !ok || charge.Points != 1 {
+		t.Fatalf("当天合计应只申请三积分，这次补一积分: %+v %v %v", charge, ok, err)
+	}
+}
+
+// TestPostgresReservePointsWithoutBalanceCopyChargesInFull 守住读不到副本时不截断：
+// 没有副本行、余额表未就绪或读取失败都按整额申请，一次读取失败不会少记账。
+func TestPostgresReservePointsWithoutBalanceCopyChargesInFull(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
+	}, 20)
+	if err != nil || !ok || charge.Points != 20 {
+		t.Fatalf("没有副本时应整额申请二十积分: %+v %v %v", charge, ok, err)
+	}
+}
+
+// TestPostgresReservePointsZeroCopyWritesNothing 守住副本为零时的跳过：不写流水，
+// 也不留下一个注定失败的核销（ADR-0073）。
+func TestPostgresReservePointsZeroCopyWritesNothing(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	if err := st.SaveBalance(ctx, "u1", 0, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	if _, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
+	}, 20); err != nil || ok {
+		t.Fatalf("副本为零时不该写流水: %v %v", ok, err)
+	}
+	var count int64
+	if err := st.pool.QueryRow(ctx,
+		`SELECT count(*) FROM nowpay_charge WHERE user_id = 'u1'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("副本为零时不该留下流水，实际 %d 条", count)
+	}
+}
+
+// TestPostgresConcurrentReserveAndSettleKeepTheInstanceLedger 守住实例账在并发下
+// 不会变成负数，也不会超过预算（ADR-0070 的免费段）。
+func TestPostgresConcurrentReserveAndSettleKeepTheInstanceLedger(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	st.SetQuotaLimits(1_000_000, 1_000_000, 1000)
+	var wg sync.WaitGroup
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 150); err != nil {
+				return
+			}
+			_ = st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 150, 150, llmproxy.Usage{Input: 150})
+		}()
+	}
+	wg.Wait()
+	used, err := st.InstanceUsed(ctx, day)
+	if err != nil {
+		t.Fatalf("instance used: %v", err)
+	}
+	if used < 0 || used > 1000 {
+		t.Fatalf("实例账应在 0 到预算之间，得到 %d", used)
 	}
 }
 
