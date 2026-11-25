@@ -1361,9 +1361,13 @@ components:
   schemas:
     QuotaPurchaseOverview:
       type: object
-      required: [balance_points, legacy_balance_tokens]
+      required: [balance_points, legacy_balance_tokens, tokens_per_point]
       properties:
         product: { $ref: '#/components/schemas/QuotaPurchaseProduct' }
+        tokens_per_point:
+          type: integer
+          format: int64
+          description: 一个积分覆盖的计费 token 数，客户端据此把积分与档位换算成 token，见 ADR-0068
         balance_points:
           type: integer
           format: int64

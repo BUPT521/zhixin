@@ -951,6 +951,9 @@ type QuotaPurchaseOverview struct {
 
 	// Product 即刻收商品；服务未配置商品或账号未验证登录方式时整体省略，是否允许购买看 capability_status
 	Product *QuotaPurchaseProduct `json:"product,omitempty"`
+
+	// TokensPerPoint 一个积分覆盖的计费 token 数，客户端据此把积分与档位换算成 token，见 ADR-0068
+	TokensPerPoint int64 `json:"tokens_per_point"`
 }
 
 // QuotaPurchaseProduct 即刻收商品；服务未配置商品或账号未验证登录方式时整体省略，是否允许购买看 capability_status

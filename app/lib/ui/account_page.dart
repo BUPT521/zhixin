@@ -1217,6 +1217,7 @@ class _AccountPageState extends State<AccountPage> {
           key: ValueKey((_snapshot!.serverBaseUrl, _snapshot!.session!.userId)),
           account: AppScope.of(context).accountServices.account,
           enabled: !_busy,
+          dailyTokens: _quota?.dailyTokens,
           onPaid: _load,
         ),
       SectionHeading(title: '账号与数据管理'),

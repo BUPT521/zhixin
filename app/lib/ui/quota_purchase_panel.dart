@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../application/account_service.dart';
 import '../domain/models/quota_purchase.dart';
+import 'format.dart';
 import 'theme.dart';
 
 /// “模型额度”一节：展示即刻收的积分余额与档位，按托管购买页完成付款。
@@ -17,11 +18,15 @@ class QuotaPurchasePanel extends StatefulWidget {
     required this.account,
     required this.enabled,
     required this.onPaid,
+    this.dailyTokens,
     super.key,
   });
 
   final AccountService account;
   final bool enabled;
+
+  /// 聊天每天免费额度的计费 token 数，用来把档位换算成天数；额度读不到时为 null。
+  final int? dailyTokens;
 
   /// 余额变多之后回调，让账号页刷新今日额度。
   final Future<void> Function() onPaid;
@@ -87,6 +92,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
         _purchases = QuotaPurchaseOverview(
           balancePoints: balance.remaining,
           legacyBalanceTokens: purchases.legacyBalanceTokens,
+          tokensPerPoint: purchases.tokensPerPoint,
           product: purchases.product,
           latestPurchase: purchases.latestPurchase,
         );
@@ -147,6 +153,23 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     }
     final theme = context.zhixin;
     final enabled = !_busy && widget.enabled;
+    final tokensPerPoint = purchases.tokensPerPoint;
+    final ratio = tokensPerPoint != null && tokensPerPoint > 0
+        ? tokensPerPoint
+        : null;
+    final daily = widget.dailyTokens;
+    // 换算口径见 ADR-0068：一个积分覆盖 ratio 个计费 token，免费额度也按计费
+    // token 计。额度读不到时只说明比例，不猜每天有多少。
+    String? legend;
+    if (ratio != null) {
+      legend = '1 积分 = ${tokenAmount(ratio)} 计费 token';
+      if (daily != null && daily > 0) {
+        legend =
+            '1 积分 = ${tokenAmount(ratio)} 计费 token；'
+            '今天的免费额度是 ${tokenAmount(daily)} 计费 token，'
+            '约 ${groupDigits(daily ~/ ratio)} 积分。';
+      }
+    }
     return Padding(
       padding: EdgeInsets.only(top: theme.space.sm),
       child: forui.FCard(
@@ -155,11 +178,21 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('可用积分 ${purchases.balancePoints} 分'),
+              Text('可用积分 ${groupDigits(purchases.balancePoints)} 分'),
               if (hasLegacy)
-                Text('已购聊天额度 ${purchases.legacyBalanceTokens} token'),
+                Text(
+                  '已购聊天额度 '
+                  '${tokenAmount(purchases.legacyBalanceTokens)} 计费 token',
+                ),
+              if (legend != null)
+                Text(
+                  legend,
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
               Text(
-                '按计费 token 折算后核销，先使用每日免费额度，再使用积分。',
+                '积分跨日保留；每轮结束先扣当天免费额度，再扣积分。',
                 style: theme.text.bodySmall.copyWith(
                   color: theme.colors.onSurfaceVariant,
                 ),
@@ -167,8 +200,24 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
               if (product != null && !product.purchasable)
                 Text(_statusText(product.capabilityStatus)),
               for (final option in options)
-                Text(
-                  '${option.displayName} · ¥${option.price} · ${option.quotaAmount} 分',
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.xs),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${option.displayName} · ¥${option.price} · '
+                        '${groupDigits(option.quotaAmount)} 分',
+                      ),
+                      if (ratio != null)
+                        Text(
+                          _conversion(option.quotaAmount * ratio, daily),
+                          style: theme.text.bodySmall.copyWith(
+                            color: theme.colors.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               if (_notice case final notice?) Text(notice),
               if (_busy) const Text('正在与支付宝核对…'),
@@ -182,7 +231,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
                       forui.FButton(
                         mainAxisSize: MainAxisSize.min,
                         onPress: enabled ? () => _buy(option) : null,
-                        child: Text('购买 ${option.quotaAmount} 分'),
+                        child: Text('购买 ${groupDigits(option.quotaAmount)} 分'),
                       ),
                     forui.FButton(
                       mainAxisSize: MainAxisSize.min,
@@ -198,6 +247,13 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
         ),
       ),
     );
+  }
+
+  /// 一档积分的换算：按服务端给的比例换成计费 token，有每日额度时再给出天数。
+  String _conversion(int tokens, int? dailyTokens) {
+    final base = '约 ${tokenAmount(tokens)}计费 token';
+    if (dailyTokens == null || dailyTokens <= 0) return base;
+    return '$base，折合 ${quotaDays(tokens / dailyTokens)} 天的免费额度';
   }
 
   /// 商品不可售时说明原因。已下架与已归档只停新增购买，已有积分照常使用。

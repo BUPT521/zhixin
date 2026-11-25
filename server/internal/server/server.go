@@ -110,15 +110,17 @@ func newPurchaseHandler(cfg config.Config, st Stores, log *slog.Logger) *nowpay.
 		legacy = st.Payments
 	}
 	callback := ""
+	tokensPerPoint := int64(1000)
 	if cfg.NowPay != nil {
 		callback = cfg.NowPay.CallbackURL
+		tokensPerPoint = cfg.NowPay.TokensPerPoint
 		if st.NowPay == nil {
 			// 配了商品却没有客户端时购买接口只会回本地余额，等于卖不了；这条日志
 			// 让装配漏项在启动时就看得见，而不是等用户点购买才发现。
 			log.Error("ZHIXIN_NOWPAY_PRODUCT_ID is set but no nowpay client is wired: purchases only return the legacy balance")
 		}
 	}
-	return nowpay.NewHandler(st.NowPay, st.Purchases, legacy, callback, log, cfg.RateLimitKeys)
+	return nowpay.NewHandler(st.NowPay, st.Purchases, legacy, callback, log, cfg.RateLimitKeys, tokensPerPoint)
 }
 
 // DeleteAccountData 把各存储的账号清理合成一次操作：auth.Service 在删除账号行

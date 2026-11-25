@@ -1331,6 +1331,7 @@ class ServerClient {
     return QuotaPurchaseOverview(
       balancePoints: json['balance_points'] as int,
       legacyBalanceTokens: json['legacy_balance_tokens'] as int,
+      tokensPerPoint: (json['tokens_per_point'] as num?)?.toInt(),
       product: product == null ? null : _quotaProduct(product),
       latestPurchase: latest == null ? null : _quotaLink(latest),
     );

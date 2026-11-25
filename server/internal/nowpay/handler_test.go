@@ -37,7 +37,7 @@ type fakeLegacy struct{ balance int64 }
 func (f fakeLegacy) PurchaseBalance(context.Context, string) (int64, error) { return f.balance, nil }
 
 func newTestHandler(client *Client, purchases *fakePurchases, legacy LegacyBalance) *Handler {
-	handler := NewHandler(client, purchases, legacy, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8)
+	handler := NewHandler(client, purchases, legacy, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 1000)
 	handler.limit, handler.global = ratelimit.Disabled(), ratelimit.Disabled()
 	return handler
 }
@@ -68,6 +68,20 @@ func TestOverviewWithoutProductReturnsTheLegacyBalanceOnly(t *testing.T) {
 	view := decode[api.QuotaPurchaseOverview](t, response)
 	if view.Product != nil || view.BalancePoints != 0 || view.LegacyBalanceTokens != 5000 {
 		t.Fatalf("未配置商品时只回遗留余额: %+v", view)
+	}
+	if view.TokensPerPoint != 1000 {
+		t.Fatalf("未配置商品时仍按默认比例返回: %+v", view)
+	}
+}
+
+func TestOverviewReturnsTheConfiguredTokensPerPoint(t *testing.T) {
+	handler := NewHandler(nil, &fakePurchases{}, fakeLegacy{}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 500)
+	handler.limit, handler.global = ratelimit.Disabled(), ratelimit.Disabled()
+	response := httptest.NewRecorder()
+	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
+	view := decode[api.QuotaPurchaseOverview](t, response)
+	if view.TokensPerPoint != 500 {
+		t.Fatalf("概览应原样返回配置的比例: %+v", view)
 	}
 }
 

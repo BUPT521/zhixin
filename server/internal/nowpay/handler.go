@@ -45,17 +45,25 @@ type Handler struct {
 	log       *slog.Logger
 	limit     *ratelimit.Limiter
 	global    *ratelimit.Limiter
+
+	// tokensPerPoint 是一个积分覆盖的计费 token 数，概览接口原样返回，供客户端把
+	// 积分换算成 token；没有配置商品时仍按默认比例返回。
+	tokensPerPoint int64
 }
 
 // NewHandler 装配三个接口。client 为空表示没有配置即刻收商品，接口只返回本地余额。
-func NewHandler(client *Client, purchases PurchaseStore, legacy LegacyBalance, callback string, log *slog.Logger, rateKeys int) *Handler {
+func NewHandler(client *Client, purchases PurchaseStore, legacy LegacyBalance, callback string, log *slog.Logger, rateKeys int, tokensPerPoint int64) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
+	if tokensPerPoint <= 0 {
+		tokensPerPoint = 1000
+	}
 	return &Handler{
 		client: client, purchases: purchases, legacy: legacy, callback: callback, log: log,
-		limit:  ratelimit.New(0.5, 6, 15*time.Minute, rateKeys),
-		global: ratelimit.NewGlobal(ratelimit.Limit{PerSecond: 12, Burst: 24}),
+		limit:          ratelimit.New(0.5, 6, 15*time.Minute, rateKeys),
+		global:         ratelimit.NewGlobal(ratelimit.Limit{PerSecond: 12, Burst: 24}),
+		tokensPerPoint: tokensPerPoint,
 	}
 }
 
@@ -63,7 +71,10 @@ func NewHandler(client *Client, purchases PurchaseStore, legacy LegacyBalance, c
 // 按 capability_status 决定是否显示购买入口；余额查询失败不按零处理。
 func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	principal := auth.MustPrincipal(r.Context())
-	view := api.QuotaPurchaseOverview{LegacyBalanceTokens: h.legacyBalance(r.Context(), principal.UserID)}
+	view := api.QuotaPurchaseOverview{
+		LegacyBalanceTokens: h.legacyBalance(r.Context(), principal.UserID),
+		TokensPerPoint:      h.tokensPerPoint,
+	}
 	if h.client == nil || !principal.ContactVerified {
 		httpx.WriteJSON(w, http.StatusOK, view)
 		return

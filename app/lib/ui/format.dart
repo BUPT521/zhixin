@@ -44,6 +44,41 @@ String monthDayRange(DateTime start, DateTime end) =>
 
 String dateText(DateTime? date) => date == null ? '未定' : formatDate(date);
 
+/// 计费 token 的简写：一万以上用“万”，一亿以上用“亿”，其余保留千位分隔。
+///
+/// 积分折算与每日额度都是大数，界面写“100 万”比“1000000”好读，换算口径见
+/// [ADR-0068](../../docs/adr/0068-聊天积分包的档位与价格.md)。
+String tokenAmount(int tokens) {
+  final value = tokens.abs();
+  if (value >= 100000000) return '${_trimZero(tokens / 100000000)} 亿';
+  if (value >= 10000) return '${_trimZero(tokens / 10000)} 万';
+  return _group(tokens);
+}
+
+/// 按每日免费额度算出的天数：十以下保留一位小数，十以上取整。
+String quotaDays(double days) {
+  if (days >= 10) return days.round().toString();
+  return _trimZero(days);
+}
+
+/// 整数加千位分隔；积分这类不换算成万的数量用它。
+String groupDigits(int value) => _group(value);
+
+String _trimZero(double value) {
+  final text = value.toStringAsFixed(1);
+  return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
+}
+
+String _group(int value) {
+  final digits = value.abs().toString();
+  final buffer = StringBuffer(value < 0 ? '-' : '');
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) buffer.write(',');
+    buffer.write(digits[i]);
+  }
+  return buffer.toString();
+}
+
 String statusLabel(String status) => switch (status) {
   'open' => '未作答',
   'unjudged' => '未判断',

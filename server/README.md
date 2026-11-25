@@ -231,7 +231,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 ## 即刻收收款
 
-聊天额度按支付宝「即刻收」直连模式的积分包卖出，见 [ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md)。商品、收费模式、档位与价格都在「即刻收」小程序里配置，审核发布之后把商品详情页的 `out_product_id` 填进配置；应用不能自己定价，也不能生成商品 ID。三档的名称、价格与发放积分见 [00 第 7 章](../docs/00-产品定义.md#7-边界) 与 [ADR-0068](../docs/adr/0068-聊天积分包的档位与价格.md)，应用不保存价格，改档位只改小程序。网关、RSA2 签名与公共参数与 APP 支付完全一样，所以服务端复用同一个支付宝应用的应用凭证，`internal/payment` 的签名与验签是唯一实现，`internal/nowpay` 只按接口名提交 `biz_content`。
+聊天额度按支付宝「即刻收」直连模式的积分包卖出，见 [ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md)。商品、收费模式、档位与价格都在「即刻收」小程序里配置，审核发布之后把商品详情页的 `out_product_id` 填进配置；应用不能自己定价，也不能生成商品 ID。三档的名称、价格与发放积分见 [00 第 7 章](../docs/00-产品定义.md#7-边界) 与 [ADR-0068](../docs/adr/0068-聊天积分包的档位与价格.md)，应用不保存价格，改档位只改小程序。概览接口同时返回一个积分覆盖的计费 token 数（`tokens_per_point`，取自 `ZHIXIN_NOWPAY_TOKENS_PER_POINT`），客户端据此把积分换算成 token 与天数。网关、RSA2 签名与公共参数与 APP 支付完全一样，所以服务端复用同一个支付宝应用的应用凭证，`internal/payment` 的签名与验签是唯一实现，`internal/nowpay` 只按接口名提交 `biz_content`。
 
 服务端用到五个接口：`charge.query` 查收费能力与档位，`quota.query` 查积分余额，`purchase.create` 取托管购买页链接，`quota.verify` 核销，`quota.refresh` 用原请求号查询核销结果。买断与时长包要用的 `purchase.consult` 没有接，因为商品按积分包配置。即刻收的响应把中文按 GB18030 回，请求里写 `charset=utf-8` 也不改，所以网关先验签再转码，调用方拿到的是 UTF-8；签名覆盖的始终是原始字节。
 

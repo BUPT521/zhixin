@@ -62,6 +62,7 @@ class QuotaPurchaseOverview {
   const QuotaPurchaseOverview({
     required this.balancePoints,
     required this.legacyBalanceTokens,
+    this.tokensPerPoint,
     this.product,
     this.latestPurchase,
   });
@@ -71,6 +72,10 @@ class QuotaPurchaseOverview {
 
   /// APP 支付时期留在服务端的已购 token 余额，仍然先于积分使用。
   final int legacyBalanceTokens;
+
+  /// 一个积分覆盖的计费 token 数，用来把积分换算成 token；旧版服务端不返回时为
+  /// null，这时界面只显示积分，不做换算。
+  final int? tokensPerPoint;
   final QuotaPurchaseProduct? product;
   final QuotaPurchaseLink? latestPurchase;
 }
