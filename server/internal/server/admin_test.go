@@ -187,8 +187,15 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	if len(report.Daily) != 7 || report.Timezone != "Asia/Shanghai" || len(report.Routes) != 0 {
 		t.Fatalf("empty report: %+v", report)
 	}
+	var keyReport api.AdminKeyUsageReport
+	admin("GET", "/admin/v1/key-usage", nil, &keyReport, http.StatusOK)
+	if len(keyReport.Keys) != 0 || keyReport.Timezone != "Asia/Shanghai" || keyReport.TokensPerPoint <= 0 {
+		t.Fatalf("empty key report: %+v", keyReport)
+	}
 	admin("GET", "/admin/v1/usage?days=31", nil, nil, http.StatusBadRequest)
 	admin("GET", "/admin/v1/usage?days=invalid", nil, nil, http.StatusBadRequest)
+	admin("GET", "/admin/v1/key-usage?days=0", nil, nil, http.StatusBadRequest)
+	admin("GET", "/admin/v1/key-usage?days=31", nil, nil, http.StatusBadRequest)
 	user := h.signUp("route-stats@example.test")
 	if code := h.json("GET", "/admin/v1/usage?days=invalid", user, nil, nil); code != http.StatusUnauthorized {
 		t.Fatalf("invalid query with account token: %d", code)
@@ -300,6 +307,20 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		case route.UpstreamModel == backupModel && (route.Usage.Successes != 1 || route.Usage.FirstAttempts != 0 || route.Usage.FailoverAttempts != 1):
 			t.Fatalf("fallback: %+v", route)
 		}
+	}
+	// 按密钥的对账视图把同一个账号的对话与嵌入分开列出。这两次调用都用访问令牌，
+	// api_key_id 因此是空字符串；内存实现没有密钥名字，页面显示“访问令牌”。
+	admin("GET", "/admin/v1/key-usage?days=1", nil, &keyReport, http.StatusOK)
+	if len(keyReport.Keys) != 1 || keyReport.TokensPerPoint != 10000 {
+		t.Fatalf("key usage: %+v", keyReport)
+	}
+	keyRow := keyReport.Keys[0]
+	today := day.Day.Format("2006-01-02")
+	if keyRow.KeyId != "" || keyRow.UserId == "" || keyRow.Name != "" ||
+		keyRow.Chat.Tokens != day.Chat.Tokens || keyRow.Embedding.Tokens != day.Embedding.Tokens ||
+		keyRow.Chat.ReservedTokens != 0 ||
+		len(keyRow.Daily) != 1 || keyRow.Daily[today].Chat.Tokens != day.Chat.Tokens {
+		t.Fatalf("key usage row: %+v", keyRow)
 	}
 	yesterday := day.Day.AddDate(0, 0, -1).Format("2006-01-02")
 	if err := h.stores.Usage.AddRouteUsage(context.Background(), llmproxy.RouteUsage{

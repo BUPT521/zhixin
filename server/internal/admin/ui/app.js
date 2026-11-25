@@ -5,7 +5,7 @@
 const $ = (sel) => document.querySelector(sel);
 const state = {
   token: sessionStorage.getItem('zhixin-admin-token') || '',
-  providers: [], models: [], upstreamNames: new Map(), usage: null,
+  providers: [], models: [], upstreamNames: new Map(), usage: null, keyUsage: null,
 };
 
 function el(tag, attrs = {}, ...children) {
@@ -1283,8 +1283,27 @@ async function loadUsage() {
     renderUsage();
     status.hidden = true;
     $('#usage-report').hidden = false;
+    await loadKeyUsage(current.signal);
   } catch (err) {
     if (!current.signal.aborted) status.textContent = '读取用量失败。' + err.message;
+  }
+}
+
+// 按密钥的对账视图单独读一次：它比路由汇总多一层账号维度，失败时只关掉这张
+// 表，上面的路由用量照常显示。
+async function loadKeyUsage(signal) {
+  state.keyUsage = null;
+  const status = $('#key-usage-status');
+  status.textContent = '正在读取密钥用量…';
+  status.hidden = false;
+  $('#key-usage-rows').replaceChildren();
+  try {
+    const report = await api('GET', '/key-usage?days=' + $('#usage-days').value, null, signal);
+    if (signal?.aborted) return;
+    state.keyUsage = report;
+    renderKeyUsage();
+  } catch (err) {
+    if (!signal?.aborted) status.textContent = '读取密钥用量失败。' + err.message;
   }
 }
 
@@ -1367,6 +1386,7 @@ function updateUsageDay(date, routes, byDate) {
     ? `${date} · ${number.format(total.tokens)} Token（含估算 ${number.format(total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试（${number.format(total.first_attempts)} 首次，${number.format(total.failover_attempts)} 故障切换） · ${number.format(total.attempts - total.successes)} 次未成功${cacheHitRate(total) ? ` · 输入缓存命中 ${cacheHitRate(total)}` : ''}`
     : ($('#usage-chart-wrap').hidden ? '' : '选择日期查看当天明细。');
   renderUsageTable(routes, date);
+  renderKeyUsage();
 }
 
 function renderUsageTable(routes, date) {
@@ -1402,6 +1422,67 @@ function renderUsageTable(routes, date) {
       el('td', { class: 'numeric' }, number.format(u.attempts - u.successes), incomplete ? el('div', { class: 'sub' }, incomplete) : null),
       el('td', { class: 'numeric' }, successRate(u))));
   }
+}
+
+// ---- 按密钥计费 ----
+// 金额只由对话的计费 token 折算：嵌入不参与积分核销，折进金额会让人以为嵌入也
+// 能用积分支付。趋势条按整个区间的峰值缩放，横向比较同一张表里的密钥。
+function keyUsagePoints(tokens, perPoint) {
+  if (!perPoint || perPoint <= 0) return '—';
+  const points = tokens / perPoint;
+  return '≈' + points.toLocaleString('zh-CN', { maximumFractionDigits: points < 10 ? 2 : 0 });
+}
+
+function shortAccount(id) {
+  return id.length <= 12 ? id : id.slice(0, 8) + '…';
+}
+
+function renderKeyUsage() {
+  const report = state.keyUsage;
+  if (!report) return;
+  const body = $('#key-usage-rows');
+  body.replaceChildren();
+  const scope = usageDay;
+  $('#key-usage-scope').textContent = scope ? scope + ' · 当天' : '整个区间';
+  const perPoint = report.tokens_per_point || 0;
+  $('#key-usage-ratio').textContent = perPoint > 0 ? `1 积分 = ${number.format(perPoint)} 计费 token` : '未配置积分比例';
+  const dates = state.usage
+    ? state.usage.daily.map((day) => day.day)
+    : [...new Set(report.keys.flatMap((key) => Object.keys(key.daily)))].sort();
+  const amount = (usage) => (usage ? usage.chat.tokens + usage.embedding.tokens : 0);
+  const peak = report.keys.reduce(
+    (max, key) => dates.reduce((value, date) => Math.max(value, amount(key.daily[date])), max), 1);
+
+  const shown = [];
+  for (const key of report.keys) {
+    const usage = scope ? key.daily[scope] : { chat: key.chat, embedding: key.embedding };
+    if (!usage) continue;
+    const tokenRow = key.key_id === '';
+    const name = tokenRow ? '访问令牌' : (key.name || '已清理的密钥');
+    const sub = tokenRow ? '客户端调用' : key.prefix || key.key_id;
+    const spark = el('span', { class: 'key-spark' });
+    for (const date of dates) {
+      const value = amount(key.daily[date]);
+      const bar = el('span', { class: value ? 'key-spark-bar' : 'key-spark-bar key-spark-empty',
+        title: `${date}：${number.format(value)} Token` });
+      bar.style.height = value ? `${Math.max(6, (value / peak) * 100)}%` : '2px';
+      spark.append(bar);
+    }
+    shown.push(el('tr', {},
+      el('td', {}, el('span', { class: 'mono' }, name), el('div', { class: 'sub mono' }, sub)),
+      el('td', { class: 'mono', title: key.user_id }, shortAccount(key.user_id)),
+      el('td', { class: 'numeric' }, number.format(usage.chat.tokens)),
+      el('td', { class: 'numeric' }, keyUsagePoints(usage.chat.tokens, perPoint)),
+      el('td', { class: 'numeric' }, number.format(usage.embedding.tokens)),
+      el('td', { class: 'numeric' }, number.format(usage.chat.reserved_tokens + usage.embedding.reserved_tokens)),
+      el('td', { class: 'numeric' }, spark),
+      el('td', { class: 'nowrap' }, key.last_used_at ? moment(key.last_used_at) : '—'),
+      el('td', {}, tokenRow ? '—' : (key.revoked ? '已撤销' : '在用'))));
+  }
+  const status = $('#key-usage-status');
+  for (const row of shown) body.append(row);
+  status.textContent = shown.length ? '' : '所选范围内没有密钥调用记录。';
+  status.hidden = shown.length > 0;
 }
 
 // ---- 启动 ----

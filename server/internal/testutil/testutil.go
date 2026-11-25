@@ -224,6 +224,9 @@ func (Base) PostAdminV1Models(w http.ResponseWriter, _ *http.Request) {
 func (Base) GetAdminV1Usage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1UsageParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) GetAdminV1KeyUsage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1KeyUsageParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) PutAdminV1ModelsName(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }

@@ -389,6 +389,59 @@ type AdminHealth struct {
 // AdminHealthState defines model for AdminHealth.State.
 type AdminHealthState string
 
+// AdminKeyUsage defines model for AdminKeyUsage.
+type AdminKeyUsage struct {
+	Chat AdminKeyUsageCounts `json:"chat"`
+
+	// Daily 按服务端自然日汇总，键为 YYYY-MM-DD，只包含有记录的日期。
+	Daily     map[string]AdminKeyUsageDay `json:"daily"`
+	Embedding AdminKeyUsageCounts         `json:"embedding"`
+
+	// KeyId 接入密钥编号；空字符串表示访问令牌发起的调用
+	KeyId string `json:"key_id"`
+
+	// LastUsedAt 最近使用时间，按十分钟粒度更新；访问令牌与已清理的密钥没有
+	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+
+	// Name 密钥名字；撤销超过保留期被清理后为空字符串
+	Name string `json:"name"`
+
+	// Prefix 密钥前缀，用于辨认
+	Prefix  string `json:"prefix"`
+	Revoked bool   `json:"revoked"`
+	UserId  string `json:"user_id"`
+}
+
+// AdminKeyUsageCounts defines model for AdminKeyUsageCounts.
+type AdminKeyUsageCounts struct {
+	// CachedTokens input_tokens 中命中上游缓存的部分
+	CachedTokens int64 `json:"cached_tokens"`
+
+	// InputTokens 上游报告的输入量；内存存储下不累计，保持 0
+	InputTokens int64 `json:"input_tokens"`
+
+	// ReservedTokens 尚未结算的在途预留
+	ReservedTokens int64 `json:"reserved_tokens"`
+
+	// Tokens 已结算的计费 token
+	Tokens int64 `json:"tokens"`
+}
+
+// AdminKeyUsageDay defines model for AdminKeyUsageDay.
+type AdminKeyUsageDay struct {
+	Chat      AdminKeyUsageCounts `json:"chat"`
+	Embedding AdminKeyUsageCounts `json:"embedding"`
+}
+
+// AdminKeyUsageReport defines model for AdminKeyUsageReport.
+type AdminKeyUsageReport struct {
+	Keys     []AdminKeyUsage `json:"keys"`
+	Timezone string          `json:"timezone"`
+
+	// TokensPerPoint 一个积分覆盖的计费 token 数，与核销同一配置
+	TokensPerPoint int64 `json:"tokens_per_point"`
+}
+
 // AdminModel defines model for AdminModel.
 type AdminModel struct {
 	// Available 模型启用且至少一条路由可参与转发，包含冷却中的备用路由
@@ -1169,6 +1222,12 @@ type ConfirmPassword struct {
 	Password string `json:"password"`
 }
 
+// GetAdminV1KeyUsageParams defines parameters for GetAdminV1KeyUsage.
+type GetAdminV1KeyUsageParams struct {
+	// Days 包含今天，按服务端时区计算
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
 // PostAdminV1ModelsNameTestParams defines parameters for PostAdminV1ModelsNameTest.
 type PostAdminV1ModelsNameTestParams struct {
 	ProviderId    *string `form:"provider_id,omitempty" json:"provider_id,omitempty"`
@@ -1578,6 +1637,9 @@ func (t *EmbeddingRequest_Input) UnmarshalJSON(b []byte) error {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetAdminV1KeyUsage 按接入密钥汇总的托管用量与折算积分
+	// (GET /admin/v1/key-usage)
+	GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request, params GetAdminV1KeyUsageParams)
 	// GetAdminV1Models 列出对外模型与各自的路由
 	// (GET /admin/v1/models)
 	GetAdminV1Models(w http.ResponseWriter, r *http.Request)
@@ -1759,6 +1821,39 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetAdminV1KeyUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminV1KeyUsageParams
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1KeyUsage(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetAdminV1Models operation middleware
 func (siw *ServerInterfaceWrapper) GetAdminV1Models(w http.ResponseWriter, r *http.Request) {
@@ -3394,6 +3489,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/providers/{id}", wrapper.PutAdminV1ProvidersId)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/providers/{id}/test", wrapper.PostAdminV1ProvidersIdTest)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/usage", wrapper.GetAdminV1Usage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/key-usage", wrapper.GetAdminV1KeyUsage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/models", wrapper.GetAdminV1Models)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/models", wrapper.PostAdminV1Models)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.DeleteAdminV1ModelsName)

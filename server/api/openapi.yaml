@@ -1242,6 +1242,26 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/key-usage:
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 按接入密钥汇总的托管用量与折算积分
+      description: 只读对账视图。返回区间内每把密钥的已结算用量、在途预留、缓存命中与最近使用时间，对话与嵌入分开；访问令牌发起的调用记在 key_id 为空字符串的一行。金额按 tokens_per_point 折算，不参与额度与核销。
+      parameters:
+        - name: days
+          in: query
+          description: 包含今天，按服务端时区计算
+          schema: { type: integer, minimum: 1, maximum: 30, default: 7 }
+      responses:
+        "200":
+          description: 按密钥汇总的用量
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminKeyUsageReport" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /admin/v1/models:
     get:
       tags: [admin]
@@ -1601,6 +1621,45 @@ components:
         routes:
           type: array
           items: { $ref: "#/components/schemas/AdminUsageRoute" }
+    AdminKeyUsageCounts:
+      type: object
+      required: [tokens, reserved_tokens, input_tokens, cached_tokens]
+      properties:
+        tokens: { type: integer, format: int64, description: 已结算的计费 token }
+        reserved_tokens: { type: integer, format: int64, description: 尚未结算的在途预留 }
+        input_tokens: { type: integer, format: int64, description: 上游报告的输入量；内存存储下不累计，保持 0 }
+        cached_tokens: { type: integer, format: int64, description: input_tokens 中命中上游缓存的部分 }
+    AdminKeyUsageDay:
+      type: object
+      required: [chat, embedding]
+      properties:
+        chat: { $ref: "#/components/schemas/AdminKeyUsageCounts" }
+        embedding: { $ref: "#/components/schemas/AdminKeyUsageCounts" }
+    AdminKeyUsage:
+      type: object
+      required: [key_id, user_id, name, prefix, revoked, chat, embedding, daily]
+      properties:
+        key_id: { type: string, description: 接入密钥编号；空字符串表示访问令牌发起的调用 }
+        user_id: { type: string }
+        name: { type: string, description: 密钥名字；撤销超过保留期被清理后为空字符串 }
+        prefix: { type: string, description: 密钥前缀，用于辨认 }
+        revoked: { type: boolean }
+        last_used_at: { type: string, format: date-time, description: 最近使用时间，按十分钟粒度更新；访问令牌与已清理的密钥没有 }
+        chat: { $ref: "#/components/schemas/AdminKeyUsageCounts" }
+        embedding: { $ref: "#/components/schemas/AdminKeyUsageCounts" }
+        daily:
+          type: object
+          description: 按服务端自然日汇总，键为 YYYY-MM-DD，只包含有记录的日期。
+          additionalProperties: { $ref: "#/components/schemas/AdminKeyUsageDay" }
+    AdminKeyUsageReport:
+      type: object
+      required: [timezone, tokens_per_point, keys]
+      properties:
+        timezone: { type: string }
+        tokens_per_point: { type: integer, format: int64, description: 一个积分覆盖的计费 token 数，与核销同一配置 }
+        keys:
+          type: array
+          items: { $ref: "#/components/schemas/AdminKeyUsage" }
     AdminRoute:
       type: object
       required: [provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images, state, health]

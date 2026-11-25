@@ -149,6 +149,21 @@
         </table></div>
         <p class="hint usage-note">每次请求的第一条实际执行路由计入首次尝试，失败后执行的后续路由计入故障切换，嵌入拆批仍按一次尝试计算。</p>
       </section>
+      <section class="usage-card" aria-labelledby="key-usage-title">
+        <div class="usage-card-head">
+          <div class="usage-breakdown-heading">
+            <h2 id="key-usage-title">按密钥计费</h2>
+            <span id="key-usage-scope" class="hint"></span>
+          </div>
+          <p id="key-usage-ratio" class="hint"></p>
+        </div>
+        <p id="key-usage-status" class="empty" role="status" hidden></p>
+        <div class="scroll" role="region" aria-labelledby="key-usage-title" tabindex="0"><table class="grid usage-table key-usage-table">
+          <thead><tr><th scope="col">密钥</th><th scope="col">账号</th><th scope="col">对话 Token</th><th scope="col">约合积分</th><th scope="col">嵌入 Token</th><th scope="col">在途</th><th scope="col">每日趋势</th><th scope="col">最近使用</th><th scope="col">状态</th></tr></thead>
+          <tbody id="key-usage-rows"></tbody>
+        </table></div>
+        <p class="hint usage-note">对话的计费 token 是上游报告用量按缓存命中折算之后的数量；积分按核销同一比例折算，嵌入只占每日免费额度，不计入积分。在途是还没有结算的预留，撤销超过保留期的密钥显示为已清理。</p>
+      </section>
     </div>
   </section>
 

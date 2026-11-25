@@ -212,6 +212,10 @@ func (rt routes) PostAdminV1Models(w http.ResponseWriter, r *http.Request) {
 func (rt routes) GetAdminV1Usage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1UsageParams) {
 	rt.llmAdmin.Usage(w, r, params)
 }
+
+func (rt routes) GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1KeyUsageParams) {
+	rt.llmAdmin.KeyUsage(w, r, params)
+}
 func (rt routes) PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string) {
 	rt.llmAdmin.PutModel(w, r, name)
 }
