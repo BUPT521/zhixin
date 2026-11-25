@@ -312,6 +312,9 @@ CREATE TABLE nowpay_charge (
 CREATE INDEX nowpay_charge_user_day_idx ON nowpay_charge (user_id, day);
 CREATE INDEX nowpay_charge_unsettled_idx
   ON nowpay_charge (user_id, created_at) WHERE status IN ('pending', 'processing');
+-- 全局补查按创建时间取还没有终结的流水，不按账号过滤，见运维手册的补查与保留期。
+CREATE INDEX nowpay_charge_unsettled_created_idx
+  ON nowpay_charge (created_at) WHERE status IN ('pending', 'processing');
 
 -- 购买入口请求（ADR-0067、ADR-0074）。一行对应客户端的一次点击：client_request_no
 -- 是客户端生成的幂等键，同一次点击的重试复用它，换一次点击换一个键。state 为

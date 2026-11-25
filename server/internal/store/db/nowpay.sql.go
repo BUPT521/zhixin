@@ -48,6 +48,36 @@ func (q *Queries) BalanceForReserve(ctx context.Context, userID string) (Balance
 	return i, err
 }
 
+const chargeStatusCounts = `-- name: ChargeStatusCounts :many
+SELECT status, count(*)::bigint AS count FROM nowpay_charge GROUP BY status ORDER BY status
+`
+
+type ChargeStatusCountsRow struct {
+	Status string
+	Count  int64
+}
+
+// 按状态统计核销流水，供每日对账日志发现积压。
+func (q *Queries) ChargeStatusCounts(ctx context.Context) ([]ChargeStatusCountsRow, error) {
+	rows, err := q.db.Query(ctx, chargeStatusCounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChargeStatusCountsRow{}
+	for rows.Next() {
+		var i ChargeStatusCountsRow
+		if err := rows.Scan(&i.Status, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const chargedPoints = `-- name: ChargedPoints :one
 SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
 WHERE user_id = $1 AND day = $2::date AND status = 'succeeded'
@@ -84,6 +114,55 @@ func (q *Queries) ChargedTokens(ctx context.Context, arg ChargedTokensParams) (i
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deleteExpiredPurchases = `-- name: DeleteExpiredPurchases :execrows
+DELETE FROM nowpay_purchase
+WHERE out_request_no IN (
+  SELECT nowpay_purchase.out_request_no FROM nowpay_purchase
+  WHERE nowpay_purchase.expires_at < $1
+  ORDER BY nowpay_purchase.expires_at
+  LIMIT $2
+)
+`
+
+type DeleteExpiredPurchasesParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// 保留期：过期超过 30 天的购买入口分批删除。
+func (q *Queries) DeleteExpiredPurchases(ctx context.Context, arg DeleteExpiredPurchasesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredPurchases, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteTerminalCharges = `-- name: DeleteTerminalCharges :execrows
+DELETE FROM nowpay_charge
+WHERE id IN (
+  SELECT nowpay_charge.id FROM nowpay_charge
+  WHERE nowpay_charge.status IN ('succeeded', 'failed') AND nowpay_charge.updated_at < $1
+  ORDER BY nowpay_charge.updated_at
+  LIMIT $2
+)
+`
+
+type DeleteTerminalChargesParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// 保留期：终态（succeeded/failed）超过 180 天的核销流水分批删除。pending 与
+// processing 不删，它们还没有结论。
+func (q *Queries) DeleteTerminalCharges(ctx context.Context, arg DeleteTerminalChargesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTerminalCharges, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const failPurchaseLink = `-- name: FailPurchaseLink :exec
@@ -343,6 +422,50 @@ type UnsettledChargesParams struct {
 
 func (q *Queries) UnsettledCharges(ctx context.Context, arg UnsettledChargesParams) ([]NowpayCharge, error) {
 	rows, err := q.db.Query(ctx, unsettledCharges, arg.UserID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NowpayCharge{}
+	for rows.Next() {
+		var i NowpayCharge
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Day,
+			&i.Points,
+			&i.BilledTokens,
+			&i.Status,
+			&i.Note,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const unsettledChargesGlobal = `-- name: UnsettledChargesGlobal :many
+SELECT id, user_id, day, points, billed_tokens, status, note, created_at, updated_at FROM nowpay_charge
+WHERE status IN ('pending', 'processing') AND created_at < $1
+ORDER BY created_at, id
+LIMIT $2
+`
+
+type UnsettledChargesGlobalParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// 全局补查：创建超过宽限期仍未终结的流水，不按账号过滤。核销队列满或进程退出时
+// 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。
+func (q *Queries) UnsettledChargesGlobal(ctx context.Context, arg UnsettledChargesGlobalParams) ([]NowpayCharge, error) {
+	rows, err := q.db.Query(ctx, unsettledChargesGlobal, arg.Before, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}

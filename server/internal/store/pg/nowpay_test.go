@@ -666,3 +666,115 @@ func TestPostgresRefusesToStartWithoutThePurchaseIdempotencyColumns(t *testing.T
 		t.Fatal("缺 client_request_no 列时启动应失败")
 	}
 }
+
+// TestPostgresUnsettledGlobalOnlyTakesOldCharges 守住全局补查的范围：只取创建超过宽限
+// 期、仍然 pending 或 processing 的流水，按创建时间升序，结果上限按批次。
+func TestPostgresUnsettledGlobalOnlyTakesOldCharges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now()
+	for _, charge := range []struct {
+		id      string
+		status  string
+		created time.Time
+	}{
+		{"nc_old_pending", nowpay.StatusPending, now.Add(-10 * time.Minute)},
+		{"nc_old_processing", nowpay.StatusProcessing, now.Add(-8 * time.Minute)},
+		{"nc_old_succeeded", nowpay.StatusSucceeded, now.Add(-9 * time.Minute)},
+		{"nc_new_pending", nowpay.StatusPending, now.Add(-time.Minute)},
+	} {
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
+			 VALUES ($1, 'u1', '2026-11-25'::date, 1, 10000, $2, $3, $3)`,
+			charge.id, charge.status, charge.created); err != nil {
+			t.Fatalf("insert charge: %v", err)
+		}
+	}
+	charges, err := st.UnsettledGlobal(ctx, now.Add(-5*time.Minute), 50)
+	if err != nil {
+		t.Fatalf("unsettled global: %v", err)
+	}
+	if len(charges) != 2 {
+		t.Fatalf("只应取超过五分钟的 pending/processing，实际 %+v", charges)
+	}
+	if charges[0].ID != "nc_old_pending" || charges[1].ID != "nc_old_processing" {
+		t.Fatalf("应按创建时间升序: %+v", charges)
+	}
+	limited, err := st.UnsettledGlobal(ctx, now.Add(-5*time.Minute), 1)
+	if err != nil || len(limited) != 1 {
+		t.Fatalf("应按批次上限截断: %d %v", len(limited), err)
+	}
+}
+
+// TestPostgresPrunesExpiredPurchasesAndTerminalCharges 守住保留期边界：购买入口按过期
+// 30 天、核销流水按终态更新 180 天删除，pending 不删。
+func TestPostgresPrunesExpiredPurchasesAndTerminalCharges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now()
+	for _, purchase := range []struct {
+		id      string
+		expires time.Time
+	}{
+		{"np_old", now.AddDate(0, 0, -31)},
+		{"np_keep", now.AddDate(0, 0, -29)},
+	} {
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO nowpay_purchase (out_request_no, client_request_no, user_id, state, purchase_url, expires_at)
+			 VALUES ($1, $1, 'u1', 'ready', 'alipays://x', $2)`,
+			purchase.id, purchase.expires); err != nil {
+			t.Fatalf("insert purchase: %v", err)
+		}
+	}
+	for _, charge := range []struct {
+		id      string
+		status  string
+		updated time.Time
+	}{
+		{"nc_old_succeeded", nowpay.StatusSucceeded, now.AddDate(0, 0, -181)},
+		{"nc_old_failed", nowpay.StatusFailed, now.AddDate(0, 0, -181)},
+		{"nc_keep_succeeded", nowpay.StatusSucceeded, now.AddDate(0, 0, -179)},
+		{"nc_old_pending", nowpay.StatusPending, now.AddDate(0, 0, -181)},
+	} {
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
+			 VALUES ($1, 'u1', '2026-11-25'::date, 1, 10000, $2, $3, $3)`,
+			charge.id, charge.status, charge.updated); err != nil {
+			t.Fatalf("insert charge: %v", err)
+		}
+	}
+	deleted, err := st.DeleteExpiredPurchases(ctx, now.AddDate(0, 0, -30), 1000)
+	if err != nil || deleted != 1 {
+		t.Fatalf("应删除过期 30 天以上的购买入口: %d %v", deleted, err)
+	}
+	deleted, err = st.DeleteTerminalCharges(ctx, now.AddDate(0, 0, -180), 1000)
+	if err != nil || deleted != 2 {
+		t.Fatalf("应删除终态超过 180 天的流水: %d %v", deleted, err)
+	}
+	var charges, purchases int64
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM nowpay_charge`).Scan(&charges); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if charges != 2 {
+		t.Fatalf("保留的流水应为 2 条（pending 与未到期的终态），实际 %d", charges)
+	}
+	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM nowpay_purchase`).Scan(&purchases); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if purchases != 1 {
+		t.Fatalf("保留的购买入口应为 1 条，实际 %d", purchases)
+	}
+	counts, err := st.ChargeStatusCounts(ctx)
+	if err != nil {
+		t.Fatalf("charge status counts: %v", err)
+	}
+	if counts[nowpay.StatusSucceeded] != 1 || counts[nowpay.StatusPending] != 1 {
+		t.Fatalf("按状态计数不对: %+v", counts)
+	}
+}

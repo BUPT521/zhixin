@@ -17,8 +17,10 @@ type fakeLedger struct {
 	applied   int64
 	created   []Charge
 	unsettled []Charge
-	statuses  []statusChange
-	balances  map[string]int64
+	// unsettledGlobal 是全局补查返回的流水。
+	unsettledGlobal []Charge
+	statuses        []statusChange
+	balances        map[string]int64
 	// balanceAsOf 记每次写副本带的快照时刻。
 	balanceAsOf map[string]time.Time
 
@@ -65,6 +67,10 @@ func (f *fakeLedger) SaveBalance(_ context.Context, userID string, remaining int
 
 func (f *fakeLedger) Unsettled(context.Context, string, int) ([]Charge, error) {
 	return f.unsettled, nil
+}
+
+func (f *fakeLedger) UnsettledGlobal(context.Context, time.Time, int) ([]Charge, error) {
+	return f.unsettledGlobal, nil
 }
 
 func (f *fakeLedger) SetStatus(_ context.Context, id, status, note string) error {
@@ -508,5 +514,25 @@ func TestNewMeterValidatesArguments(t *testing.T) {
 	}
 	if _, err := NewMeter(client, &fakeLedger{}, 0, nil); err == nil {
 		t.Fatal("折算比例必须为正")
+	}
+}
+
+// TestSweepEnqueuesUnsettledCharges 守住全局补查：pending 的重试核销，processing 的
+// 只查结果，返回实际入队的条数（ADR-0073 所在的整改方案 P6）。
+func TestSweepEnqueuesUnsettledCharges(t *testing.T) {
+	ledger := &fakeLedger{unsettledGlobal: []Charge{
+		{ID: "nc_1", UserID: "user_1", Points: 2, Status: StatusPending},
+		{ID: "nc_2", UserID: "user_2", Points: 3, Status: StatusProcessing},
+	}}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	count, err := meter.Sweep(context.Background(), time.Now().Add(-5*time.Minute), 50)
+	if err != nil || count != 2 {
+		t.Fatalf("应把两条流水排进队列: %d %v", count, err)
+	}
+	if first := <-meter.queue; !first.verify {
+		t.Fatal("pending 流水应重试核销")
+	}
+	if second := <-meter.queue; second.verify {
+		t.Fatal("processing 流水只查结果，不重新核销")
 	}
 }

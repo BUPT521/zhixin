@@ -177,6 +177,7 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 	return charge, true, nil
 }
 
+// Unsettled 取账号还没有确认结果的流水，供下一轮对话开工前补查。
 func (s *Store) Unsettled(ctx context.Context, userID string, limit int) ([]nowpay.Charge, error) {
 	if limit < 1 {
 		return nil, nil
@@ -185,6 +186,30 @@ func (s *Store) Unsettled(ctx context.Context, userID string, limit int) ([]nowp
 	if err != nil {
 		return nil, err
 	}
+	return chargesFromRows(rows), nil
+}
+
+// UnsettledGlobal 取全局创建早于 before、仍未终结的流水，供每十分钟一次的补查兜底；
+// 它不按账号过滤，队列满或进程退出时留下的流水由这里清掉（ADR-0073 所在的整改方案）。
+func (s *Store) UnsettledGlobal(ctx context.Context, before time.Time, limit int) ([]nowpay.Charge, error) {
+	if limit < 1 {
+		return nil, nil
+	}
+	at, err := pgTime(before)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.UnsettledChargesGlobal(ctx, db.UnsettledChargesGlobalParams{
+		Before: at, MaxRows: int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return chargesFromRows(rows), nil
+}
+
+// chargesFromRows 把流水行转成接口类型，供按账号与全局两个查询共用。
+func chargesFromRows(rows []db.NowpayCharge) []nowpay.Charge {
 	charges := make([]nowpay.Charge, 0, len(rows))
 	for _, row := range rows {
 		charges = append(charges, nowpay.Charge{
@@ -192,7 +217,49 @@ func (s *Store) Unsettled(ctx context.Context, userID string, limit int) ([]nowp
 			Points: row.Points, Tokens: row.BilledTokens, Status: row.Status,
 		})
 	}
-	return charges, nil
+	return charges
+}
+
+// DeleteExpiredPurchases 分批删除有效期早于 before 的购买入口，返回这一批删除的行数。
+func (s *Store) DeleteExpiredPurchases(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit < 1 {
+		return 0, nil
+	}
+	at, err := pgTime(before)
+	if err != nil {
+		return 0, err
+	}
+	return s.q.DeleteExpiredPurchases(ctx, db.DeleteExpiredPurchasesParams{
+		Before: at, MaxRows: int32(limit),
+	})
+}
+
+// DeleteTerminalCharges 分批删除终态（succeeded/failed）且更新时间早于 before 的核销
+// 流水，返回这一批删除的行数；pending 与 processing 不删。
+func (s *Store) DeleteTerminalCharges(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit < 1 {
+		return 0, nil
+	}
+	at, err := pgTime(before)
+	if err != nil {
+		return 0, err
+	}
+	return s.q.DeleteTerminalCharges(ctx, db.DeleteTerminalChargesParams{
+		Before: at, MaxRows: int32(limit),
+	})
+}
+
+// ChargeStatusCounts 按状态统计核销流水，供每日对账日志发现积压。
+func (s *Store) ChargeStatusCounts(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.q.ChargeStatusCounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	counts := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		counts[row.Status] = row.Count
+	}
+	return counts, nil
 }
 
 // SetStatus 记录一次核销的结果。status 为空时只更新备注，流水停在原状态等下一次

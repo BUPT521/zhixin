@@ -40,6 +40,8 @@ func run(log *slog.Logger) error {
 	var meter *nowpay.Meter
 	// nowpayClient 是购买接口的调用入口，与 meter 共用同一个客户端。
 	var nowpayClient *nowpay.Client
+	// nowpayMaintenance 是补查与保留期用的存储，配置了即刻收商品时才有值。
+	var nowpayMaintenance nowpay.MaintenanceStore
 	if cfg.DatabaseURL == "" {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
@@ -85,6 +87,7 @@ func run(log *slog.Logger) error {
 			}
 			pgStore.SetNowPay(meter)
 			nowpayClient = client
+			nowpayMaintenance = pgStore
 			// 启动时查一次商品收费能力：配置错、商品未审核或应用凭证不匹配会在日志里
 			// 先出现，购买接口的第一次请求不必承担这次排查；失败只记日志，不阻塞启动。
 			probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -145,8 +148,11 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	// 核销协程跟着进程退出；队列里没有来得及处理的流水留在库里，下一轮请求前补查。
+	// 全局补查每十分钟接手一次，保留期与对账日志每天一次，都在配置了即刻收商品时启用。
 	if meter != nil {
 		meter.Start(ctx)
+		nowpay.SweepLoop(ctx, meter, log)
+		nowpay.MaintenanceLoop(ctx, nowpayMaintenance, log)
 	}
 
 	handler, _ := server.Build(ctx, cfg, stores, log)

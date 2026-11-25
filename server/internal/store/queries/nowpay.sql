@@ -15,6 +15,39 @@ WHERE user_id = sqlc.arg(user_id) AND status IN ('pending', 'processing')
 ORDER BY created_at, id
 LIMIT sqlc.arg(max_rows);
 
+-- 全局补查：创建超过宽限期仍未终结的流水，不按账号过滤。核销队列满或进程退出时
+-- 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。
+-- name: UnsettledChargesGlobal :many
+SELECT * FROM nowpay_charge
+WHERE status IN ('pending', 'processing') AND created_at < sqlc.arg(before)
+ORDER BY created_at, id
+LIMIT sqlc.arg(max_rows);
+
+-- 保留期：过期超过 30 天的购买入口分批删除。
+-- name: DeleteExpiredPurchases :execrows
+DELETE FROM nowpay_purchase
+WHERE out_request_no IN (
+  SELECT nowpay_purchase.out_request_no FROM nowpay_purchase
+  WHERE nowpay_purchase.expires_at < sqlc.arg(before)
+  ORDER BY nowpay_purchase.expires_at
+  LIMIT sqlc.arg(max_rows)
+);
+
+-- 保留期：终态（succeeded/failed）超过 180 天的核销流水分批删除。pending 与
+-- processing 不删，它们还没有结论。
+-- name: DeleteTerminalCharges :execrows
+DELETE FROM nowpay_charge
+WHERE id IN (
+  SELECT nowpay_charge.id FROM nowpay_charge
+  WHERE nowpay_charge.status IN ('succeeded', 'failed') AND nowpay_charge.updated_at < sqlc.arg(before)
+  ORDER BY nowpay_charge.updated_at
+  LIMIT sqlc.arg(max_rows)
+);
+
+-- 按状态统计核销流水，供每日对账日志发现积压。
+-- name: ChargeStatusCounts :many
+SELECT status, count(*)::bigint AS count FROM nowpay_charge GROUP BY status ORDER BY status;
+
 -- name: SetChargeStatus :exec
 UPDATE nowpay_charge
 SET status = COALESCE(sqlc.narg(status), status),

@@ -41,6 +41,9 @@ type Charge struct {
 type Ledger interface {
 	ReservePoints(ctx context.Context, charge Charge, required int64) (Charge, bool, error)
 	Unsettled(ctx context.Context, userID string, limit int) ([]Charge, error)
+	// UnsettledGlobal 取全局创建早于 before 且仍未终结的流水，供每十分钟一次的补查
+	// 兜底；它不按账号过滤。
+	UnsettledGlobal(ctx context.Context, before time.Time, limit int) ([]Charge, error)
 	SetStatus(ctx context.Context, id, status, note string) error
 	// SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本，asOf 是这份余额对应的
 	// 快照时刻，不是写入时刻；晚到的旧快照不会覆盖新副本（ADR-0073）。额度预留按
