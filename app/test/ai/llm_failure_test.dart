@@ -262,6 +262,14 @@ void main() {
     expect(instance.failure, LlmFailure.quotaExhausted);
     expect(instance.quotaReason, QuotaExhaustedReason.instance);
 
+    // 积分余额副本缺失或过期：服务端已经排了查询，客户端只让稍后重试。
+    final syncing = await failureOf({
+      'code': 'quota_exceeded',
+      'extra': {'reason': 'syncing'},
+    });
+    expect(syncing.failure, LlmFailure.quotaExhausted);
+    expect(syncing.quotaReason, QuotaExhaustedReason.syncing);
+
     // 旧版服务端没有扩展字段，或原因无法识别时按通用额度用完处理。
     final missing = await failureOf({'code': 'quota_exceeded'});
     expect(missing.failure, LlmFailure.quotaExhausted);
@@ -274,7 +282,7 @@ void main() {
     expect(unknown.quotaReason, isNull);
   });
 
-  test('429 没有 problem code 时也按额度用完兜底，不重试', () async {
+  test('429 没有 problem code 时按短时繁忙兜底，不重试', () async {
     var requests = 0;
     final client = HttpLlmClient(
       config: const LlmConfig(apiKey: 'test-key'),
@@ -298,14 +306,18 @@ void main() {
           .toList(),
       throwsA(
         isA<LlmException>()
-            .having(
-              (error) => error.failure,
-              'failure',
-              LlmFailure.quotaExhausted,
-            )
+            .having((error) => error.failure, 'failure', LlmFailure.busy)
             .having((error) => error.quotaReason, 'quotaReason', isNull),
       ),
     );
     expect(requests, 1);
+  });
+
+  test('旧消息里存成 rateLimited 的失败读回额度用完', () {
+    expect(llmFailureFromName('rateLimited'), LlmFailure.quotaExhausted);
+    expect(llmFailureFromName('quotaExhausted'), LlmFailure.quotaExhausted);
+    expect(llmFailureFromName('busy'), LlmFailure.busy);
+    expect(llmFailureFromName('unknownName'), isNull);
+    expect(llmFailureFromName(null), isNull);
   });
 }

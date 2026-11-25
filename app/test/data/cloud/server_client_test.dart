@@ -702,6 +702,140 @@ void main() {
       ),
     );
   });
+  group('即刻收购买', () {
+    test('概览读到 balance_unavailable 与 latest_purchase', () async {
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: MockClient((request) async {
+          expect(request.method, 'GET');
+          expect(request.url.path, '/v1/me/model-quota-purchases');
+          return http.Response(
+            jsonEncode({
+              'balance_points': 0,
+              'balance_unavailable': true,
+              'tokens_per_point': 1000,
+              'product': {
+                'capability_status': 'ENABLED',
+                'billing_mode': 'QUANTITY',
+                'quota_unit': 'POINT',
+                'options': [
+                  {
+                    'sku_id': 'sku-1',
+                    'display_name': '基础包',
+                    'price': '6.00',
+                    'quota_amount': 100,
+                  },
+                ],
+              },
+              'latest_purchase': {
+                'out_request_no': 'out-1',
+                'sku_id': 'sku-1',
+                'purchase_url': 'https://example.test/pay',
+                'expires_at': '2026-11-25T12:00:00Z',
+              },
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      final overview = await client.quotaPurchases('token');
+      expect(overview.balanceUnavailable, isTrue);
+      expect(overview.balancePoints, 0);
+      expect(overview.tokensPerPoint, 1000);
+      expect(overview.product!.options.single.skuId, 'sku-1');
+      expect(overview.latestPurchase!.purchaseUrl, 'https://example.test/pay');
+    });
+
+    test('没有 balance_unavailable 时余额可用', () async {
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: MockClient(
+          (request) async => http.Response(
+            jsonEncode({'balance_points': 30, 'tokens_per_point': 1000}),
+            200,
+            headers: {'content-type': 'application/json'},
+          ),
+        ),
+      );
+
+      final overview = await client.quotaPurchases('token');
+      expect(overview.balanceUnavailable, isFalse);
+      expect(overview.balancePoints, 30);
+      expect(overview.product, isNull);
+    });
+
+    test('取购买链接时带 client_request_no，同样的键原样发出', () async {
+      final bodies = <Map<String, Object?>>[];
+      final client = ServerClient(
+        baseUrl: 'http://server.test',
+        httpClient: MockClient((request) async {
+          expect(request.method, 'POST');
+          expect(request.url.path, '/v1/me/model-quota-purchases');
+          bodies.add(jsonDecode(request.body) as Map<String, Object?>);
+          return http.Response(
+            jsonEncode({
+              'out_request_no': 'out-1',
+              'sku_id': 'sku-1',
+              'purchase_url': 'https://example.test/pay',
+              'expires_at': '2026-11-25T12:00:00Z',
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }),
+      );
+
+      await client.quotaPurchaseLink(
+        'token',
+        skuId: 'sku-1',
+        clientRequestNo: ' 0190a5b3-8f2c-7a41-b0c6-5d1e2f3a4b5c ',
+      );
+      await client.quotaPurchaseLink(
+        'token',
+        skuId: 'sku-1',
+        clientRequestNo: '0190a5b3-8f2c-7a41-b0c6-5d1e2f3a4b5c',
+      );
+      // 不传键时只发 sku_id，由服务端生成随机键。
+      await client.quotaPurchaseLink('token', skuId: 'sku-1');
+
+      expect(bodies[0]['sku_id'], 'sku-1');
+      expect(
+        bodies[0]['client_request_no'],
+        '0190a5b3-8f2c-7a41-b0c6-5d1e2f3a4b5c',
+      );
+      expect(
+        bodies[1]['client_request_no'],
+        '0190a5b3-8f2c-7a41-b0c6-5d1e2f3a4b5c',
+      );
+      expect(bodies[2].containsKey('client_request_no'), isFalse);
+    });
+
+    test('额度用完的说明按用途与原因分支，不再出现管理员', () {
+      String message(Map<String, Object?> extra) => ServerProblem(
+        code: 'quota_exceeded',
+        status: 429,
+        extra: extra,
+      ).userMessage;
+
+      expect(message({'kind': 'embedding'}), '今天的嵌入额度已经用完，次日恢复');
+      expect(message({'kind': 'chat', 'reason': 'instance'}), contains('稍后再试'));
+      expect(
+        message({'kind': 'chat', 'reason': 'instance'}),
+        isNot(contains('购买')),
+      );
+      expect(message({'kind': 'chat', 'reason': 'syncing'}), '积分余额正在同步，请稍后重试');
+      for (final reason in ['account', 'points', '']) {
+        expect(message({'kind': 'chat', 'reason': reason}), contains('购买积分'));
+      }
+      expect(message({'kind': 'chat'}), contains('购买积分'));
+      for (final reason in ['account', 'points', 'instance', 'syncing', '']) {
+        final text = message({'kind': 'chat', 'reason': reason});
+        expect(text, isNot(contains('联系管理员')));
+      }
+    });
+  });
 }
 
 String _sha256Of(List<int> bytes) => sha256.convert(bytes).toString();

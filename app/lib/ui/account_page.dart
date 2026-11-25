@@ -669,7 +669,11 @@ class _AccountPageState extends State<AccountPage> {
       final epoch = account.identityEpoch;
       setState(() => _busy = true);
       try {
-        balancePoints = (await account.quotaPurchases()).balancePoints;
+        final overview = await account.quotaPurchases();
+        // 余额暂时查不到时按未知处理，不拿 0 去说明剩余积分。
+        balancePoints = overview.balanceUnavailable
+            ? null
+            : overview.balancePoints;
       } catch (_) {
         // 读不到余额只影响提示，删除流程照常继续。
       } finally {

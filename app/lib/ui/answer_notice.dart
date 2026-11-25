@@ -109,7 +109,7 @@ String _failureSuffix(LlmFailure? failure) =>
 /// 模型失败之后重新回答的下一步；按失败类型给，不重复读异常原文。
 ///
 /// 额度用完再按具体原因分开：账号免费额度与积分不足都有购买积分的价值，实例预算
-/// 用完只能等恢复，因此最后一种不给购买入口。
+/// 用完与余额副本同步中只能等恢复，因此这几种不给购买入口。
 String _modelNextStep(LlmFailure? failure, QuotaExhaustedReason? quotaReason) =>
     switch (failure) {
       LlmFailure.auth => '请先登录并确认模型名在服务端允许的列表里，改好后再点「重试这次回答」。',
@@ -122,6 +122,7 @@ String _modelNextStep(LlmFailure? failure, QuotaExhaustedReason? quotaReason) =>
           '今日免费额度已经用完，可以在账号页购买积分之后继续，也可以等次日恢复，'
               '再点「重试这次回答」。',
         QuotaExhaustedReason.points => '积分不足，可以在账号页购买积分之后继续，再点「重试这次回答」。',
+        QuotaExhaustedReason.syncing => '积分余额正在同步，请稍后重试，再点「重试这次回答」。',
         QuotaExhaustedReason.instance || null => '模型服务今天的额度已经用完，稍后再点「重试这次回答」。',
       },
       LlmFailure.contextLimit => '可以缩短问题、减少图片或在设置中核对模型上下文上限。',

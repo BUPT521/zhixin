@@ -144,7 +144,7 @@ lib/
 
 ## 模型
 
-客户端只有“知新服务”一种模型来源，即服务端的模型代理，模型设置提供模型名、上下文上限与图片开关；模型名默认 `zhixin-chat`，与后台配置的对外模型名一致，嵌入模型从服务端列表里选。对话固定走 OpenAI 的 Responses，地址由当前知新服务地址拼出 `/v1/llm` 再加 `/responses`，访问令牌代替 key，令牌过期时先刷新再重试；令牌与地址由 `lib/application/account_service.dart` 在每次请求前补进配置，不写进 Keystore，也不在发请求时保存，额度用完时只能等次日或联系管理员调整。未登录或登录失效时不发模型请求，回答按本地兜底给出，页面给登录入口；上游提供方与模型的更换由管理员在服务端后台完成，客户端不受影响，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)、[ADR-0050](../docs/adr/0050-客户端统一为知新服务.md) 与 [ADR-0052](../docs/adr/0052-客户端改用OpenAI现行请求格式.md)。
+客户端只有“知新服务”一种模型来源，即服务端的模型代理，模型设置提供模型名、上下文上限与图片开关；模型名默认 `zhixin-chat`，与后台配置的对外模型名一致，嵌入模型从服务端列表里选。对话固定走 OpenAI 的 Responses，地址由当前知新服务地址拼出 `/v1/llm` 再加 `/responses`，访问令牌代替 key，令牌过期时先刷新再重试；令牌与地址由 `lib/application/account_service.dart` 在每次请求前补进配置，不写进 Keystore，也不在发请求时保存，额度用完时按服务端给出的原因分别说明：免费额度与积分都用完、积分不足时给购买积分入口或等次日恢复，实例预算用完与余额正在同步时只说明稍后重试（[ADR-0071](../docs/adr/0071-核销只读已结算用量与额度用完的原因.md)、[ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)）。未登录或登录失效时不发模型请求，回答按本地兜底给出，页面给登录入口；上游提供方与模型的更换由管理员在服务端后台完成，客户端不受影响，取舍见 [ADR-0009](../docs/adr/0009-API后端采用Go与分层框架.md)、[ADR-0050](../docs/adr/0050-客户端统一为知新服务.md) 与 [ADR-0052](../docs/adr/0052-客户端改用OpenAI现行请求格式.md)。
 
 请求走一个传输层，线格式只有 Responses 一种，请求体的组装与流式解析直接写在 `ai/llm_protocol.dart` 里。系统提示发 `instructions`，消息发 `input` 条目：用户与助手消息是 `message`，条目的内容块用 `input_text` 与 `input_image`，模型发起的工具调用是 `function_call`，客户端执行后的结果是 `function_call_output`，两者按 `call_id` 配对；工具声明用扁平的 `{type:function,name,description,parameters}`，参数放在 `input` 的 `input_text` 里，`tool_choice` 取 `auto`、`none` 或 `{type:function,name}`。输出上限用 `max_output_tokens`，取上下文上限的四分之一、最高 32768，与服务端允许的范围一致；请求带 `store: false`，也不发送 `temperature` 与 `top_p`，采样参数由上游模型的默认值决定（[ADR-0055](../docs/adr/0055-模型调用协议与上限统一.md)）。客户端不按模型名追加提供方的私有字段。
 

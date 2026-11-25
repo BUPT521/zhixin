@@ -568,23 +568,68 @@ class AccountService {
   Future<ServerQuota> quota() =>
       call<ServerQuota>((client, token) => client.quota(token));
 
-  Future<QuotaPurchaseOverview> quotaPurchases() =>
-      _callForCurrentIdentity((client, token) => client.quotaPurchases(token));
-
-  /// 取托管购买页链接。商品不可售时服务端回 409，这里当作“现在不能买”返回空。
-  Future<QuotaPurchaseLink?> quotaPurchaseLink({String? skuId}) async {
+  Future<QuotaPurchaseOverview> quotaPurchases() async {
     try {
       return await _callForCurrentIdentity(
-        (client, token) => client.quotaPurchaseLink(token, skuId: skuId),
+        (client, token) => client.quotaPurchases(token),
       );
     } on ServerProblem catch (error) {
-      if (error.status == 409) return null;
-      rethrow;
+      throw _purchaseFailure(error);
     }
   }
 
-  Future<QuotaBalance> quotaBalance() =>
-      _callForCurrentIdentity((client, token) => client.quotaBalance(token));
+  /// 取托管购买页链接。商品不可售时服务端回 409，这里翻译成购买失败的种类，
+  /// 由面板分别说明是已下架还是单位不对。
+  ///
+  /// [clientRequestNo] 是同一次点击的幂等键：同一个键重试复用同一张链接，换一次
+  /// 点击换一个键；不传时服务端每次生成新链接（ADR-0074）。
+  Future<QuotaPurchaseLink> quotaPurchaseLink({
+    String? skuId,
+    String? clientRequestNo,
+  }) async {
+    try {
+      return await _callForCurrentIdentity(
+        (client, token) => client.quotaPurchaseLink(
+          token,
+          skuId: skuId,
+          clientRequestNo: clientRequestNo,
+        ),
+      );
+    } on ServerProblem catch (error) {
+      throw _purchaseFailure(error);
+    }
+  }
+
+  Future<QuotaBalance> quotaBalance() async {
+    try {
+      return await _callForCurrentIdentity(
+        (client, token) => client.quotaBalance(token),
+      );
+    } on ServerProblem catch (error) {
+      throw _purchaseFailure(error);
+    }
+  }
+
+  /// 把数据层的拒绝翻译成购买面板能分辨的失败种类；界面不直接依赖数据层。
+  QuotaPurchaseFailure _purchaseFailure(ServerProblem error) {
+    final kind = switch (error.code) {
+      'rate_limited' => QuotaPurchaseFailureKind.rateLimited,
+      'conflict' => QuotaPurchaseFailureKind.conflict,
+      'contact_unverified' => QuotaPurchaseFailureKind.contactUnverified,
+      'offline' => QuotaPurchaseFailureKind.offline,
+      'unavailable' ||
+      'upstream_failed' => QuotaPurchaseFailureKind.unavailable,
+      _ when error.status == 403 => QuotaPurchaseFailureKind.contactUnverified,
+      _ => QuotaPurchaseFailureKind.unknown,
+    };
+    final seconds = error.retryAfterSeconds;
+    return QuotaPurchaseFailure(
+      kind,
+      retryAfter: seconds == null || seconds <= 0
+          ? null
+          : Duration(seconds: seconds),
+    );
+  }
 
   Future<List<ServerModel>> models() =>
       call<List<ServerModel>>((client, token) => client.models(token));

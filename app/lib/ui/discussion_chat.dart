@@ -1188,10 +1188,12 @@ class DiscussionChatState extends State<DiscussionChat> {
         LlmFailure.notConfigured => '登录知新服务之后再试',
         LlmFailure.auth => '请先登录，或者换一个服务端允许的模型名后再试',
         LlmFailure.contactUnverified => '先在账号页确认一种登录方式后再试',
-        LlmFailure.quotaExhausted =>
-          error.quotaReason == QuotaExhaustedReason.instance
-              ? '额度已经用完，可以稍后再试'
-              : '可以在账号页购买积分之后继续，也可以等次日恢复',
+        LlmFailure.quotaExhausted => switch (error.quotaReason) {
+          QuotaExhaustedReason.account ||
+          QuotaExhaustedReason.points => '可以在账号页购买积分之后继续，也可以等次日恢复',
+          QuotaExhaustedReason.syncing => '积分余额正在同步，请稍后重试',
+          QuotaExhaustedReason.instance || null => '额度已经用完，可以稍后再试',
+        },
         _ => '可以点下方重试',
       };
       _failReply('重新回答失败（${error.shortText}）；原来的问题与回答没有改动，$next。');
@@ -1241,10 +1243,12 @@ class DiscussionChatState extends State<DiscussionChat> {
           LlmFailure.unknown => true,
           _ => false,
         };
-    // 额度用完时给购买入口，打开账号页的购买面板；实例预算用完时只让稍后再试。
+    // 额度用完时给购买入口：只有免费额度与积分不足两种情况买积分有用；实例预算
+    // 用完与余额副本同步中只让稍后再试，旧版服务端没有原因时同样不给入口。
     final purchasePoints =
         saved.failure == LlmFailure.quotaExhausted &&
-            saved.quotaReason != QuotaExhaustedReason.instance
+            (saved.quotaReason == QuotaExhaustedReason.account ||
+                saved.quotaReason == QuotaExhaustedReason.points)
         ? () => openAccount(context)
         : null;
     final theme = context.zhixin;

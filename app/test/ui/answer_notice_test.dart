@@ -81,6 +81,20 @@ void main() {
     }
   });
 
+  test('余额副本正在同步时只让稍后重试，不给购买入口', () {
+    final text = answerNoticeText(
+      outcome(
+        notices: const [Notice.modelCallFailed],
+        failure: LlmFailure.quotaExhausted,
+        quotaReason: QuotaExhaustedReason.syncing,
+      ),
+    )!;
+    expect(text, contains('积分余额正在同步'));
+    expect(text, contains('稍后重试'));
+    expect(text, isNot(contains('购买')));
+    expect(text, isNot(contains('等次日恢复')));
+  });
+
   test('短时繁忙与额度用完给出不同的下一步', () {
     final busy = answerNoticeText(
       outcome(
@@ -220,6 +234,24 @@ void main() {
     expect(saved.failure, LlmFailure.quotaExhausted);
     expect(saved.quotaReason, QuotaExhaustedReason.points);
     expect(savedAnswerNoticeText(saved), contains('积分不足，可以在账号页购买积分'));
+  });
+
+  test('旧消息里存成 rateLimited 的失败按额度用完读回', () {
+    final message = ChatMessage(
+      id: 'msg-1',
+      conversationId: 'conv-1',
+      role: MessageRole.assistant,
+      content: '本地回答',
+      payload: const ChatMessagePayload(
+        fromModel: false,
+        modelFailed: true,
+        failureName: 'rateLimited',
+        notices: [Notice.modelCallFailed],
+      ),
+    );
+    final saved = savedAnswerStatus(message);
+    expect(saved.failure, LlmFailure.quotaExhausted);
+    expect(savedAnswerNoticeText(saved), contains('模型服务今天的额度已经用完'));
   });
 
   test('本地兜底中模型不可用的消息需要登录入口', () {

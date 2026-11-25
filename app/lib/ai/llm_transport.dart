@@ -407,8 +407,8 @@ class HttpLlmClient implements LlmClient {
         );
       }
       if (code == 'quota_exceeded') {
-        // 服务端在 extra.reason 里说明用完的是哪一种额度：账号额度与积分引导去
-        // 账号页购买积分，实例预算只让稍后再试。
+        // 服务端在 extra.reason 里说明用完的是哪一种额度：账号免费额度与积分不足
+        // 引导去账号页购买积分，实例预算与余额副本同步只让稍后再试。
         return LlmException(
           LlmFailure.quotaExhausted,
           detail,
@@ -488,13 +488,15 @@ class _StreamAttempt {
   }
 }
 
+/// 状态码兜底：429 不算额度用完，只有 problem 的 `code` 是 `quota_exceeded` 时
+/// 才归到 [LlmFailure.quotaExhausted]；其余 429 是上游或实例的短时繁忙。
 LlmFailure _failureFor(int statusCode) {
   return switch (statusCode) {
     >= 300 && < 400 => LlmFailure.badResponse,
     401 || 403 => LlmFailure.auth,
     404 => LlmFailure.badResponse,
     408 => LlmFailure.timeout,
-    429 => LlmFailure.quotaExhausted,
+    429 => LlmFailure.busy,
     >= 500 => LlmFailure.server,
     _ => LlmFailure.badResponse,
   };
@@ -519,8 +521,8 @@ String? problemCodeOf(String body) {
   return null;
 }
 
-/// 读 `application/problem+json` 里的 `extra.reason`，目前只有额度用完的 429 用它
-/// 区分账号额度、积分与实例预算；没有这项时返回 null。
+/// 读 `application/problem+json` 里的 `extra.reason`，用来区分额度用完的原因：
+/// `account`、`points`、`instance` 与余额副本同步中的 `syncing`；没有这项时返回 null。
 String? problemReasonOf(String body) {
   final text = body.trim();
   if (text.isEmpty || !text.startsWith('{')) return null;

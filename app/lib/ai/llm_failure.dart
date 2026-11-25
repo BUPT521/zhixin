@@ -30,7 +30,11 @@ enum LlmFailure {
 }
 
 /// 按名称读回失败类型；认不出的返回空，界面不显示未知失败。
+///
+/// 旧版本把额度用完存成 `rateLimited`，读回时按额度用完处理，重新打开讨论时
+/// 仍然显示当时的说明。
 LlmFailure? llmFailureFromName(String? name) {
+  if (name == 'rateLimited') return LlmFailure.quotaExhausted;
   for (final failure in LlmFailure.values) {
     if (failure.name == name) return failure;
   }
@@ -40,12 +44,14 @@ LlmFailure? llmFailureFromName(String? name) {
 /// 额度用完的具体原因；服务端在 problem 的扩展字段里给出，缺失时为空。
 ///
 /// [account] 是账号当天的免费额度用完且没有可用积分，[points] 是积分不足以覆盖
-/// 这一次请求，[instance] 是实例当天的预算用完；前两种可以购买积分继续，最后一种
+/// 这一次请求，[instance] 是实例当天的预算用完，[syncing] 是积分余额副本缺失或
+/// 过期、服务端已经排了查询。前两种可以购买积分继续，[instance] 与 [syncing]
 /// 只能稍后再试。
 enum QuotaExhaustedReason {
   account,
   points,
-  instance;
+  instance,
+  syncing;
 
   /// 按服务端给出的名称读回原因；认不出的返回空，按通用额度用完处理。
   static QuotaExhaustedReason? fromName(String? name) {

@@ -61,18 +61,25 @@ class QuotaPurchaseLink {
 class QuotaPurchaseOverview {
   const QuotaPurchaseOverview({
     required this.balancePoints,
+    this.balanceUnavailable = false,
     this.tokensPerPoint,
     this.product,
     this.latestPurchase,
   });
 
-  /// 即刻收一侧的剩余积分；没有配置商品时为 0。
+  /// 即刻收一侧的剩余积分；没有配置商品时或余额暂时查不到时为 0。
   final int balancePoints;
+
+  /// 余额暂时查不到或商品不是按积分出售时为真；此时 [balancePoints] 不可用，
+  /// 界面提示“暂时查不到余额”，商品与档位照常显示（ADR-0073）。
+  final bool balanceUnavailable;
 
   /// 一个积分覆盖的计费 token 数，用来把积分换算成 token；旧版服务端不返回时为
   /// null，这时界面只显示积分，不做换算。
   final int? tokensPerPoint;
   final QuotaPurchaseProduct? product;
+
+  /// 最近一次仍然可用、没有过期的购买入口；服务端只回 ready 且未过期的一张。
   final QuotaPurchaseLink? latestPurchase;
 }
 
@@ -87,4 +94,38 @@ class QuotaBalance {
   final int remaining;
   final int total;
   final int used;
+}
+
+/// 购买或余额请求失败的种类；界面按它分别说明下一步，不把失败压成一句。
+enum QuotaPurchaseFailureKind {
+  /// 429：请求过于频繁，按服务端给的等待时间稍后再试。
+  rateLimited,
+
+  /// 409：商品已下架，或者现在出售的不是积分。
+  conflict,
+
+  /// 403：账号还没有确认任何登录方式。
+  contactUnverified,
+
+  /// 请求没有到达服务端，或连接中途断开。
+  offline,
+
+  /// 服务端暂时不可用。
+  unavailable,
+  unknown,
+}
+
+/// 一次购买或余额请求失败：只带界面需要的种类与等待时长。
+///
+/// 数据层的 [ServerProblem] 由账号服务翻译成这个值类型，界面不直接依赖数据层。
+class QuotaPurchaseFailure implements Exception {
+  const QuotaPurchaseFailure(this.kind, {this.retryAfter});
+
+  final QuotaPurchaseFailureKind kind;
+
+  /// 服务端要求等待的时长；只有 429 可能给出。
+  final Duration? retryAfter;
+
+  @override
+  String toString() => 'QuotaPurchaseFailure($kind)';
 }

@@ -1295,7 +1295,7 @@ void main() {
     expect(calls, 2);
   });
 
-  test('整段请求遇到 4xx 不重试', () async {
+  test('整段请求遇到 4xx 不重试，裸 429 按短时繁忙处理', () async {
     var calls = 0;
     final client = HttpLlmClient(
       config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
@@ -1313,11 +1313,7 @@ void main() {
       client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>()
-            .having(
-              (error) => error.failure,
-              'failure',
-              LlmFailure.quotaExhausted,
-            )
+            .having((error) => error.failure, 'failure', LlmFailure.busy)
             .having((error) => error.detail, 'detail', '额度不足'),
       ),
     );
@@ -1370,7 +1366,7 @@ void main() {
     expect(calls, 1);
   });
 
-  test('流式请求遇到 4xx 不重试', () async {
+  test('流式请求遇到 4xx 不重试，裸 429 按短时繁忙处理', () async {
     var calls = 0;
     final client = HttpLlmClient(
       config: const LlmConfig(endpoint: _testEndpoint, apiKey: 'test-key'),
@@ -1388,11 +1384,7 @@ void main() {
       client.stream(system: 's', messages: _hi).drain<void>(),
       throwsA(
         isA<LlmException>()
-            .having(
-              (error) => error.failure,
-              'failure',
-              LlmFailure.quotaExhausted,
-            )
+            .having((error) => error.failure, 'failure', LlmFailure.busy)
             .having((error) => error.detail, 'detail', '额度不足'),
       ),
     );

@@ -29,6 +29,7 @@ import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/settings_repository.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
+import 'package:zhixin/domain/models/quota_purchase.dart';
 import 'package:zhixin/domain/rules/embedding.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
@@ -834,5 +835,126 @@ void main() {
         '/v1/llm/embeddings/lookup',
       );
     });
+  });
+
+  test('购买链接带上同一次点击的幂等键，概览保留 balance_unavailable', () async {
+    final backend = server.client;
+    addTearDown(backend.close);
+    final purchaseBodies = <String>[];
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/me/model-quota-purchases') {
+        if (request.method == 'GET') {
+          return http.Response(
+            jsonEncode({
+              'balance_points': 0,
+              'balance_unavailable': true,
+              'tokens_per_point': 1000,
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        purchaseBodies.add(request.body);
+        return http.Response(
+          jsonEncode({
+            'out_request_no': 'out-1',
+            'purchase_url': 'https://example.test/pay',
+            'expires_at': '2026-11-25T12:00:00Z',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      final forwarded = http.Request(request.method, request.url)
+        ..headers.addAll(request.headers)
+        ..bodyBytes = request.bodyBytes;
+      return http.Response.fromStream(await backend.send(forwarded));
+    });
+    addTearDown(client.close);
+    final purchaseAccount = AccountService(
+      store: AccountStore(MemorySecretStore()),
+      preferences: preferences,
+      clientFactory: (baseUrl) =>
+          ServerClient(baseUrl: baseUrl, httpClient: client),
+    );
+    addTearDown(purchaseAccount.dispose);
+    await purchaseAccount.register(
+      identifier: 'purchase@example.test',
+      password: 'password123',
+    );
+
+    final overview = await purchaseAccount.quotaPurchases();
+    expect(overview.balanceUnavailable, isTrue);
+    expect(overview.balancePoints, 0);
+
+    // 同一次点击的重试发同一个键，服务端据此复用同一张链接。
+    await purchaseAccount.quotaPurchaseLink(
+      skuId: 'sku-1',
+      clientRequestNo: 'req-1',
+    );
+    await purchaseAccount.quotaPurchaseLink(
+      skuId: 'sku-1',
+      clientRequestNo: 'req-1',
+    );
+    expect(purchaseBodies, hasLength(2));
+    for (final body in purchaseBodies) {
+      final decoded = jsonDecode(body) as Map<String, Object?>;
+      expect(decoded['sku_id'], 'sku-1');
+      expect(decoded['client_request_no'], 'req-1');
+    }
+  });
+
+  test('购买失败按种类翻译给界面，429 带出等待时长', () async {
+    final backend = server.client;
+    addTearDown(backend.close);
+    final client = MockClient((request) async {
+      if (request.url.path == '/v1/me/model-quota-purchases' &&
+          request.method == 'POST') {
+        return http.Response(
+          '{"code":"rate_limited","detail":"too many"}',
+          429,
+          headers: {
+            'content-type': 'application/problem+json',
+            'retry-after': '12',
+          },
+        );
+      }
+      final forwarded = http.Request(request.method, request.url)
+        ..headers.addAll(request.headers)
+        ..bodyBytes = request.bodyBytes;
+      return http.Response.fromStream(await backend.send(forwarded));
+    });
+    addTearDown(client.close);
+    final purchaseAccount = AccountService(
+      store: AccountStore(MemorySecretStore()),
+      preferences: preferences,
+      clientFactory: (baseUrl) =>
+          ServerClient(baseUrl: baseUrl, httpClient: client),
+    );
+    addTearDown(purchaseAccount.dispose);
+    await purchaseAccount.register(
+      identifier: 'purchase-fail@example.test',
+      password: 'password123',
+    );
+
+    await expectLater(
+      purchaseAccount.quotaPurchaseLink(
+        skuId: 'sku-1',
+        clientRequestNo: 'req-1',
+      ),
+      throwsA(
+        isA<QuotaPurchaseFailure>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              QuotaPurchaseFailureKind.rateLimited,
+            )
+            .having(
+              (error) => error.retryAfter,
+              'retryAfter',
+              const Duration(seconds: 12),
+            ),
+      ),
+    );
   });
 }
