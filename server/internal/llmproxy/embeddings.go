@@ -88,7 +88,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request, params api.Po
 	var budgetError quotaReservationError
 	switch {
 	case errors.Is(res.err, ErrQuotaExceeded):
-		p.writeQuotaExceeded(w, r, userID, day, KindEmbedding)
+		p.writeQuotaExceeded(w, r, userID, day, KindEmbedding, quotaReasonOf(res.err))
 	case errors.Is(res.err, errInstanceBusy):
 		httpx.TooMany(w, r, 1)
 	case errors.As(res.err, &budgetError):

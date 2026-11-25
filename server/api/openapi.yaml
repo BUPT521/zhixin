@@ -1834,14 +1834,24 @@ components:
       required: [day, used_tokens, daily_tokens, embedding_used_tokens, embedding_daily_tokens, tokens_per_point]
       properties:
         day: { type: string, format: date }
-        used_tokens: { type: integer, format: int64, description: 聊天当天已用 }
+        used_tokens: { type: integer, format: int64, description: 聊天当天已结算的计费 token，不含在途预留 }
         daily_tokens: { type: integer, format: int64, description: 聊天每日额度 }
-        embedding_used_tokens: { type: integer, format: int64, description: 嵌入当天已用 }
+        embedding_used_tokens: { type: integer, format: int64, description: 嵌入当天已结算的计费 token }
         embedding_daily_tokens: { type: integer, format: int64, description: 嵌入每日额度 }
         tokens_per_point:
           type: integer
           format: int64
           description: 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
+        charged_points:
+          type: integer
+          format: int64
+          nullable: true
+          description: 当天已经核销成功的积分；没有开通收款时为 null，见 ADR-0071
+        remaining_points:
+          type: integer
+          format: int64
+          nullable: true
+          description: 余额副本里还可以使用的积分，已排除副本同步之后才写入的核销；没有开通收款或还没有余额副本时为 null
     Me:
       type: object
       required: [user_id, created_at, identities]

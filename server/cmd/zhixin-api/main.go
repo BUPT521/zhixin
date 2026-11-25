@@ -60,6 +60,14 @@ func run(log *slog.Logger) error {
 				return err
 			}
 		}
+		// llm_usage 的 reserved_tokens 列是预留与结算分开记的前提，缺列时每条模型
+		// 请求都会写失败；启动时直接拒绝，让自动部署回滚到上一份文件（ADR-0071）。
+		checkCtx, checkCancel := context.WithTimeout(context.Background(), 8*time.Second)
+		err = pgStore.CheckQuotaSchema(checkCtx)
+		checkCancel()
+		if err != nil {
+			return err
+		}
 		if cfg.NowPay != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			err := pgStore.CheckNowPaySchema(ctx)

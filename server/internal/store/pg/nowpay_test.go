@@ -30,13 +30,16 @@ func TestChargeableTokensSubtractsTheFreeAllowance(t *testing.T) {
 	}
 }
 
-// fakeRecorder 实现 nowpay.Recorder：只记下余额刷新请求，核销入口不做别的事。
+// fakeRecorder 实现 nowpay.Recorder：记下余额刷新请求与核销申请，其余不做别的事。
 type fakeRecorder struct {
 	perPoint  int64
 	refreshed []string
+	charged   []int64
 }
 
-func (f *fakeRecorder) Record(context.Context, string, string, int64) {}
+func (f *fakeRecorder) Record(_ context.Context, _, _ string, chargeable int64) {
+	f.charged = append(f.charged, chargeable)
+}
 
 func (f *fakeRecorder) Resume(context.Context, string) {}
 
@@ -127,9 +130,14 @@ func TestPostgresReserveCountsChargesAndUnbilledTokens(t *testing.T) {
 	if err != nil || !ok || charge.Points != 2 {
 		t.Fatalf("应写入一笔两积分的流水: %+v %v %v", charge, ok, err)
 	}
-	// 可用积分 5-2=3 折 3,000 个 token，再减去未记流水的 1,000 个，于是只能再放行 2,000。
-	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 5000); err != nil || got != 2000 {
+	// 可用积分 5-2=3 折 3,000 个 token，再减去未记流水的 1,000 个，于是只能再放行
+	// 2,000；超出这个数的请求整单拒绝，原因是有积分但不够。
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 2000); err != nil || got != 2000 {
 		t.Fatalf("核销与未记账用量都应从可放行量里扣掉，得到 %d %v", got, err)
+	}
+	var quota *llmproxy.QuotaExceededError
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 2001); !errors.As(err, &quota) || quota.Reason != llmproxy.QuotaReasonPoints {
+		t.Fatalf("可用积分不够时应返回 points，得到 %v", err)
 	}
 }
 
@@ -158,6 +166,93 @@ func TestPostgresReserveRefreshesAStaleBalanceCopy(t *testing.T) {
 	}
 	if len(recorder.refreshed) != 1 || recorder.refreshed[0] != "u1" {
 		t.Fatalf("副本过期时应排一次余额查询: %+v", recorder.refreshed)
+	}
+}
+
+// TestPostgresChargePayUsesSettledUsageOnly 守住 3.1：另一个请求还在途时结算这一笔，
+// 核销只能按已结算的用量算，不能把在途预留也算成已经产生的费用，否则并发时多扣
+// 积分（ADR-0071）。
+func TestPostgresChargePayUsesSettledUsageOnly(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	recorder := &fakeRecorder{perPoint: 1000}
+	enablePaidQuota(t, st)
+	st.SetNowPay(recorder)
+	st.SetQuotaLimits(100, 0, 0)
+	if err := st.SaveBalance(ctx, "u1", 10); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	// 两个请求同时在途：A 预留 400，B 预留 2,000。
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 400); err != nil || got != 400 {
+		t.Fatalf("A 应预留 400，得到 %d %v", got, err)
+	}
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 2000); err != nil || got != 2000 {
+		t.Fatalf("B 应预留 2,000，得到 %d %v", got, err)
+	}
+	// B 实际用了 1,500：当天已结算 1,500，另有一笔 400 还在途。
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 2000, 1500, llmproxy.Usage{}); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	if len(recorder.charged) != 1 {
+		t.Fatalf("结算之后应申请一次核销，实际 %d 次", len(recorder.charged))
+	}
+	// 免费额度 100，所以应当按 1,500-100=1,400 申请；把在途的 400 算进去会是 1,800。
+	if recorder.charged[0] != 1400 {
+		t.Fatalf("核销应按已结算用量算 1,400，得到 %d", recorder.charged[0])
+	}
+}
+
+// TestPostgresPointsView 守住账号页的两个积分数字：当天已核销成功的积分，与余额
+// 副本里还可以使用的积分；没有开通收款时两个数都不给。
+func TestPostgresPointsView(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	// 没有配置即刻收时不返回积分。
+	points, err := st.Points(ctx, "u1", day)
+	if err != nil || points.Known {
+		t.Fatalf("未开通收款时不应返回积分: %+v %v", points, err)
+	}
+
+	recorder := &fakeRecorder{perPoint: 1000}
+	enablePaidQuota(t, st)
+	st.SetNowPay(recorder)
+	if err := st.SaveBalance(ctx, "u1", 5); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	// 副本同步之后有两笔核销：一笔确认成功，一笔还在处理。
+	for _, charge := range []struct {
+		id, status string
+		points     int64
+		tokens     int64
+	}{
+		{"nc_1", nowpay.StatusSucceeded, 2, 2000},
+		{"nc_2", nowpay.StatusPending, 1, 1000},
+	} {
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status)
+			 VALUES ($1, 'u1', $2::date, $3, $4, $5)`,
+			charge.id, day, charge.points, charge.tokens, charge.status); err != nil {
+			t.Fatalf("insert charge: %v", err)
+		}
+	}
+	points, err = st.Points(ctx, "u1", day)
+	if err != nil {
+		t.Fatalf("points: %v", err)
+	}
+	if !points.Known || points.Charged != 2 {
+		t.Fatalf("当天已核销应为 2 个积分: %+v", points)
+	}
+	// 5 个积分减去还在途的 1 个；已经成功的那 2 个也在副本同步之后，一并扣掉。
+	if points.Remaining != 2 {
+		t.Fatalf("剩余积分应为 2，得到 %+v", points)
 	}
 }
 

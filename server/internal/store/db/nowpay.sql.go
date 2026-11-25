@@ -48,6 +48,25 @@ func (q *Queries) BalanceForReserve(ctx context.Context, userID string) (Balance
 	return i, err
 }
 
+const chargedPoints = `-- name: ChargedPoints :one
+SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
+WHERE user_id = $1 AND day = $2::date AND status = 'succeeded'
+`
+
+type ChargedPointsParams struct {
+	UserID pgtype.Text
+	Day    pgtype.Date
+}
+
+// 当天已经核销成功的积分，账号页用它显示“今天已用积分”。pending 与 processing
+// 还没有确认扣减，failed 确认没有扣减，都不计入。
+func (q *Queries) ChargedPoints(ctx context.Context, arg ChargedPointsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, chargedPoints, arg.UserID, arg.Day)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const chargedTokens = `-- name: ChargedTokens :one
 SELECT COALESCE(MAX(billed_tokens), 0)::bigint FROM nowpay_charge
 WHERE user_id = $1 AND day = $2::date AND status <> 'failed'

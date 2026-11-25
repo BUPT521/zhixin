@@ -55,6 +55,41 @@ func (s *Store) SaveBalance(ctx context.Context, userID string, remaining int64)
 	return s.q.SaveBalance(ctx, db.SaveBalanceParams{UserID: userID, RemainingPoints: remaining})
 }
 
+// Points 返回账号的积分视图：当天已经核销成功的积分与余额副本里还可以使用的
+// 积分。没有配置即刻收、或者余额副本表还没建好时 Known 为 false，账号页不显示
+// 这两行。剩余积分按副本减去副本同步之后才写入的核销流水，与预留放行的口径一致。
+func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points, error) {
+	if s.nowpay == nil || !s.balanceReady.Load() {
+		return llmproxy.Points{}, nil
+	}
+	date, err := pgDate(day)
+	if err != nil {
+		return llmproxy.Points{}, err
+	}
+	charged, err := s.q.ChargedPoints(ctx, db.ChargedPointsParams{UserID: text(userID), Day: date})
+	if err != nil {
+		return llmproxy.Points{}, fmt.Errorf("pg: 读取当天已核销积分失败: %w", err)
+	}
+	balance, err := s.q.BalanceForReserve(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return llmproxy.Points{Charged: charged}, nil
+	}
+	if err != nil {
+		return llmproxy.Points{}, fmt.Errorf("pg: 读取积分余额副本失败: %w", err)
+	}
+	unreflected, err := s.q.UnreflectedChargePoints(ctx, db.UnreflectedChargePointsParams{
+		UserID: text(userID), SyncedAt: balance.SyncedAt,
+	})
+	if err != nil {
+		return llmproxy.Points{}, fmt.Errorf("pg: 读取副本同步之后的核销积分失败: %w", err)
+	}
+	return llmproxy.Points{
+		Charged:   charged,
+		Remaining: max(balance.RemainingPoints-unreflected, 0),
+		Known:     true,
+	}, nil
+}
+
 // ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。同一天同一账号
 // 的申请用事务级 advisory lock 排队：并发结算是不同请求，行锁管不到还没有的行，
 // 只看一次已申请量会让两笔各自再扣一次。
@@ -165,7 +200,8 @@ func text(value string) pgtype.Text {
 // 执行器再减去当天已申请的积分，只补差额（ADR-0067）。
 //
 // 先用当天免费额度，超出部分才折成积分。没有配置每日额度时免费额度不限，不产生
-// 核销。
+// 核销。累计量只算已经结算的用量：在途预留还没有产生实际费用，算进去会让并发
+// 请求多扣积分（ADR-0071）。
 func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtype.Date) {
 	limit, limited, err := s.accountLimit(ctx, s.q, userID, llmproxy.KindChat)
 	if err != nil {
@@ -175,12 +211,12 @@ func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtyp
 	if !limited {
 		return
 	}
-	used, err := usedTokens(ctx, s.q, userID, date, llmproxy.KindChat)
+	settled, err := settledTokens(ctx, s.q, userID, date, llmproxy.KindChat)
 	if err != nil {
-		s.log.Error("read the used tokens for nowpay", "user_id", userID, "error", err)
+		s.log.Error("read the settled tokens for nowpay", "user_id", userID, "error", err)
 		return
 	}
-	if chargeable := chargeableTokens(used, limit); chargeable > 0 {
+	if chargeable := chargeableTokens(settled, limit); chargeable > 0 {
 		s.nowpay.Record(ctx, userID, day, chargeable)
 	}
 }
@@ -191,7 +227,9 @@ func chargeableTokens(used, limit int64) int64 {
 	return max(0, used-limit)
 }
 
-// paidTokens 返回免费额度之外还可以由积分承担、因此可以放行的计费 token 数。
+// paidTokens 返回免费额度之外还可以由积分承担、因此可以放行的计费 token 数，
+// 以及这个账号是否还有可用积分（余额副本减去副本同步之后的核销之后大于零）。
+// 后者用于区分 429 的原因：有积分却不够是 points，没有积分是 account。
 //
 // 余额取本地副本，预留因此不在请求路径上调用即刻收（ADR-0069）。副本缺失或超过
 // nowpay.BalanceTTL 时排一次异步查询，这一轮仍按现有副本判断：缺失时按零，也就是
@@ -200,18 +238,18 @@ func chargeableTokens(used, limit int64) int64 {
 // 可用积分是副本减去副本同步之后才写入的核销流水，副本已经反映那之前的扣减；再减
 // 去当天已经发生、还没有记进流水的计费量，同一笔用量不会因为预留与核销的先后被
 // 放行两次。副本表还没建好时一律按零，与副本缺失同样处理。
-func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, used, limit int64) (int64, error) {
+func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, used, limit int64) (int64, bool, error) {
 	// 副本表还没建好时只放行免费额度，不去查一张不存在的表。
 	if !s.balanceReady.Load() {
-		return 0, nil
+		return 0, false, nil
 	}
 	balance, err := q.BalanceForReserve(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.nowpay.RefreshBalance(ctx, userID)
-		return 0, nil
+		return 0, false, nil
 	}
 	if err != nil {
-		return 0, fmt.Errorf("pg: 读取积分余额副本失败: %w", err)
+		return 0, false, fmt.Errorf("pg: 读取积分余额副本失败: %w", err)
 	}
 	if time.Since(balance.SyncedAt.Time) > nowpay.BalanceTTL {
 		s.nowpay.RefreshBalance(ctx, userID)
@@ -220,13 +258,13 @@ func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, da
 		UserID: text(userID), SyncedAt: balance.SyncedAt,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("pg: 读取副本同步之后的核销积分失败: %w", err)
+		return 0, false, fmt.Errorf("pg: 读取副本同步之后的核销积分失败: %w", err)
 	}
 	charged, err := q.ChargedTokens(ctx, db.ChargedTokensParams{UserID: text(userID), Day: date})
 	if err != nil {
-		return 0, fmt.Errorf("pg: 读取当天已核销的计费量失败: %w", err)
+		return 0, false, fmt.Errorf("pg: 读取当天已核销的计费量失败: %w", err)
 	}
 	points := max(balance.RemainingPoints-unreflected, 0)
 	unbilled := max(chargeableTokens(used, limit)-charged, 0)
-	return max(points*s.nowpay.TokensPerPoint()-unbilled, 0), nil
+	return max(points*s.nowpay.TokensPerPoint()-unbilled, 0), points > 0, nil
 }

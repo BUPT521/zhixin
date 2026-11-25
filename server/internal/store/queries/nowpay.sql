@@ -57,3 +57,9 @@ WHERE user_id = sqlc.arg(user_id)
 -- name: ChargedTokens :one
 SELECT COALESCE(MAX(billed_tokens), 0)::bigint FROM nowpay_charge
 WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND status <> 'failed';
+
+-- 当天已经核销成功的积分，账号页用它显示“今天已用积分”。pending 与 processing
+-- 还没有确认扣减，failed 确认没有扣减，都不计入。
+-- name: ChargedPoints :one
+SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
+WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND status = 'succeeded';

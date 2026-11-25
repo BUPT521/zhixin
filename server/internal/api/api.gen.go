@@ -835,6 +835,9 @@ type IdentityKind string
 
 // LLMQuota defines model for LLMQuota.
 type LLMQuota struct {
+	// ChargedPoints 当天已经核销成功的积分；没有开通收款时为 null，见 ADR-0071
+	ChargedPoints *int64 `json:"charged_points,omitempty"`
+
 	// DailyTokens 聊天每日额度
 	DailyTokens int64              `json:"daily_tokens"`
 	Day         openapi_types.Date `json:"day"`
@@ -842,13 +845,16 @@ type LLMQuota struct {
 	// EmbeddingDailyTokens 嵌入每日额度
 	EmbeddingDailyTokens int64 `json:"embedding_daily_tokens"`
 
-	// EmbeddingUsedTokens 嵌入当天已用
+	// EmbeddingUsedTokens 嵌入当天已结算的计费 token
 	EmbeddingUsedTokens int64 `json:"embedding_used_tokens"`
+
+	// RemainingPoints 余额副本里还可以使用的积分，已排除副本同步之后才写入的核销；没有开通收款或还没有余额副本时为 null
+	RemainingPoints *int64 `json:"remaining_points,omitempty"`
 
 	// TokensPerPoint 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
 	TokensPerPoint int64 `json:"tokens_per_point"`
 
-	// UsedTokens 聊天当天已用
+	// UsedTokens 聊天当天已结算的计费 token，不含在途预留
 	UsedTokens int64 `json:"used_tokens"`
 }
 

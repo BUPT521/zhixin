@@ -161,27 +161,27 @@ func (s *Store) DeleteAll(ctx context.Context, userID string) error {
 	return s.objects.RemovePrefix(ctx, objectstore.BackupPrefix(userID))
 }
 
-// Used 返回当天某类模型已用的 token 数；没有记录时是 0。
+// Used 返回当天某类模型已经结算的 token 数，不含在途预留；展示与核销用这一份。
 func (s *Store) Used(ctx context.Context, userID, day string, kind llmproxy.Kind) (int64, error) {
 	date, err := pgDate(day)
 	if err != nil {
 		return 0, err
 	}
-	return usedTokens(ctx, s.q, userID, date, kind)
+	return settledTokens(ctx, s.q, userID, date, kind)
 }
 
-// Add 累加当天某类模型的用量，不归到具体密钥。
+// Add 累加当天某类模型的已结算用量，不归到具体密钥。
 func (s *Store) Add(ctx context.Context, userID, day string, kind llmproxy.Kind, tokens int64) error {
 	date, err := pgDate(day)
 	if err != nil {
 		return err
 	}
-	return s.q.AddTokens(ctx, db.AddTokensParams{
+	return s.q.SettleTokens(ctx, db.SettleTokensParams{
 		UserID:   userID,
 		Day:      date,
 		Kind:     string(kind),
 		ApiKeyID: "",
-		Tokens:   tokens,
+		Actual:   tokens,
 	})
 }
 

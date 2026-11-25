@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// TestMemoryQuotaReserveSettle 核对内存额度的预留、截断、结算与覆盖额度：预留
-// 按账号剩余与实例剩余取较小值，结算多退少补，额度用完返回 ErrQuotaExceeded。
+// TestMemoryQuotaReserveSettle 核对内存额度的预留、结算与覆盖额度：预留要么拿满、
+// 要么返回带原因的错误，不再截断；额度判定看已结算与在途预留之和，展示只看已
+// 结算量（ADR-0071）。
 func TestMemoryQuotaReserveSettle(t *testing.T) {
 	ctx := context.Background()
 	q := NewMemoryQuota()
@@ -18,38 +19,34 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 40); err != nil || got != 40 {
 		t.Fatalf("第一次预留应为 40，得到 %d %v", got, err)
 	}
-	// 只剩 60：预留按剩余量截断，调用方发现不足会整单拒绝。
-	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 100); err != nil || got != 60 {
-		t.Fatalf("剩余 60 时应截断为 60，得到 %d %v", got, err)
+	// 只剩 60：请求 100 拿不到整份，返回账号额度原因，也不写入预留。
+	var quota *QuotaExceededError
+	if _, err := q.Reserve(ctx, "u1", day, KindChat, "", 100); !errors.As(err, &quota) || quota.Reason != QuotaReasonAccount {
+		t.Fatalf("剩余 60 时请求 100 应返回 account，得到 %v", err)
+	}
+	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 0 {
+		t.Fatalf("在途预留不算已结算用量，展示应为 0，得到 %d", used)
+	}
+	// 拿满剩余 60，账号额度占满。
+	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 60); err != nil || got != 60 {
+		t.Fatalf("剩余 60 时请求 60 应拿满，得到 %d %v", got, err)
 	}
 	if _, err := q.Reserve(ctx, "u1", day, KindChat, "", 1); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("额度用完应返回 ErrQuotaExceeded，得到 %v", err)
 	}
-	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 100 {
-		t.Fatalf("预留之后用量应为 100，得到 %d", used)
-	}
-	// 剩余量与请求量分开比较：剩余 60 时请求 40 应当拿满 40，而不是被截成 0。
-	q2 := NewMemoryQuota()
-	q2.SetQuotaLimits(100, 200, 0)
-	if got, err := q2.Reserve(ctx, "u2", day, KindChat, "", 70); err != nil || got != 70 {
-		t.Fatalf("第一次预留应为 70，得到 %d %v", got, err)
-	}
-	if got, err := q2.Reserve(ctx, "u2", day, KindChat, "", 40); err != nil || got != 30 {
-		t.Fatalf("剩余 30 时应截断为 30，得到 %d %v", got, err)
-	}
 
-	// 实际用量超过预留时补记差额，少于预留时退回。
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 60, 90, Usage{}); err != nil {
-		t.Fatalf("settle 补记: %v", err)
-	}
-	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 130 {
-		t.Fatalf("实际超过预留后用量应为 130，得到 %d", used)
-	}
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 40, 10, Usage{}); err != nil {
+	// 结算把预留转成已结算：对外的用量这时才增加，多退少补。
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 40, 30, Usage{}); err != nil {
 		t.Fatalf("settle 退回: %v", err)
 	}
+	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 30 {
+		t.Fatalf("结算之后已结算用量应为 30，得到 %d", used)
+	}
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 60, 70, Usage{}); err != nil {
+		t.Fatalf("settle 补记: %v", err)
+	}
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 100 {
-		t.Fatalf("退回之后用量应为 100，得到 %d", used)
+		t.Fatalf("实际超过预留后已结算用量应为 100，得到 %d", used)
 	}
 
 	// 覆盖额度优先于配置的默认值。
@@ -111,9 +108,17 @@ func TestMemoryQuotaInstanceBudget(t *testing.T) {
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 200); err != nil || got != 200 {
 		t.Fatalf("第一次预留应为 200，得到 %d %v", got, err)
 	}
-	// 实例只剩 50，账号额度还很宽。
-	if got, err := q.Reserve(ctx, "u2", day, KindEmbedding, "", 100); err != nil || got != 50 {
-		t.Fatalf("实例只剩 50 时应截断为 50，得到 %d %v", got, err)
+	// 实例只剩 50：放不下整份 100，返回实例预算原因，也不写入预留。
+	var quota *QuotaExceededError
+	if _, err := q.Reserve(ctx, "u2", day, KindEmbedding, "", 100); !errors.As(err, &quota) || quota.Reason != QuotaReasonInstance {
+		t.Fatalf("实例只剩 50 时应返回 instance，得到 %v", err)
+	}
+	if used, _ := q.InstanceUsed(ctx, day); used != 200 {
+		t.Fatalf("只有成功的那笔进实例账本，应为 200，得到 %d", used)
+	}
+	// 再占满剩下的 50，实例预算用完之后谁都预留不到。
+	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 50); err != nil || got != 50 {
+		t.Fatalf("实例还剩 50 时应能预留 50，得到 %d %v", got, err)
 	}
 	if _, err := q.Reserve(ctx, "u1", day, KindChat, "", 1); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("实例预算用完应返回 ErrQuotaExceeded，得到 %v", err)
@@ -123,13 +128,16 @@ func TestMemoryQuotaInstanceBudget(t *testing.T) {
 	}
 
 	// 结算退回 30，实例预算重新有 30 可用。
-	if err := q.Settle(ctx, "u2", day, KindEmbedding, "", 50, 20, Usage{}); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 200, 170, Usage{}); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 50, 50, Usage{}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, _ := q.InstanceUsed(ctx, day); used != 220 {
 		t.Fatalf("退回之后实例用量应为 220，得到 %d", used)
 	}
-	if got, err := q.Reserve(ctx, "u2", day, KindEmbedding, "", 100); err != nil || got != 30 {
+	if got, err := q.Reserve(ctx, "u2", day, KindEmbedding, "", 30); err != nil || got != 30 {
 		t.Fatalf("退回之后应能再预留 30，得到 %d %v", got, err)
 	}
 }
@@ -154,6 +162,26 @@ func TestMemoryQuotaAttributesUsageToKey(t *testing.T) {
 		}
 	}
 	q.mu.Lock()
+	reservedByKey := map[string]int64{}
+	for key, tokens := range q.reserved {
+		if key[0] == "u1" && key[1] == day && key[2] == string(KindChat) {
+			reservedByKey[key[3]] = tokens
+		}
+	}
+	q.mu.Unlock()
+	if reservedByKey["key-a"] != 100 || reservedByKey["key-b"] != 50 || reservedByKey[""] != 20 {
+		t.Fatalf("在途预留应按密钥分开记，得到 %+v", reservedByKey)
+	}
+	// 结算之后转成已结算用量，同样按密钥各占一行。
+	for _, call := range []struct {
+		keyID string
+		want  int64
+	}{{"key-a", 100}, {"key-b", 50}, {"", 20}} {
+		if err := q.Settle(ctx, "u1", day, KindChat, call.keyID, call.want, call.want, Usage{}); err != nil {
+			t.Fatalf("settle %q: %v", call.keyID, err)
+		}
+	}
+	q.mu.Lock()
 	byKey := map[string]int64{}
 	for key, tokens := range q.used {
 		if key[0] == "u1" && key[1] == day && key[2] == string(KindChat) {
@@ -162,7 +190,7 @@ func TestMemoryQuotaAttributesUsageToKey(t *testing.T) {
 	}
 	q.mu.Unlock()
 	if byKey["key-a"] != 100 || byKey["key-b"] != 50 || byKey[""] != 20 {
-		t.Fatalf("用量应按密钥分开记，得到 %+v", byKey)
+		t.Fatalf("已结算用量应按密钥分开记，得到 %+v", byKey)
 	}
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 170 {
 		t.Fatalf("账号合计应为 170，得到 %d", used)

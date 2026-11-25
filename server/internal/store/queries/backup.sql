@@ -53,22 +53,30 @@ RETURNING id;
 -- name: ListAllBackups :many
 SELECT user_id, id FROM backup;
 
--- 账号当天的用量按用途汇总，额度判定与展示只看账号合计，密钥分开记不妨碍共用
--- 同一份额度（ADR-0063）。
+-- 账号当天的用量按用途汇总，额度判定看已结算量与在途预留之和：同时发起的请求
+-- 必须互相看得见，否则各自按旧值通过（ADR-0063、ADR-0071）。
 -- name: UsedTokens :one
+SELECT COALESCE(SUM(tokens + reserved_tokens), 0)::bigint
+FROM llm_usage
+WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND kind = sqlc.arg(kind);
+
+-- 账号当天已经结算的计费 token 数，核销只按这一份算：在途预留还没有产生实际用量，
+-- 算进去会在并发时多扣积分（ADR-0071）。
+-- name: SettledTokens :one
 SELECT COALESCE(SUM(tokens), 0)::bigint
 FROM llm_usage
 WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND kind = sqlc.arg(kind);
 
--- 累加一份用量。api_key_id 记录这次调用用的是哪把密钥，用访问令牌时为空字符串。
--- name: AddTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens)
+-- 记一笔在途预留。api_key_id 记录这次调用用的是哪把密钥，用访问令牌时为空字符串；
+-- 结算时由 SettleTokens 把它转进 tokens。
+-- name: AddReservedTokens :exec
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, reserved_tokens)
 VALUES (
   sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(kind),
-  sqlc.arg(api_key_id), sqlc.arg(tokens)
+  sqlc.arg(api_key_id), sqlc.arg(reserved_tokens)
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
-DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens;
+DO UPDATE SET reserved_tokens = llm_usage.reserved_tokens + EXCLUDED.reserved_tokens;
 
 -- 按账号调整的每日额度；没有行或者对应列为空时用配置的默认值。
 -- name: LLMQuotaOverride :one

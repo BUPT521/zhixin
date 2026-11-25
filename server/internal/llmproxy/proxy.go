@@ -232,6 +232,17 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 			out.EmbeddingUsedTokens, out.EmbeddingDailyTokens = used, limit
 		}
 	}
+	// 积分只在开通收款的实例上有：当天已核销多少、副本里还剩多少，账号页按这两个
+	// 数写“免费额度用完之后今天用了多少、还剩多少”（ADR-0069）。
+	points, err := p.quota.Points(r.Context(), pr.UserID, day)
+	if err != nil {
+		httpx.WriteInternal(w, r, p.log, err)
+		return
+	}
+	if points.Known {
+		charged, remaining := points.Charged, points.Remaining
+		out.ChargedPoints, out.RemainingPoints = &charged, &remaining
+	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
@@ -390,15 +401,11 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 	keyID := auth.MustPrincipal(r.Context()).KeyID
 	return func(route liveRoute, estimate Usage, first bool) (finishAttempt, error) {
 		want := estimate.reserve(model.Kind)
+		// Reserve 要么拿到完整的 want，要么返回带原因的错误；不再按剩余量截断，
+		// 因此这里不需要退回预留，429 也能说清是哪种额度用完（ADR-0071）。
 		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, keyID, want)
 		if err != nil {
 			return nil, quotaReservationError{cause: err}
-		}
-		// 剩余额度不足以覆盖整次预留时整单拒绝：Reserve 会按剩余量截断，直接
-		// 放行会让一次请求越过额度太多，结算再补记也追不回免费额度外的用量。
-		if reserved < want {
-			p.settle(r, userID, day, model.Kind, keyID, reserved, 0, Usage{})
-			return nil, ErrQuotaExceeded
 		}
 		return func(result attemptResult) {
 			canceled := result.clientCanceled || r.Context().Err() != nil
@@ -580,7 +587,7 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 			return
 		}
 		if errors.Is(err, ErrQuotaExceeded) {
-			p.writeQuotaExceeded(w, r, userID, day, KindChat)
+			p.writeQuotaExceeded(w, r, userID, day, KindChat, quotaReasonOf(err))
 			return
 		}
 		var budgetError quotaReservationError
@@ -1109,9 +1116,9 @@ func (c cancelOnClose) Close() error {
 	return err
 }
 
-// writeQuotaExceeded 回 429 quota_exceeded，并带上当天的账号用量、账号额度与
-// 实例预算：客户端据此提示额度用完，响应里也能看出是哪一种额度用尽。
-func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userID, day string, kind Kind) {
+// writeQuotaExceeded 回 429 quota_exceeded，并带上当天的账号用量、账号额度、实例
+// 预算与用完的是哪一种额度：客户端按 reason 决定是引导购买积分还是只说稍后再试。
+func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userID, day string, kind Kind, reason QuotaReason) {
 	used, err := p.quota.Used(r.Context(), userID, day, kind)
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
@@ -1127,9 +1134,16 @@ func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userI
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
-	httpx.WriteProblemExtra(w, r, http.StatusTooManyRequests, httpx.CodeQuotaExceeded,
-		"daily budget used up; use your own key or try again tomorrow",
+	detail := "daily free allowance used up"
+	switch reason {
+	case QuotaReasonPoints:
+		detail = "available points are not enough for this request"
+	case QuotaReasonInstance:
+		detail = "instance daily budget used up"
+	}
+	httpx.WriteProblemExtra(w, r, http.StatusTooManyRequests, httpx.CodeQuotaExceeded, detail,
 		map[string]any{
+			"reason":                string(reason),
 			"day":                   day,
 			"kind":                  string(kind),
 			"used_tokens":           used,
@@ -1137,6 +1151,15 @@ func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userI
 			"instance_used_tokens":  instanceUsed,
 			"instance_daily_tokens": p.cfg.InstanceDailyTokens,
 		})
+}
+
+// quotaReasonOf 读出预留被拒的原因；不是带原因的额度错误时按账号额度用完处理。
+func quotaReasonOf(err error) QuotaReason {
+	var quota *QuotaExceededError
+	if errors.As(err, &quota) {
+		return quota.Reason
+	}
+	return QuotaReasonAccount
 }
 
 // usageEnvelope 读 Responses 与 Embeddings 两种响应里的用量：对话是

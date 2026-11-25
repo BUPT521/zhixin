@@ -211,7 +211,8 @@ CREATE TABLE llm_usage (
   day           DATE NOT NULL,                  -- ZHIXIN_TIMEZONE 下的自然日
   kind          TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'embedding')),
   api_key_id    TEXT NOT NULL DEFAULT '',
-  tokens        BIGINT NOT NULL DEFAULT 0,      -- 计费 token
+  tokens        BIGINT NOT NULL DEFAULT 0,      -- 已结算的计费 token
+  reserved_tokens BIGINT NOT NULL DEFAULT 0,    -- 在途预留，结算时转进 tokens
   input_tokens  BIGINT NOT NULL DEFAULT 0,      -- 上游报告的输入量
   cached_tokens BIGINT NOT NULL DEFAULT 0,      -- 其中命中缓存的部分
   PRIMARY KEY (user_id, day, kind, api_key_id)

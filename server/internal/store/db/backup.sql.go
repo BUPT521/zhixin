@@ -11,32 +11,33 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const addTokens = `-- name: AddTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens)
+const addReservedTokens = `-- name: AddReservedTokens :exec
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, reserved_tokens)
 VALUES (
   $1, $2::date, $3,
   $4, $5
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
-DO UPDATE SET tokens = llm_usage.tokens + EXCLUDED.tokens
+DO UPDATE SET reserved_tokens = llm_usage.reserved_tokens + EXCLUDED.reserved_tokens
 `
 
-type AddTokensParams struct {
-	UserID   string
-	Day      pgtype.Date
-	Kind     string
-	ApiKeyID string
-	Tokens   int64
+type AddReservedTokensParams struct {
+	UserID         string
+	Day            pgtype.Date
+	Kind           string
+	ApiKeyID       string
+	ReservedTokens int64
 }
 
-// 累加一份用量。api_key_id 记录这次调用用的是哪把密钥，用访问令牌时为空字符串。
-func (q *Queries) AddTokens(ctx context.Context, arg AddTokensParams) error {
-	_, err := q.db.Exec(ctx, addTokens,
+// 记一笔在途预留。api_key_id 记录这次调用用的是哪把密钥，用访问令牌时为空字符串；
+// 结算时由 SettleTokens 把它转进 tokens。
+func (q *Queries) AddReservedTokens(ctx context.Context, arg AddReservedTokensParams) error {
+	_, err := q.db.Exec(ctx, addReservedTokens,
 		arg.UserID,
 		arg.Day,
 		arg.Kind,
 		arg.ApiKeyID,
-		arg.Tokens,
+		arg.ReservedTokens,
 	)
 	return err
 }
@@ -238,6 +239,27 @@ func (q *Queries) ListBackups(ctx context.Context, userID string) ([]ListBackups
 	return items, nil
 }
 
+const settledTokens = `-- name: SettledTokens :one
+SELECT COALESCE(SUM(tokens), 0)::bigint
+FROM llm_usage
+WHERE user_id = $1 AND day = $2::date AND kind = $3
+`
+
+type SettledTokensParams struct {
+	UserID string
+	Day    pgtype.Date
+	Kind   string
+}
+
+// 账号当天已经结算的计费 token 数，核销只按这一份算：在途预留还没有产生实际用量，
+// 算进去会在并发时多扣积分（ADR-0071）。
+func (q *Queries) SettledTokens(ctx context.Context, arg SettledTokensParams) (int64, error) {
+	row := q.db.QueryRow(ctx, settledTokens, arg.UserID, arg.Day, arg.Kind)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const trimBackups = `-- name: TrimBackups :many
 WITH stale AS (
   SELECT id FROM backup
@@ -277,7 +299,7 @@ func (q *Queries) TrimBackups(ctx context.Context, arg TrimBackupsParams) ([]str
 }
 
 const usedTokens = `-- name: UsedTokens :one
-SELECT COALESCE(SUM(tokens), 0)::bigint
+SELECT COALESCE(SUM(tokens + reserved_tokens), 0)::bigint
 FROM llm_usage
 WHERE user_id = $1 AND day = $2::date AND kind = $3
 `
@@ -288,8 +310,8 @@ type UsedTokensParams struct {
 	Kind   string
 }
 
-// 账号当天的用量按用途汇总，额度判定与展示只看账号合计，密钥分开记不妨碍共用
-// 同一份额度（ADR-0063）。
+// 账号当天的用量按用途汇总，额度判定看已结算量与在途预留之和：同时发起的请求
+// 必须互相看得见，否则各自按旧值通过（ADR-0063、ADR-0071）。
 func (q *Queries) UsedTokens(ctx context.Context, arg UsedTokensParams) (int64, error) {
 	row := q.db.QueryRow(ctx, usedTokens, arg.UserID, arg.Day, arg.Kind)
 	var column_1 int64
