@@ -449,6 +449,52 @@ func TestChatPassesThroughClientErrorsWithoutFailover(t *testing.T) {
 	}
 }
 
+// 402 表示凭据背后的账户没有余额或额度：同一来源的其他路由会一起失败，所以
+// 跳过这个来源的剩余候选并换下一条路由，不把 402 交给客户端（ADR-0075）。
+func TestChatPaymentRequiredSkipsSourceRoutes(t *testing.T) {
+	source := newFakeSource(t, "primary")
+	backup := newFakeSource(t, "backup")
+	source.status.Store(http.StatusPaymentRequired)
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "primary", source.URL, "sk-primary")
+		putProvider(t, c, box, "backup", backup.URL, "sk-backup")
+		putModel(t, c, ModelRecord{Name: "zhixin-chat", Kind: KindChat, Routes: []Route{
+			{ProviderID: "primary", UpstreamModel: "a"},
+			{ProviderID: "primary", UpstreamModel: "b"},
+			{ProviderID: "backup", UpstreamModel: "c", Priority: 1},
+		}})
+	})
+	token := signIn(t, env.authSvc, "pay@b.cn")
+	var out struct {
+		Tag string `json:"tag"`
+	}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", token, map[string]any{"model": "zhixin-chat", "input": []any{}}, &out); code != http.StatusOK || out.Tag != "backup" {
+		t.Fatalf("402 应换到备用来源：%d %+v", code, out)
+	}
+	if got := source.calls.Load(); got != 1 {
+		t.Fatalf("同一来源的其余候选应跳过，实际尝试了 %d 次", got)
+	}
+}
+
+func TestHTTPFailureScopes(t *testing.T) {
+	cases := []struct {
+		status int
+		scope  failureScope
+		reason string
+	}{
+		{http.StatusUnauthorized, sourceFailure, "401 被拒的是共用凭据"},
+		{http.StatusPaymentRequired, sourceFailure, "402 是账户欠费，同一来源都会失败"},
+		{http.StatusTooManyRequests, routeFailure, "429 可能只与这条路由有关"},
+		{http.StatusBadRequest, noHealthFailure, "400 说明请求本身有问题"},
+	}
+	for _, tc := range cases {
+		if got := httpFailure(tc.status, "").scope; got != tc.scope {
+			t.Fatalf("%d：%s，得到的故障范围是 %v", tc.status, tc.reason, got)
+		}
+	}
+}
+
 func TestChatUnreachableSourcesGive502(t *testing.T) {
 	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "dead", "http://127.0.0.1:1", "sk-dead")

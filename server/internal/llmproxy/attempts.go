@@ -81,11 +81,13 @@ func (p *Proxy) finishAttempt(plan *attemptPlan, attempt routeAttempt, result at
 	attempt.settle(result)
 }
 
-// A 401 rejects the shared credential. Other HTTP errors may be specific to the model.
+// 401 说明这把共用的凭据被上游拒绝，402 说明凭据背后的账户没有余额或额度，
+// 两者都会让同一来源的其他路由一起失败，因此按来源级故障处理；其他状态码可能
+// 只与这个模型有关，按路由级故障处理。取舍见 ADR-0075。
 func httpFailure(status int, retryAfter string) healthOutcome {
 	out := healthOutcome{reason: fmt.Sprintf("HTTP %d", status), sourceReached: true}
 	switch {
-	case status == http.StatusUnauthorized:
+	case status == http.StatusUnauthorized || status == http.StatusPaymentRequired:
 		out.scope, out.sourceReached = sourceFailure, false
 	case retryable(status):
 		out.scope = routeFailure

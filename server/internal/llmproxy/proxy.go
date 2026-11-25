@@ -799,11 +799,12 @@ func allowFields(w http.ResponseWriter, r *http.Request, fields map[string]json.
 	return true
 }
 
-// retryable 报告这个状态码是否换下一个来源再试：限流、服务端错误与 key 被拒
-// 都可能只是这个来源的问题；400、404、422 这类说明请求本身有问题，换来源也
-// 一样，直接返回给客户端。
+// retryable 报告这个状态码是否换下一个来源再试：限流、服务端错误、key 被拒与
+// 上游账户欠费都可能只是这个来源的问题；400、404、422 这类说明请求本身有问题，
+// 换来源也一样，直接返回给客户端。402 的含义见 httpFailure 与 ADR-0075。
 func retryable(status int) bool {
 	return status == http.StatusUnauthorized || status == http.StatusForbidden ||
+		status == http.StatusPaymentRequired ||
 		status == http.StatusRequestTimeout || status == http.StatusTooManyRequests ||
 		status >= 500
 }
