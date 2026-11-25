@@ -83,6 +83,27 @@ func TestRecordDoesNotChargeAgainWhenTheSameDayIsSettledTwice(t *testing.T) {
 	}
 }
 
+func TestRecordChargesTheDaysCumulativeTotalOnce(t *testing.T) {
+	ledger := &fakeLedger{}
+	meter, err := NewMeter(newTestClient(t, &fakeCaller{}), ledger, 10000,
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 十二轮各 12,480 个计费 token，按当天累计是 14.976 个积分，记 15 个；逐轮取整
+	// 会记 24 个，差额不再随轮次放大（ADR-0067）。
+	for i := 1; i <= 12; i++ {
+		meter.Record(context.Background(), "user_1", "2026-11-25", int64(12480*i))
+	}
+	var total int64
+	for _, c := range ledger.created {
+		total += c.Points
+	}
+	if total != 15 {
+		t.Fatalf("十二轮累计应记 15 个积分，逐轮取整会记 24 个: 实际 %d 个 %+v", total, ledger.created)
+	}
+}
+
 func TestRecordWithoutChargeableTokensDoesNothing(t *testing.T) {
 	ledger := &fakeLedger{}
 	meter := newTestMeter(t, ledger, &fakeCaller{})

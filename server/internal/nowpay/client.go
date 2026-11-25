@@ -350,7 +350,8 @@ func validBuyer(buyer string) error {
 }
 
 // Points 把计费 token 折算成积分，向上取整：一个积分覆盖 TokensPerPoint 个计费
-// token，不满一个积分的余量也按一个积分计，宁可多收一点，也不让短对话免费。
+// token，不满一个积分的余量也按一个积分计。调用方传入当天累计量并减去当天已申请
+// 的积分，只补差额，多记的量因此整天不超过一个积分，见 ADR-0067。
 func Points(tokens, tokensPerPoint int64) int64 {
 	if tokens <= 0 || tokensPerPoint <= 0 {
 		return 0

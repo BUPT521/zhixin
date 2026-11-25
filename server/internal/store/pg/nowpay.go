@@ -139,7 +139,8 @@ func text(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: value != ""}
 }
 
-// chargeNowPay 算出应当由即刻收积分承担的计费 token 数，交给核销执行器。
+// chargeNowPay 算出当天累计应当由即刻收积分承担的计费 token 数，交给核销执行器；
+// 执行器再减去当天已申请的积分，只补差额（ADR-0067）。
 //
 // 先用当天免费额度，超出部分才折成积分。没有配置每日额度时免费额度不限，不产生
 // 核销。

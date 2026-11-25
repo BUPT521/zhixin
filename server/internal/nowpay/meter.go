@@ -100,8 +100,9 @@ func (m *Meter) Start(ctx context.Context) {
 	}()
 }
 
-// Record 按应当由积分承担的计费 token 数核销差额。当天已经申请过的积分（含待确认
-// 与处理中）先扣掉，所以同一轮结算重入不会重复扣款。
+// Record 按当天累计应当由积分承担的计费 token 数核销差额，传入的不是单轮用量。
+// 当天已经申请过的积分（含待确认与处理中）先扣掉，所以同一轮结算重入不会重复扣款，
+// 一整天多记的积分也不超过一个。
 func (m *Meter) Record(ctx context.Context, userID, day string, chargeableTokens int64) {
 	required := Points(chargeableTokens, m.perPoint)
 	if required <= 0 {
