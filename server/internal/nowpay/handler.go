@@ -103,7 +103,7 @@ func NewHandler(client *Client, purchases PurchaseStore, balances BalanceStore, 
 	}
 }
 
-// Overview 返回商品收费能力、积分余额与遗留余额。商品查询成功就带上状态，客户端
+// Overview 返回商品收费能力与积分余额。商品查询成功就带上状态，客户端
 // 按 capability_status 决定是否显示购买入口；商品查询与余额查询并行，余额失败不再
 // 让整页 503，而是返回商品信息并标记 balance_unavailable，客户端提示暂时查不到余额。
 func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {

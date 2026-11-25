@@ -796,7 +796,7 @@ paths:
   /v1/me/model-quota-purchases:
     get:
       tags: [payment]
-      summary: 即刻收商品收费能力、聊天积分余额与遗留余额
+      summary: 即刻收商品收费能力、聊天积分余额与折算比例
       description: |
         需要登录令牌。服务端并行查询商品收费能力（alipay.aipay.nowpaydirect.charge.query）
         与账号积分余额（alipay.aipay.nowpaydirect.quota.query）；商品能力在进程内缓存 60 秒。

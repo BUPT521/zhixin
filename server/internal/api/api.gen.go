@@ -1707,7 +1707,7 @@ type ServerInterface interface {
 	// PostV1MeIdentitiesIdVerificationConfirm 用验证码确认某一种登录方式
 	// (POST /v1/me/identities/{id}/verification/confirm)
 	PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request, id string)
-	// GetV1MeModelQuotaPurchases 即刻收商品收费能力、聊天积分余额与遗留余额
+	// GetV1MeModelQuotaPurchases 即刻收商品收费能力、聊天积分余额与折算比例
 	// (GET /v1/me/model-quota-purchases)
 	GetV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request)
 	// PostV1MeModelQuotaPurchases 获取即刻收托管购买页的购买链接
