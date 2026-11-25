@@ -7,7 +7,10 @@ import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
+import 'package:zhixin/ui/model_api_keys_page.dart';
+import 'package:zhixin/ui/workspace_widgets.dart';
 
+import '../support/fake_server.dart';
 import 'workspace_support.dart';
 
 Future<void> _waitUntil(WidgetTester tester, bool Function() ready) async {
@@ -118,5 +121,46 @@ void main() {
     expect(keys, findsNothing);
     expect(model, findsNothing);
     expect(await tester.runAsync(account.serverBaseUrl), customAddress);
+  });
+
+  testWidgets('API Key 页写出当前实例的调用地址', (tester) async {
+    const customAddress = 'https://zhixin.example.test';
+    final server = FakeServer();
+    await openApp(
+      tester,
+      size: const Size(430, 1300),
+      serverClientFactory: (baseUrl) =>
+          ServerClient(baseUrl: baseUrl, httpClient: server.client),
+    );
+    await tester.runAsync(() async {
+      final account = scope!.accountServices.account;
+      await account.setServerBaseUrl(customAddress);
+      await account.register(
+        identifier: 'api-keys@example.com',
+        password: 'password123',
+      );
+    });
+    await settle(tester);
+
+    Finder urlText(String value) => find.byWidgetPredicate(
+      (widget) => widget is SelectableText && widget.data == value,
+      description: '调用地址 $value',
+    );
+    final chatUrl = '$customAddress/v1/llm/responses';
+    final embeddingUrl = '$customAddress/v1/llm/embeddings';
+
+    // 设置页的入口要先登录，这里直接推入页面，只核对页面写出的地址。
+    tester
+        .state<NavigatorState>(find.byType(Navigator).first)
+        .push(
+          MaterialPageRoute<void>(builder: (_) => const ModelApiKeysPage()),
+        );
+    await settle(tester);
+    await _waitUntil(tester, () => urlText(chatUrl).evaluate().isNotEmpty);
+
+    expect(find.widgetWithText(SectionHeading, '调用地址'), findsOneWidget);
+    expect(urlText(chatUrl), findsOneWidget);
+    expect(urlText(embeddingUrl), findsOneWidget);
+    expect(find.widgetWithText(forui.FButton, '复制对话地址'), findsOneWidget);
   });
 }

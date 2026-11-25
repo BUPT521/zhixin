@@ -3,6 +3,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
+import '../application/account_service.dart';
 import '../domain/models/model_api_key.dart';
 import 'format.dart';
 import 'theme.dart';
@@ -21,6 +22,9 @@ class ModelApiKeysPage extends StatefulWidget {
 class _ModelApiKeysPageState extends State<ModelApiKeysPage> {
   List<ModelApiKey>? _keys;
   String? _error;
+
+  /// 当前实例的服务地址；页面据此写出密钥要调的接口地址。
+  String _serverBaseUrl = '';
   bool _busy = false;
   bool _issuing = false;
   bool _started = false;
@@ -30,7 +34,19 @@ class _ModelApiKeysPageState extends State<ModelApiKeysPage> {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
+    _loadServerAddress();
     _refresh();
+  }
+
+  /// 读当前实例地址；读不到时调用地址这一块先不显示，密钥列表照常。
+  Future<void> _loadServerAddress() async {
+    final account = AppScope.of(context).accountServices.account;
+    try {
+      final base = await account.serverBaseUrl();
+      if (mounted) setState(() => _serverBaseUrl = base);
+    } catch (_) {
+      // 地址只是说明，读取失败不影响申请与撤销密钥。
+    }
   }
 
   Future<void> _refresh() => _run(() async {});
@@ -205,10 +221,64 @@ class _ModelApiKeysPageState extends State<ModelApiKeysPage> {
                           child: const Text('撤销'),
                         ),
                 ),
+            if (_serverBaseUrl.isNotEmpty) ...[
+              const SectionHeading(
+                title: '调用地址',
+                subtitle:
+                    '把密钥写进请求头 Authorization: Bearer <API Key>；地址随“知新服务地址”变化。',
+              ),
+              _endpointCard(theme),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  /// 脚本要填的两个接口地址，与当前实例的“知新服务地址”一致。
+  Widget _endpointCard(ZhixinTheme theme) {
+    final chatUrl = AccountService.responsesEndpoint(_serverBaseUrl);
+    final embeddingUrl =
+        '${AccountService.embeddingsEndpoint(_serverBaseUrl)}/embeddings';
+    final muted = theme.text.bodySmall.copyWith(
+      color: theme.colors.onSurfaceVariant,
+    );
+    return forui.FCard(
+      child: Padding(
+        padding: EdgeInsets.all(theme.space.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('对话接口', style: theme.text.titleSmall),
+            SizedBox(height: theme.space.xs),
+            SelectableText(chatUrl, style: muted),
+            SizedBox(height: theme.space.md),
+            Text('嵌入接口', style: theme.text.titleSmall),
+            SizedBox(height: theme.space.xs),
+            SelectableText(embeddingUrl, style: muted),
+            SizedBox(height: theme.space.gap),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: forui.FButton(
+                mainAxisSize: MainAxisSize.min,
+                variant: forui.FButtonVariant.outline,
+                onPress: () => _copyAddress(chatUrl),
+                child: const Text('复制对话地址'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyAddress(String value) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: value));
+      if (mounted) showToast(context, '已复制对话地址');
+    } catch (_) {
+      if (mounted) showToast(context, '复制失败，可以长按地址手动复制');
+    }
   }
 }
 

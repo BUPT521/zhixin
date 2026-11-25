@@ -307,6 +307,10 @@ class FakeServer {
         ],
       });
     }
+    if (method == 'GET' && path == '/v1/me/api-keys') {
+      // 接口密钥的签发与撤销由服务端 Go 用例覆盖，这里只给界面一个空列表。
+      return _json(200, {'keys': <Object?>[]});
+    }
     if (path.startsWith('/v1/me/identities/')) {
       final rest = path.substring('/v1/me/identities/'.length);
       final confirm = rest.endsWith('/verification/confirm');
