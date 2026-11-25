@@ -16,6 +16,7 @@ class ChatMessagePayload {
     this.interrupted = false,
     this.modelFailed = false,
     this.failureName,
+    this.quotaReason,
     this.notices = const [],
     this.memoryItems = const [],
     this.nextSteps = const [],
@@ -42,6 +43,10 @@ class ChatMessagePayload {
 
   /// 模型失败的类型名（`LlmFailure.name`）；由应用层映射成枚举。
   final String? failureName;
+
+  /// 额度用完的具体原因名（`QuotaExhaustedReason.name`）；重新打开讨论时按它写
+  /// 下一步说法，旧消息没有这一项。
+  final String? quotaReason;
 
   /// 这次回答需要界面区分的情况。
   final List<Notice> notices;
@@ -75,6 +80,7 @@ class ChatMessagePayload {
       !interrupted &&
       !modelFailed &&
       failureName == null &&
+      quotaReason == null &&
       notices.isEmpty &&
       memoryItems.isEmpty &&
       nextSteps.isEmpty &&
@@ -118,6 +124,7 @@ class ChatMessagePayload {
       interrupted: interrupted,
       modelFailed: modelFailed,
       failureName: failureName,
+      quotaReason: quotaReason,
       notices: notices,
       memoryItems: memoryItems,
       nextSteps: nextSteps,
@@ -141,6 +148,7 @@ class ChatMessagePayload {
         interrupted: interrupted,
         modelFailed: modelFailed,
         failureName: failureName,
+        quotaReason: quotaReason,
         notices: notices,
         memoryItems: memoryItems,
         nextSteps: nextSteps,
@@ -265,6 +273,7 @@ class ChatMessagePayload {
     interrupted: interrupted,
     modelFailed: modelFailed,
     failureName: failureName,
+    quotaReason: quotaReason,
     notices: notices,
     memoryItems: memoryItems ?? this.memoryItems,
     nextSteps: nextSteps,
@@ -283,6 +292,7 @@ class ChatMessagePayload {
     if (interrupted) 'interrupted': true,
     if (modelFailed) 'model_failed': true,
     if (modelFailed && failureName != null) 'model_failure': failureName,
+    if (modelFailed && quotaReason != null) 'model_quota_reason': quotaReason,
     if (notices.isNotEmpty)
       'notices': [for (final notice in notices) notice.value],
     if (memoryItems.isNotEmpty)
@@ -330,6 +340,10 @@ class ChatMessagePayload {
       failureName: map['model_failure'] is String
           ? map['model_failure'] as String
           : null,
+      quotaReason: switch (map['model_quota_reason']) {
+        final String value when value.trim().isNotEmpty => value.trim(),
+        _ => null,
+      },
       notices: [
         if (rawNotices is List)
           for (final value in rawNotices) ?noticeFromValue(value?.toString()),

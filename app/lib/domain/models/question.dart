@@ -169,6 +169,7 @@ class HelpEntry {
     this.fromModel,
     this.notices = const [],
     this.failureName,
+    this.quotaReason,
     this.usedPages = const [],
   });
 
@@ -183,6 +184,9 @@ class HelpEntry {
   final List<Notice> notices;
   final String? failureName;
 
+  /// 额度用完的具体原因名（`QuotaExhaustedReason.name`）；旧记录没有这一项。
+  final String? quotaReason;
+
   /// 这条帮助读到的材料页；重试同一次求助时按这些位置接续。
   final List<ChatUsedPage> usedPages;
 
@@ -194,6 +198,7 @@ class HelpEntry {
     fromModel: fromModel,
     notices: notices,
     failureName: failureName,
+    quotaReason: quotaReason,
     usedPages: usedPages,
   );
 
@@ -207,6 +212,7 @@ class HelpEntry {
     if (notices.isNotEmpty)
       'notices': [for (final notice in notices) notice.value],
     if (failureName != null) 'model_failure': failureName,
+    if (quotaReason != null) 'model_quota_reason': quotaReason,
     if (usedPages.isNotEmpty)
       'used_pages': [for (final page in usedPages) page.toJson()],
   };
@@ -219,6 +225,7 @@ class HelpEntry {
     final fromModel = value['from_model'];
     final notices = value['notices'];
     final failureName = value['model_failure'];
+    final quotaReason = value['model_quota_reason'];
     if (kind is! String || content is! String) return null;
     final DateTime? parsedAt;
     try {
@@ -238,6 +245,9 @@ class HelpEntry {
             ?noticeFromValue(notice),
       ],
       failureName: failureName is String ? failureName : null,
+      quotaReason: quotaReason is String && quotaReason.trim().isNotEmpty
+          ? quotaReason.trim()
+          : null,
       usedPages: [
         if (value['used_pages'] case final List raw)
           for (final page in raw) ?ChatUsedPage.fromJson(page),

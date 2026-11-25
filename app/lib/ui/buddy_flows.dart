@@ -23,6 +23,7 @@ class ModelRecoveryButtons extends StatelessWidget {
     required this.onPrimary,
     required this.onSignIn,
     this.onOpenSettings,
+    this.onPurchasePoints,
     this.enabled = true,
   });
 
@@ -37,6 +38,9 @@ class ModelRecoveryButtons extends StatelessWidget {
 
   /// 已经配置但凭据或地址有问题时，额外给出模型设置的入口。
   final VoidCallback? onOpenSettings;
+
+  /// 额度用完且购买积分可以继续时，额外给出购买入口；实例预算用完不给。
+  final VoidCallback? onPurchasePoints;
 
   /// 生成中禁用按钮。
   final bool enabled;
@@ -63,6 +67,14 @@ class ModelRecoveryButtons extends StatelessWidget {
             onPress: enabled ? onSignIn : null,
             prefix: const Icon(FLucideIcons.logIn),
             child: const Text('登录后使用模型'),
+          ),
+        if (signedIn && onPurchasePoints != null)
+          forui.FButton(
+            variant: forui.FButtonVariant.ghost,
+            mainAxisSize: MainAxisSize.min,
+            onPress: enabled ? onPurchasePoints : null,
+            prefix: const Icon(FLucideIcons.coins),
+            child: const Text('购买积分'),
           ),
         if (signedIn && onOpenSettings != null)
           forui.FButton(

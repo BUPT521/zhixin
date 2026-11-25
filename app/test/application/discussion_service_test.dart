@@ -537,6 +537,25 @@ void main() {
     expect((recorded.single.$1 as LlmException).detail, contains('sk-secret'));
   });
 
+  test('额度用完的原因随回答保存，重新打开时仍能区分购买与等待', () async {
+    final h = _Harness(
+      error: const LlmException(
+        LlmFailure.quotaExhausted,
+        'available points are not enough for this request',
+        quotaReason: QuotaExhaustedReason.points,
+      ),
+    );
+    await h.open();
+    addTearDown(h.db.close);
+
+    final result = await h.service.reply(text: '为什么这里需要独立性？');
+    final messages = await h.service.history(result.userMessage.conversationId);
+
+    expect(messages.last.payload?.failureName, 'quotaExhausted');
+    expect(messages.last.payload?.quotaReason, 'points');
+    expect(result.outcome.quotaReason, QuotaExhaustedReason.points);
+  });
+
   test('V1：仅凭图片开始求助，原图按哈希与记录一起保存', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_image_');
     addTearDown(() => dir.delete(recursive: true));

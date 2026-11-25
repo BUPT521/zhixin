@@ -502,6 +502,7 @@ class LearningService {
         notices: notices,
         omittedImages: run.omittedImages,
         failure: run.failure,
+        quotaReason: run.quotaReason,
         localFallback: () => localBuddyReply(
           facts,
           modelMissing: false,
@@ -561,6 +562,7 @@ class LearningService {
             fromModel: fromModel,
             notices: notices,
             failureName: run.failure?.name,
+            quotaReason: run.quotaReason?.name,
             usedPages: answer == null
                 ? const <ChatUsedPage>[]
                 : usedPagesOf(
@@ -585,6 +587,7 @@ class LearningService {
         detail: detail,
         omittedImages: run.omittedImages,
         failure: run.failure,
+        quotaReason: run.quotaReason,
       ),
       attempt: updated ?? attempt,
     );

@@ -78,6 +78,32 @@ void main() {
     expect(restored.encode(), payload.encode());
   });
 
+  test('额度用完的原因随回答保存，复制路径与旧消息都能读回', () {
+    final payload = ChatMessagePayload.decode(
+      jsonEncode({
+        'model': false,
+        'model_failed': true,
+        'model_failure': 'quotaExhausted',
+        'model_quota_reason': 'points',
+      }),
+    )!;
+    expect(payload.quotaReason, 'points');
+    expect(ChatMessagePayload.decode(payload.encode())?.quotaReason, 'points');
+
+    // 建议状态与回执清理都复制整条补充，额度原因不能在这一步丢掉。
+    expect(payload.acceptedStep('复习错题', stepId: 's1').quotaReason, 'points');
+    expect(payload.dismissedStep('复习错题').quotaReason, 'points');
+    expect(payload.withoutReceipts(99), isNull);
+
+    // 旧消息没有这一项；空值也不写进 JSON。
+    final noReason = ChatMessagePayload.decode(
+      jsonEncode({'model_failed': true, 'model_failure': 'quotaExhausted'}),
+    )!;
+    expect(noReason.quotaReason, isNull);
+    expect(noReason.encode(), isNot(contains('model_quota_reason')));
+    expect(const ChatMessagePayload(quotaReason: 'points').isEmpty, isFalse);
+  });
+
   test('读回接续页时丢掉没有材料或页码的条目', () {
     final payload = ChatMessagePayload.decode(
       jsonEncode({

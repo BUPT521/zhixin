@@ -52,10 +52,16 @@ void main() {
     final first = await attempts.ensureOpenAttempt(id);
     await attempts.appendHelp(
       first.id,
-      HelpEntry(kind: 'hint', content: '先看上下界', at: DateTime.now()),
+      HelpEntry(
+        kind: 'hint',
+        content: '先看上下界',
+        at: DateTime.now(),
+        quotaReason: 'instance',
+      ),
     );
     var stored = await attempts.attemptsFor(id);
     expect(stored.single.helps, hasLength(1));
+    expect(stored.single.helps.single.quotaReason, 'instance');
     expect(stored.single.submitted, isFalse);
 
     await attempts.submit(

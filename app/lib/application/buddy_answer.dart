@@ -18,6 +18,7 @@ class BuddyAnswerRun {
     this.notices = const [],
     this.omittedImages = const [],
     this.failure,
+    this.quotaReason,
     this.notSent = false,
   });
 
@@ -34,6 +35,10 @@ class BuddyAnswerRun {
 
   /// 调用失败的类型；配置读取失败与没有可发送内容时为空。
   final LlmFailure? failure;
+
+  /// 额度用完的具体原因；只有 [failure] 是 [LlmFailure.quotaExhausted] 时可能非空，
+  /// 界面按它决定提示购买积分还是只说稍后再试。
+  final QuotaExhaustedReason? quotaReason;
 
   /// 没有可发送的内容，本次没有调用模型。
   final bool notSent;
@@ -136,6 +141,7 @@ Future<BuddyAnswerRun> askBuddyModel({
       notices: notices,
       omittedImages: prepared.omitted,
       failure: error.failure,
+      quotaReason: error.quotaReason,
     );
   } catch (error, stack) {
     recordFailure?.call(error, stack, kind: 'model_call');

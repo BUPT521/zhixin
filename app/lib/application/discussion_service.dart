@@ -614,6 +614,7 @@ class DiscussionService {
         notices: notices,
         omittedImages: run.omittedImages,
         failure: failure,
+        quotaReason: run.quotaReason,
         localFallback: () => localBuddyReply(
           facts,
           modelMissing: false,
@@ -689,6 +690,7 @@ class DiscussionService {
           interrupted: interrupted,
           modelFailed: modelFailed,
           failureName: modelFailed ? failure?.name : null,
+          quotaReason: modelFailed ? run.quotaReason?.name : null,
           notices: notices,
           memoryItems: memoryItems,
           nextSteps: [
@@ -779,6 +781,7 @@ class DiscussionService {
         detail: detail,
         omittedImages: run.omittedImages,
         failure: failure,
+        quotaReason: run.quotaReason,
       ),
       skipped: skipped,
       nextSteps: nextSteps,

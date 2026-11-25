@@ -1256,15 +1256,14 @@ class _LearningTimeline extends BuddyTimelineAdapter {
         notices.contains(Notice.generationInterrupted) ||
         notices.contains(Notice.answerTruncated) ||
         notices.contains(Notice.userStopped);
+    final saved = SavedAnswerStatus(
+      notices: notices,
+      failure: llmFailureFromName(help?.failureName),
+      quotaReason: QuotaExhaustedReason.fromName(help?.quotaReason),
+    );
     final notice =
         state._notice ??
-        savedAnswerNoticeText(
-          SavedAnswerStatus(
-            notices: notices,
-            failure: llmFailureFromName(help?.failureName),
-          ),
-          keptPartial: help?.fromModel == true,
-        );
+        savedAnswerNoticeText(saved, keptPartial: help?.fromModel == true);
     return [
       if (help != null || state._generating)
         BuddyHelpEntry(
@@ -1283,6 +1282,11 @@ class _LearningTimeline extends BuddyTimelineAdapter {
                 primaryLabel: retry ? '重试这次回答' : '用模型重新获取',
                 onPrimary: () => state._ask(mode),
                 onSignIn: state._openSettings,
+                onPurchasePoints:
+                    saved.failure == LlmFailure.quotaExhausted &&
+                        saved.quotaReason != QuotaExhaustedReason.instance
+                    ? () => openAccount(state.context)
+                    : null,
                 enabled: !state._busy,
               ),
           ],

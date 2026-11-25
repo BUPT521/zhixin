@@ -50,6 +50,36 @@ void main() {
     expect(problemCodeOf(''), isNull);
   });
 
+  test('problem+json 的额外字段只读 extra.reason，缺失或非字符串时为空', () {
+    expect(
+      problemReasonOf(
+        jsonEncode({
+          'code': 'quota_exceeded',
+          'extra': {'reason': 'instance', 'day': '2026-11-25'},
+        }),
+      ),
+      'instance',
+    );
+    expect(problemReasonOf(jsonEncode({'code': 'quota_exceeded'})), isNull);
+    expect(
+      problemReasonOf(
+        jsonEncode({
+          'code': 'quota_exceeded',
+          'extra': {'reason': 3},
+        }),
+      ),
+      isNull,
+    );
+    expect(problemReasonOf('not json'), isNull);
+    expect(problemReasonOf(''), isNull);
+    expect(
+      QuotaExhaustedReason.fromName('points'),
+      QuotaExhaustedReason.points,
+    );
+    expect(QuotaExhaustedReason.fromName('other'), isNull);
+    expect(QuotaExhaustedReason.fromName(null), isNull);
+  });
+
   test('403 contact_unverified 的响应映射成专门失败类型且不重试', () async {
     var requests = 0;
     final client = HttpLlmClient(
@@ -185,7 +215,66 @@ void main() {
     expect(requests, 2);
   });
 
-  test('429 quota_exceeded 仍按额度用完归类', () async {
+  test('429 quota_exceeded 按额度用完归类，并读出扩展字段里的原因', () async {
+    Future<LlmException> failureOf(Map<String, Object?> body) async {
+      final client = HttpLlmClient(
+        config: const LlmConfig(apiKey: 'test-key'),
+        retryDelay: Duration.zero,
+        httpClient: MockClient.streaming((request, bodyStream) async {
+          return http.StreamedResponse(
+            Stream.value(utf8.encode(jsonEncode(body))),
+            429,
+            headers: {'content-type': 'application/problem+json'},
+          );
+        }),
+      );
+      try {
+        await client
+            .stream(
+              system: 's',
+              messages: const [LlmMessage(role: 'user', content: 'hi')],
+            )
+            .toList();
+        fail('应当抛出额度用完的模型调用失败');
+      } on LlmException catch (error) {
+        return error;
+      }
+    }
+
+    final account = await failureOf({
+      'code': 'quota_exceeded',
+      'extra': {'reason': 'account'},
+    });
+    expect(account.failure, LlmFailure.quotaExhausted);
+    expect(account.quotaReason, QuotaExhaustedReason.account);
+
+    final points = await failureOf({
+      'code': 'quota_exceeded',
+      'extra': {'reason': 'points'},
+    });
+    expect(points.failure, LlmFailure.quotaExhausted);
+    expect(points.quotaReason, QuotaExhaustedReason.points);
+
+    final instance = await failureOf({
+      'code': 'quota_exceeded',
+      'extra': {'reason': 'instance'},
+    });
+    expect(instance.failure, LlmFailure.quotaExhausted);
+    expect(instance.quotaReason, QuotaExhaustedReason.instance);
+
+    // 旧版服务端没有扩展字段，或原因无法识别时按通用额度用完处理。
+    final missing = await failureOf({'code': 'quota_exceeded'});
+    expect(missing.failure, LlmFailure.quotaExhausted);
+    expect(missing.quotaReason, isNull);
+    final unknown = await failureOf({
+      'code': 'quota_exceeded',
+      'extra': {'reason': 'other'},
+    });
+    expect(unknown.failure, LlmFailure.quotaExhausted);
+    expect(unknown.quotaReason, isNull);
+  });
+
+  test('429 没有 problem code 时也按额度用完兜底，不重试', () async {
     var requests = 0;
     final client = HttpLlmClient(
       config: const LlmConfig(apiKey: 'test-key'),
@@ -193,9 +282,9 @@ void main() {
       httpClient: MockClient.streaming((request, bodyStream) async {
         requests++;
         return http.StreamedResponse(
-          Stream.value(utf8.encode(jsonEncode({'code': 'quota_exceeded'}))),
+          Stream.value(utf8.encode('too many requests')),
           429,
-          headers: {'content-type': 'application/problem+json'},
+          headers: {'content-type': 'text/plain'},
         );
       }),
     );
@@ -208,11 +297,13 @@ void main() {
           )
           .toList(),
       throwsA(
-        isA<LlmException>().having(
-          (error) => error.failure,
-          'failure',
-          LlmFailure.rateLimited,
-        ),
+        isA<LlmException>()
+            .having(
+              (error) => error.failure,
+              'failure',
+              LlmFailure.quotaExhausted,
+            )
+            .having((error) => error.quotaReason, 'quotaReason', isNull),
       ),
     );
     expect(requests, 1);

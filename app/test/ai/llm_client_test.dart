@@ -1313,7 +1313,11 @@ void main() {
       client.complete(system: 's', messages: _hi),
       throwsA(
         isA<LlmException>()
-            .having((error) => error.failure, 'failure', LlmFailure.rateLimited)
+            .having(
+              (error) => error.failure,
+              'failure',
+              LlmFailure.quotaExhausted,
+            )
             .having((error) => error.detail, 'detail', '额度不足'),
       ),
     );
@@ -1384,7 +1388,11 @@ void main() {
       client.stream(system: 's', messages: _hi).drain<void>(),
       throwsA(
         isA<LlmException>()
-            .having((error) => error.failure, 'failure', LlmFailure.rateLimited)
+            .having(
+              (error) => error.failure,
+              'failure',
+              LlmFailure.quotaExhausted,
+            )
             .having((error) => error.detail, 'detail', '额度不足'),
       ),
     );

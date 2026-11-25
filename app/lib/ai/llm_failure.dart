@@ -8,10 +8,14 @@ enum LlmFailure {
   timeout,
   auth,
   contactUnverified,
-  rateLimited,
+
+  /// 当天可用的托管额度用完：免费额度、积分或实例预算，具体原因见
+  /// [LlmException.quotaReason]；与上游短时限流的 [busy] 区分。
+  quotaExhausted,
 
   /// 上游或实例短时繁忙，等一会儿重试即可，与当天额度用完不同。
   busy,
+
   badResponse,
   truncated,
 
@@ -33,6 +37,27 @@ LlmFailure? llmFailureFromName(String? name) {
   return null;
 }
 
+/// 额度用完的具体原因；服务端在 problem 的扩展字段里给出，缺失时为空。
+///
+/// [account] 是账号当天的免费额度用完且没有可用积分，[points] 是积分不足以覆盖
+/// 这一次请求，[instance] 是实例当天的预算用完；前两种可以购买积分继续，最后一种
+/// 只能稍后再试。
+enum QuotaExhaustedReason {
+  account,
+  points,
+  instance;
+
+  /// 按服务端给出的名称读回原因；认不出的返回空，按通用额度用完处理。
+  static QuotaExhaustedReason? fromName(String? name) {
+    final value = name?.trim();
+    if (value == null || value.isEmpty) return null;
+    for (final reason in QuotaExhaustedReason.values) {
+      if (reason.name == value) return reason;
+    }
+    return null;
+  }
+}
+
 /// 一种失败类型给人看的说法；界面按类型写下一步，不解析异常原文。
 String shortTextOf(LlmFailure failure) => switch (failure) {
   LlmFailure.notConfigured => '还没有登录知新服务',
@@ -40,7 +65,7 @@ String shortTextOf(LlmFailure failure) => switch (failure) {
   LlmFailure.timeout => '请求超时',
   LlmFailure.auth => '登录已失效或没有访问权限',
   LlmFailure.contactUnverified => '还没有确认任何登录方式，托管额度未开放',
-  LlmFailure.rateLimited => '调用额度或频率受限',
+  LlmFailure.quotaExhausted => '调用额度不足',
   LlmFailure.busy => '模型服务暂时繁忙',
   LlmFailure.badResponse => '模型回复格式无法识别',
   LlmFailure.truncated => '回答被截断，请再试一次',
@@ -54,13 +79,21 @@ String shortTextOf(LlmFailure failure) => switch (failure) {
 };
 
 class LlmException implements Exception {
-  const LlmException(this.failure, this.detail, {this.retryAfter});
+  const LlmException(
+    this.failure,
+    this.detail, {
+    this.retryAfter,
+    this.quotaReason,
+  });
 
   final LlmFailure failure;
   final String detail;
 
   /// 服务端要求等待的时长；只有短时繁忙时由 `Retry-After` 给出，其余为 null。
   final Duration? retryAfter;
+
+  /// 额度用完的具体原因；服务端没有给出扩展字段时为空，界面按通用额度用完处理。
+  final QuotaExhaustedReason? quotaReason;
 
   String get shortText => shortTextOf(failure);
 

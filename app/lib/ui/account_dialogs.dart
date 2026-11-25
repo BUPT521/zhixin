@@ -2,6 +2,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import '../application/account_service.dart';
+import 'format.dart';
 import 'theme.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
@@ -101,13 +102,25 @@ class _ServerAddressDialogState extends State<_ServerAddressDialog> {
 ///
 /// 服务端要求删除账号时重新提交密码，因此账号页不再只做一次“确定/取消”。
 /// 返回输入的密码；取消返回 null。密码留空时留在对话框里提示，不关闭。
-Future<String?> askDeleteAccountPassword(BuildContext context) {
+///
+/// [remainingPoints] 是删除之前读到的积分余额；即刻收一侧按账号标识记账，删号
+/// 之后这份余额无人可用，所以有余额时在删除范围之后单独提示一句。余额未知时
+/// 传 null，不显示这一句。
+Future<String?> askDeleteAccountPassword(
+  BuildContext context, {
+  int? remainingPoints,
+}) {
+  final points = remainingPoints ?? 0;
+  final message =
+      '会删除这个账号在服务端保存的备份、同步序列、附件与登录会话，且无法恢复。'
+      '这个账号的本机空间也会删除。请先导出需要保留的数据包，之后可以在本机空间导入。';
+  final pointsNotice = points > 0
+      ? '这个账号还有 ${groupDigits(points)} 积分，删除之后无法使用，也无法退款。'
+      : '';
   return askDestructiveActionPassword(
     context,
     title: '删除账号',
-    message:
-        '会删除这个账号在服务端保存的备份、同步序列、附件与登录会话，且无法恢复。'
-        '这个账号的本机空间也会删除。请先导出需要保留的数据包，之后可以在本机空间导入。',
+    message: pointsNotice.isEmpty ? message : '$message\n\n$pointsNotice',
     confirmLabel: '删除账号',
   );
 }

@@ -338,7 +338,8 @@ class RemoteEmbeddingClient extends EmbeddingClient {
       // 错误体不是 JSON 时只按状态码判断。
     }
     if (code == 'quota_exceeded') {
-      return const EmbeddingSourceUnavailable('今天的嵌入额度已经用完，次日重置');
+      // 嵌入按原始 token 记额度，不能用购买的积分支付，因此只说明次日恢复。
+      return const EmbeddingSourceUnavailable('今天的嵌入额度已经用完，次日恢复');
     }
     if (code == 'contact_unverified') {
       // 托管额度要求先确认一种登录方式；这条说明比“凭据被拒”更接近用户要做的事。

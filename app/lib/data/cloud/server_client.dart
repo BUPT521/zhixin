@@ -59,7 +59,7 @@ class ServerProblem implements Exception {
     'storage_full' => _storageFullMessage,
     'conflict' => '云端数据已经变化，请先同步再试',
     'model_not_allowed' => '服务端不允许使用这个模型',
-    'quota_exceeded' => '今日模型额度已经用完，明天恢复，或者联系管理员调整',
+    'quota_exceeded' => _quotaExceededMessage,
     'not_found' => '云端没有这条记录',
     'invalid_request' => '服务端没有接受这次请求',
     'redirect_blocked' => '服务地址发生了跨域跳转，已停止这次请求',
@@ -67,6 +67,12 @@ class ServerProblem implements Exception {
     'not_implemented' => '服务端还没有实现这个操作',
     _ => '服务端没有完成这次请求',
   };
+
+  /// 额度用完按用途分别说明：聊天的免费额度用完之后可以购买积分继续，嵌入按原始
+  /// token 计、不能用积分支付，只说明次日恢复。
+  String get _quotaExceededMessage => extra['kind'] == 'embedding'
+      ? '今天的嵌入额度已经用完，次日恢复'
+      : '今天的模型额度已经用完，可以在账号页购买积分之后继续，也可以等次日恢复';
 
   /// 附件总量超限时把服务端给出的已用与上限写成一句说明；数字缺失时只说明
   /// 空间已满，不编造额度。
@@ -612,6 +618,8 @@ class ServerQuota {
     this.embeddingUsedTokens = 0,
     this.embeddingDailyTokens = 0,
     this.tokensPerPoint,
+    this.chargedPoints,
+    this.remainingPoints,
   });
 
   factory ServerQuota.fromJson(Map<String, Object?> json) => ServerQuota(
@@ -622,6 +630,9 @@ class ServerQuota {
     embeddingDailyTokens:
         (json['embedding_daily_tokens'] as num?)?.toInt() ?? 0,
     tokensPerPoint: _ratio(json['tokens_per_point']),
+    // 没有开通收款时服务端不回这两项，界面不显示积分那一行。
+    chargedPoints: _points(json['charged_points']),
+    remainingPoints: _points(json['remaining_points']),
   );
 
   /// 比例缺失或不是正数时按缺失处理，界面退回按 token 显示，不显示成 0 积分。
@@ -630,9 +641,13 @@ class ServerQuota {
     return number != null && number > 0 ? number : null;
   }
 
+  /// 积分字段缺失或为 null 时按未开通收款处理；0 是有效值。
+  static int? _points(Object? value) => (value as num?)?.toInt();
+
   final String day;
 
   /// 聊天当天已用与每日额度，按计费 token 计；界面按 [tokensPerPoint] 折成积分。
+  /// 已用不含还在途的请求，服务端结算之后才算进来。
   final int usedTokens;
   final int dailyTokens;
 
@@ -642,6 +657,10 @@ class ServerQuota {
 
   /// 一个积分覆盖的计费 token 数；旧版服务端不返回时为 null，这时界面只显示 token。
   final int? tokensPerPoint;
+
+  /// 当天已经核销成功的积分与余额副本里还可以使用的积分；没有开通收款时为 null。
+  final int? chargedPoints;
+  final int? remainingPoints;
 }
 
 /// 服务端模型的用途：聊天模型给回答用，嵌入模型给语义索引用。

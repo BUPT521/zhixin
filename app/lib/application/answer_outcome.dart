@@ -19,6 +19,7 @@ class AnswerOutcome {
     this.detail,
     this.omittedImages = const [],
     this.failure,
+    this.quotaReason,
   });
 
   final String text;
@@ -42,6 +43,9 @@ class AnswerOutcome {
 
   /// 模型调用失败的类型；界面据此决定下一步说法。
   final LlmFailure? failure;
+
+  /// 额度用完的具体原因；只有 [LlmFailure.quotaExhausted] 时可能非空。
+  final QuotaExhaustedReason? quotaReason;
 }
 
 /// 把停止、生成中断与长度截断统一成界面要显示的结果。
@@ -54,6 +58,7 @@ AnswerOutcome interpretModelAnswer(
   List<Notice> notices = const [],
   List<AttachmentOmissionReason> omittedImages = const [],
   LlmFailure? failure,
+  QuotaExhaustedReason? quotaReason,
   required String Function() localFallback,
 }) {
   if (answer.stopped) {
@@ -67,6 +72,7 @@ AnswerOutcome interpretModelAnswer(
       notices: [...notices, Notice.userStopped],
       omittedImages: omittedImages,
       failure: failure,
+      quotaReason: quotaReason,
     );
   }
   if (answer.interrupted) {
@@ -81,6 +87,7 @@ AnswerOutcome interpretModelAnswer(
         notices: [...notices, Notice.modelCallFailed],
         omittedImages: omittedImages,
         failure: failure,
+        quotaReason: quotaReason,
       );
     }
     return AnswerOutcome(
@@ -93,6 +100,7 @@ AnswerOutcome interpretModelAnswer(
       detail: answer.interruptedReason,
       omittedImages: omittedImages,
       failure: failure,
+      quotaReason: quotaReason,
     );
   }
   return AnswerOutcome(
@@ -104,15 +112,23 @@ AnswerOutcome interpretModelAnswer(
     notices: answer.truncated ? [...notices, Notice.answerTruncated] : notices,
     omittedImages: omittedImages,
     failure: failure,
+    quotaReason: quotaReason,
   );
 }
 
 /// 已经保存的一条回答在重新打开时要恢复的提示状态。
 class SavedAnswerStatus {
-  const SavedAnswerStatus({this.notices = const [], this.failure});
+  const SavedAnswerStatus({
+    this.notices = const [],
+    this.failure,
+    this.quotaReason,
+  });
 
   final List<Notice> notices;
   final LlmFailure? failure;
+
+  /// 额度用完的具体原因；旧消息没有这一项时为空，界面按通用额度用完处理。
+  final QuotaExhaustedReason? quotaReason;
 
   /// 这次回答因为在设置里补配置就能继续，界面给配置入口而不是重试入口。
   bool get needsConfig =>
@@ -126,5 +142,6 @@ SavedAnswerStatus savedAnswerStatus(ChatMessage message) {
   return SavedAnswerStatus(
     notices: payload?.notices ?? const [],
     failure: llmFailureFromName(payload?.failureName),
+    quotaReason: QuotaExhaustedReason.fromName(payload?.quotaReason),
   );
 }

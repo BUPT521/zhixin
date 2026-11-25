@@ -10,6 +10,7 @@ import '../domain/rules/notices.dart';
 String? answerNoticeText(AnswerOutcome outcome) => _noticeText(
   notices: outcome.notices,
   failure: outcome.failure,
+  quotaReason: outcome.quotaReason,
   detail: outcome.detail,
   omittedImages: outcome.omittedImages,
   keptPartial: outcome.fromModel,
@@ -22,12 +23,14 @@ String? savedAnswerNoticeText(
 }) => _noticeText(
   notices: status.notices,
   failure: status.failure,
+  quotaReason: status.quotaReason,
   keptPartial: keptPartial,
 );
 
 String? _noticeText({
   required List<Notice> notices,
   LlmFailure? failure,
+  QuotaExhaustedReason? quotaReason,
   String? detail,
   List<AttachmentOmissionReason> omittedImages = const [],
   bool keptPartial = false,
@@ -35,6 +38,7 @@ String? _noticeText({
   final context = _NoticeContext(
     notices: notices,
     failure: failure,
+    quotaReason: quotaReason,
     detail: detail,
     omittedImages: omittedImages,
     keptPartial: keptPartial,
@@ -49,6 +53,7 @@ class _NoticeContext {
   const _NoticeContext({
     required this.notices,
     required this.failure,
+    required this.quotaReason,
     required this.detail,
     required this.omittedImages,
     required this.keptPartial,
@@ -56,6 +61,7 @@ class _NoticeContext {
 
   final List<Notice> notices;
   final LlmFailure? failure;
+  final QuotaExhaustedReason? quotaReason;
   final String? detail;
   final List<AttachmentOmissionReason> omittedImages;
   final bool keptPartial;
@@ -82,7 +88,8 @@ String? _sentenceOf(Notice notice, _NoticeContext context) {
       return _omittedImagesText(context.omittedImages);
     case Notice.modelCallFailed:
       return '模型调用失败${_failureSuffix(context.failure)}，已切换为本地规则回答；'
-          '问题与本地回答会保存在本机。${_modelNextStep(context.failure)}';
+          '问题与本地回答会保存在本机。'
+          '${_modelNextStep(context.failure, context.quotaReason)}';
     case Notice.answerTruncated:
       return '回答被截断，已保留已经生成的部分。';
     case Notice.userStopped:
@@ -100,18 +107,28 @@ String _failureSuffix(LlmFailure? failure) =>
     : '（${shortTextOf(failure)}）';
 
 /// 模型失败之后重新回答的下一步；按失败类型给，不重复读异常原文。
-String _modelNextStep(LlmFailure? failure) => switch (failure) {
-  LlmFailure.auth => '请先登录并确认模型名在服务端允许的列表里，改好后再点「重试这次回答」。',
-  LlmFailure.contactUnverified =>
-    '先在账号页确认一种登录方式，确认后才能使用知新服务的托管额度，改好后再点「重试这次回答」。',
-  LlmFailure.offline || LlmFailure.timeout => '检查网络后可以点「重试这次回答」。',
-  LlmFailure.busy => '模型服务刚才很忙，等一会儿再点「重试这次回答」。',
-  LlmFailure.rateLimited => '今日额度已经用完，等次日恢复之后再点「重试这次回答」。',
-  LlmFailure.contextLimit => '可以缩短问题、减少图片或在设置中核对模型上下文上限。',
-  LlmFailure.badResponse ||
-  LlmFailure.toolUnsupported => '请检查设置里的模型名，改好后再点「重试这次回答」。',
-  _ => '可以点「重试这次回答」。',
-};
+///
+/// 额度用完再按具体原因分开：账号免费额度与积分不足都有购买积分的价值，实例预算
+/// 用完只能等恢复，因此最后一种不给购买入口。
+String _modelNextStep(LlmFailure? failure, QuotaExhaustedReason? quotaReason) =>
+    switch (failure) {
+      LlmFailure.auth => '请先登录并确认模型名在服务端允许的列表里，改好后再点「重试这次回答」。',
+      LlmFailure.contactUnverified =>
+        '先在账号页确认一种登录方式，确认后才能使用知新服务的托管额度，改好后再点「重试这次回答」。',
+      LlmFailure.offline || LlmFailure.timeout => '检查网络后可以点「重试这次回答」。',
+      LlmFailure.busy => '模型服务刚才很忙，等一会儿再点「重试这次回答」。',
+      LlmFailure.quotaExhausted => switch (quotaReason) {
+        QuotaExhaustedReason.account =>
+          '今日免费额度已经用完，可以在账号页购买积分之后继续，也可以等次日恢复，'
+              '再点「重试这次回答」。',
+        QuotaExhaustedReason.points => '积分不足，可以在账号页购买积分之后继续，再点「重试这次回答」。',
+        QuotaExhaustedReason.instance || null => '模型服务今天的额度已经用完，稍后再点「重试这次回答」。',
+      },
+      LlmFailure.contextLimit => '可以缩短问题、减少图片或在设置中核对模型上下文上限。',
+      LlmFailure.badResponse ||
+      LlmFailure.toolUnsupported => '请检查设置里的模型名，改好后再点「重试这次回答」。',
+      _ => '可以点「重试这次回答」。',
+    };
 
 String _omittedImagesText(List<AttachmentOmissionReason> reasons) {
   if (reasons.isEmpty) return '本次有图片没有发送。';

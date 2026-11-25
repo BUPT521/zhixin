@@ -377,7 +377,7 @@ class HttpLlmClient implements LlmClient {
   /// 服务端代理的 `contact_unverified` 单独归类，界面据此提示去账号页验证，
   /// 而不是让人以为登录失效；这类 4xx 不自动重试。服务端把上游限流写成
   /// `rate_limited` 并给出 `Retry-After`，与账号当天额度用完的 `quota_exceeded`
-  /// 分开，前者按短时繁忙提示，后者仍按额度用完提示。
+  /// 分开，前者按短时繁忙提示，后者按额度用完提示，并读出扩展字段里的具体原因。
   Future<LlmException> _readFailure(
     http.StreamedResponse response,
     LlmRequestBudget lifecycle, {
@@ -407,7 +407,13 @@ class HttpLlmClient implements LlmClient {
         );
       }
       if (code == 'quota_exceeded') {
-        return LlmException(LlmFailure.rateLimited, detail);
+        // 服务端在 extra.reason 里说明用完的是哪一种额度：账号额度与积分引导去
+        // 账号页购买积分，实例预算只让稍后再试。
+        return LlmException(
+          LlmFailure.quotaExhausted,
+          detail,
+          quotaReason: QuotaExhaustedReason.fromName(problemReasonOf(body)),
+        );
       }
     } on LlmException catch (error) {
       if (attempt == null || error.failure != LlmFailure.timeout) rethrow;
@@ -488,7 +494,7 @@ LlmFailure _failureFor(int statusCode) {
     401 || 403 => LlmFailure.auth,
     404 => LlmFailure.badResponse,
     408 => LlmFailure.timeout,
-    429 => LlmFailure.rateLimited,
+    429 => LlmFailure.quotaExhausted,
     >= 500 => LlmFailure.server,
     _ => LlmFailure.badResponse,
   };
@@ -509,6 +515,24 @@ String? problemCodeOf(String body) {
     }
   } on FormatException {
     // 不是 JSON：交给普通错误说明处理。
+  }
+  return null;
+}
+
+/// 读 `application/problem+json` 里的 `extra.reason`，目前只有额度用完的 429 用它
+/// 区分账号额度、积分与实例预算；没有这项时返回 null。
+String? problemReasonOf(String body) {
+  final text = body.trim();
+  if (text.isEmpty || !text.startsWith('{')) return null;
+  try {
+    final decoded = jsonDecode(text);
+    if (decoded is Map && decoded['extra'] is Map) {
+      final extra = decoded['extra']! as Map;
+      final reason = extra['reason'];
+      if (reason is String && reason.trim().isNotEmpty) return reason.trim();
+    }
+  } on FormatException {
+    // 不是 JSON：没有原因可读。
   }
   return null;
 }
