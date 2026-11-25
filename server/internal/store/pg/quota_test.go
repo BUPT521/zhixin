@@ -27,7 +27,7 @@ func TestPostgresQuotaReserveAndSettle(t *testing.T) {
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 40); err != nil || got != 40 {
 		t.Fatalf("第一次预留应为 40，得到 %d %v", got, err)
 	}
-	// 只剩 60：预留按剩余量截断，调用方照常转发。
+	// 只剩 60：预留按剩余量截断，调用方发现不足会整单拒绝。
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil || got != 60 {
 		t.Fatalf("剩余 60 时应截断为 60，得到 %d %v", got, err)
 	}
@@ -183,6 +183,31 @@ func TestPostgresQuotaReserveIsAtomic(t *testing.T) {
 	}
 	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 100 {
 		t.Fatalf("预留之后用量应为 100，得到 %d %v", used, err)
+	}
+}
+
+// TestPostgresQuotaInstanceCountsFreePortionOnly 核对实例账本只累计免费额度内的
+// 部分：结算超出免费额度的用量由积分承担，不再占用实例预算（ADR-0070）。
+func TestPostgresQuotaInstanceCountsFreePortionOnly(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "free@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	st.SetQuotaLimits(100, 200, 1000)
+	const day = "2026-11-18"
+
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil || got != 100 {
+		t.Fatalf("第一次预留应为 100，得到 %d %v", got, err)
+	}
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 100, 250, llmproxy.Usage{}); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	if used, err := st.Used(ctx, "u1", day, llmproxy.KindChat); err != nil || used != 250 {
+		t.Fatalf("账号用量应为 250，得到 %d %v", used, err)
+	}
+	if used, err := st.InstanceUsed(ctx, day); err != nil || used != 100 {
+		t.Fatalf("实例账本只应记免费额度内的 100，得到 %d %v", used, err)
 	}
 }
 

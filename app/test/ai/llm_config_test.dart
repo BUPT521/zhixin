@@ -34,6 +34,18 @@ void main() {
     expect(saved.contextWindowTokens, 8192);
     expect(saved.outputTokenLimit, 2048);
     expect(LlmConfig.fromJson(const {}).contextWindowTokens, 65536);
+    // 上下文上限统一为 65536，读回旧配置时超出上限的值被夹回，复制时同样。
+    expect(
+      LlmConfig.fromJson(const {'context_window_tokens': '1000000'})
+          .contextWindowTokens,
+      LlmConfig.maxContextWindowTokens,
+    );
+    expect(
+      const LlmConfig(contextWindowTokens: 1000000)
+          .copyWith(model: 'zhixin-chat')
+          .contextWindowTokens,
+      LlmConfig.maxContextWindowTokens,
+    );
   });
 
   // 项目技术审查 API-06：服务端只接受 16 到 32768，客户端算出的上限必须落在这个

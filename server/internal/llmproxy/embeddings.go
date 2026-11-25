@@ -173,7 +173,7 @@ func (p *Proxy) embed(ctx context.Context, plan *attemptPlan, fields map[string]
 		if !p.attemptsRemain(plan) {
 			break
 		}
-		attempt, started, err := p.beginAttempt(ctx, plan, rt, estimate)
+		attempt, started, err := p.beginAttempt(ctx, plan, rt, Usage{Input: estimate})
 		if err != nil {
 			return embedResult{err: err}
 		}

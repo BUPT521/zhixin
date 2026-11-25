@@ -412,8 +412,8 @@ func TestChatFailsOverToNextSource(t *testing.T) {
 		Used int64 `json:"used_tokens"`
 	}
 	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &used)
-	if used.Used <= 4*7 {
-		t.Fatalf("总用量应包含三次结果不确定的尝试：%+v", used)
+	if used.Used != 4*7 {
+		t.Fatalf("503 与 400 没有产生用量，只应记成功回答的 28：%+v", used)
 	}
 }
 
@@ -1182,8 +1182,8 @@ func TestHandlerSettlesActualUsage(t *testing.T) {
 	if code := c.JSON(http.MethodPost, "/v1/llm/responses", token, chat, nil); code != http.StatusInternalServerError {
 		t.Fatalf("上游错误应原样返回，得到 %d", code)
 	}
-	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used <= 300 {
-		t.Fatalf("上游结果不确定时应保留预留，得到 %d %+v", code, q)
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 300 {
+		t.Fatalf("上游 502 没有产生用量时不应扣额度，得到 %d %+v", code, q)
 	}
 }
 

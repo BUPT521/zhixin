@@ -29,8 +29,14 @@ class LlmConfig {
   static const String defaultModel = 'zhixin-chat';
   static const int defaultContextWindowTokens = 65536;
 
-  /// 上下文上限可以填的最大值，与单步输出上限的实际取值保持一致。
-  static const int maxContextWindowTokens = buddyMaxOutputTokens;
+  /// 上下文上限可以填的最大值，与默认值一致：模型的上下文窗口是 64K，填得
+  /// 更大只会让请求超出模型与服务端的实际能力。小于 1 的值按 1 处理。
+  static const int maxContextWindowTokens = defaultContextWindowTokens;
+
+  /// 把上下文上限夹在允许的区间里；读取保存的配置与复制配置时都走这里，
+  /// 旧版本写入的过大值不会继续放大请求。
+  static int clampContextWindow(int tokens) =>
+      math.min(math.max(tokens, 1), maxContextWindowTokens);
 
   /// 模型名；留空即视为没有配置。
   final String model;
@@ -64,7 +70,9 @@ class LlmConfig {
     return LlmConfig(
       model: model ?? this.model,
       allowImages: allowImages ?? this.allowImages,
-      contextWindowTokens: contextWindowTokens ?? this.contextWindowTokens,
+      contextWindowTokens: clampContextWindow(
+        contextWindowTokens ?? this.contextWindowTokens,
+      ),
       apiKey: apiKey ?? this.apiKey,
       endpoint: endpoint ?? this.endpoint,
     );
@@ -85,7 +93,7 @@ class LlmConfig {
       model: (json['model'] as String?) ?? defaultModel,
       allowImages: (json['allow_images'] as String?) != '0',
       contextWindowTokens: window != null && window > 0
-          ? window
+          ? clampContextWindow(window)
           : defaultContextWindowTokens,
     );
   }

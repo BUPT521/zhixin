@@ -281,13 +281,13 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	}
 	day := report.Daily[0]
 	// 三次对话请求：流式那一次先被 primary 的故障页挡回来、由 backup 接住，
-	// 后两次探针各走一条指定路由。数位按各来源自己的用量核对，所以这里只核对
-	// 次数与「实际用量不低于估算」。
+	// 后两次探针各走一条指定路由。故障页这次没有产生用量，按新口径记 0，所以
+	// 对话的估算部分为 0；用量按各来源自己报告的数字核对。
 	if day.Chat.Attempts != 3 || day.Chat.FirstAttempts != 2 || day.Chat.FailoverAttempts != 1 ||
-		day.Chat.Successes != 2 || day.Chat.EstimatedTokens <= 0 ||
-		day.Chat.Tokens < day.Chat.EstimatedTokens || day.Embedding != (api.AdminUsageCounts{
-		Attempts: 1, FirstAttempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3, InputTokens: 10,
-	}) {
+		day.Chat.Successes != 2 || day.Chat.Tokens != 8 || day.Chat.EstimatedTokens != 0 ||
+		day.Embedding != (api.AdminUsageCounts{
+			Attempts: 1, FirstAttempts: 1, Successes: 1, Tokens: 10, EstimatedTokens: 3, InputTokens: 10,
+		}) {
 		t.Fatalf("daily totals: %+v", day)
 	}
 	for _, route := range report.Routes {

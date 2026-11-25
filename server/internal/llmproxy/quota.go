@@ -21,13 +21,14 @@ type Quota interface {
 	DailyLimit(ctx context.Context, userID string, kind Kind) (int64, bool, error)
 	// Reserve 原子预留 want 个计费 token，返回实际预留量。keyID 是这次调用用的
 	// 模型代理密钥编号，用访问令牌调用时为空字符串；用量按它分开记，额度仍按账号
-	// 合计，账号额度或实例预算已经用完时返回 ErrQuotaExceeded；剩余不足 want 时
-	// 按剩余量预留，调用方照常转发。
+	// 合计。账号额度或实例预算已经用完时返回 ErrQuotaExceeded；剩余不足 want 时
+	// 按剩余量预留，由调用方决定整单拒绝并把这笔预留结算退回。
 	Reserve(ctx context.Context, userID, day string, kind Kind, keyID string, want int64) (reserved int64, err error)
 	// Settle 按实际用量调整预留：actual 大于 reserved 时补记差额，小于时退回。
 	// keyID 必须与这次预留相同，结算才会落到同一行。reserved 与 actual 都是计费
 	// token（见 Usage.Billed）；usage 是来源报告的原始拆分，只为统计缓存命中，
-	// 不参与扣减。
+	// 不参与扣减。实例账本只调整免费额度内的那一段，超出部分由积分承担
+	// （ADR-0070）。
 	Settle(ctx context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage) error
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。
@@ -119,20 +120,38 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	defer m.mu.Unlock()
 	key := [4]string{userID, day, string(kind), keyID}
 	used := m.usedByAccountLocked(userID, day, kind)
+	limit, limited := m.accountLimitLocked(userID, kind)
+	free := int64(0)
+	if limited {
+		free = max(0, limit-used)
+	}
 	// reserved 先按请求量取，再按账号剩余量截断；比较的对象必须是本次请求量，不能是
 	// 上一次截断后的值，否则剩余量够用时也会被截成 0（剩余 60 时请求 40 会被拒绝）。
 	reserved := want
-	if limit, ok := m.accountLimitLocked(userID, kind); ok {
-		reserved = min(want, limit-used)
+	if limited {
+		reserved = min(want, free)
+	}
+	// 实例账本只累计免费额度内的部分：超出免费额度、由积分承担的量已经有收入
+	// 覆盖，不再占用给免费额度兜底的实例预算（ADR-0070）。
+	instance := reserved
+	if limited {
+		instance = min(reserved, free)
 	}
 	if m.instanceTokens > 0 {
-		reserved = min(reserved, m.instanceTokens-m.instance[day])
+		if room := max(0, m.instanceTokens-m.instance[day]); instance > room {
+			reserved = min(reserved, room)
+			if limited {
+				instance = min(reserved, free)
+			} else {
+				instance = reserved
+			}
+		}
 	}
 	if reserved <= 0 {
 		return 0, ErrQuotaExceeded
 	}
 	m.used[key] += reserved
-	m.instance[day] += reserved
+	m.instance[day] += instance
 	return reserved, nil
 }
 
@@ -146,6 +165,14 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 		return nil
 	}
 	key := [4]string{userID, day, string(kind), keyID}
+	// 实例账本只加减免费额度内的部分。结算前的账号合计含这次预留，先减掉它
+	// 才知道这次请求开始时已经用掉多少免费额度。
+	instance := actual - reserved
+	if limit, limited := m.accountLimitLocked(userID, kind); limited {
+		before := max(0, m.usedByAccountLocked(userID, day, kind)-reserved)
+		free := max(0, limit-before)
+		instance = min(actual, free) - min(reserved, free)
+	}
 	used := m.used[key] + actual - reserved
 	if used < 0 {
 		// 预留与结算之间没有别的写路径，负数只可能来自调用方给错参数；归零而不是
@@ -153,11 +180,7 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 		used = 0
 	}
 	m.used[key] = used
-	instance := m.instance[day] + actual - reserved
-	if instance < 0 {
-		instance = 0
-	}
-	m.instance[day] = instance
+	m.instance[day] = max(0, m.instance[day]+instance)
 	return nil
 }
 

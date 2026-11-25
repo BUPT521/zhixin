@@ -319,6 +319,9 @@ class _SettingsPageState extends State<SettingsPage> {
     if (window == null || window <= 0) {
       throw const FormatException('模型上下文上限须为正整数');
     }
+    if (window > LlmConfig.maxContextWindowTokens) {
+      throw FormatException('模型上下文上限不能超过 ${LlmConfig.maxContextWindowTokens}');
+    }
     return LlmConfig(
       model: _model.text.trim().isEmpty
           ? LlmConfig.defaultModel

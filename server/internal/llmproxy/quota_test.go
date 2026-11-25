@@ -18,7 +18,7 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 40); err != nil || got != 40 {
 		t.Fatalf("第一次预留应为 40，得到 %d %v", got, err)
 	}
-	// 只剩 60：预留按剩余量截断，调用方照常转发。
+	// 只剩 60：预留按剩余量截断，调用方发现不足会整单拒绝。
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 100); err != nil || got != 60 {
 		t.Fatalf("剩余 60 时应截断为 60，得到 %d %v", got, err)
 	}

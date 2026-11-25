@@ -40,6 +40,10 @@ class LlmContextBudget {
       );
 }
 
+/// 与服务端 `server/internal/llmproxy/estimate.go` 的 `estimateLlmTextTokens`
+/// 同一口径：非 ASCII 字符每个记 1，辅助平面记 2，ASCII 每三个字符记 1；图片在
+/// [LlmContextBudget.messageTokens] 里每张按 2048 计。改这里时要同时改服务端的
+/// 估算函数，否则两端对同一请求的判断会不一致。
 int estimateLlmTextTokens(String text) {
   var ascii = 0;
   var tokens = 0;

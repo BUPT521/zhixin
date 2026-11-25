@@ -348,12 +348,18 @@ func (p *Proxy) findModel(w http.ResponseWriter, r *http.Request, fields map[str
 
 type attemptResult struct {
 	// usage 是来源报告的原始用量，额度结算、账号统计与路由统计都从这里取数。
-	// unknown 表示这次没有拿到 usage（请求失败、来源不报用量），结算沿用预留量。
+	// unknown 表示这次没有拿到 usage（请求失败、来源不报用量），结算改用估算。
 	usage   Usage
 	unknown bool
 	// estimated 是按估算记账的原始 token 数，只进后台用量统计，不参与扣减：
-	// 扣减看 usage 与 unknown。
+	// 扣减看 usage 与估算。
 	estimated int64
+	// unbilled 表示这次尝试确定没有产生上游计费：请求没有发出、连接都没有
+	// 建立，或者来源明确拒绝（非 2xx），结算记 0 而不是按预留量扣。
+	unbilled bool
+	// outputEstimate 是已经转给客户端的输出 token 估算；没有 usage 时按它加
+	// 输入估算结算，不沿用预留量。
+	outputEstimate int64
 
 	success        bool
 	notSent        bool
@@ -365,9 +371,9 @@ type finishAttempt func(attemptResult)
 
 // attemptBudget reserves quota and supplies a completion function for a route.
 // A nil budget is used for admin probes.
-type attemptBudget func(liveRoute, int64, bool) (finishAttempt, error)
+type attemptBudget func(liveRoute, Usage, bool) (finishAttempt, error)
 
-func (budget attemptBudget) start(route liveRoute, estimate int64, first bool) (finishAttempt, error) {
+func (budget attemptBudget) start(route liveRoute, estimate Usage, first bool) (finishAttempt, error) {
 	if budget == nil {
 		return func(attemptResult) {}, nil
 	}
@@ -382,32 +388,37 @@ func (e quotaReservationError) Unwrap() error { return e.cause }
 func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) attemptBudget {
 	// 用量记到这次调用所用的模型代理密钥上；用访问令牌时编号为空字符串。
 	keyID := auth.MustPrincipal(r.Context()).KeyID
-	return func(route liveRoute, estimate int64, first bool) (finishAttempt, error) {
-		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, keyID, estimate)
+	return func(route liveRoute, estimate Usage, first bool) (finishAttempt, error) {
+		want := estimate.reserve(model.Kind)
+		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, keyID, want)
 		if err != nil {
 			return nil, quotaReservationError{cause: err}
 		}
-		if reserved < estimate {
+		// 剩余额度不足以覆盖整次预留时整单拒绝：Reserve 会按剩余量截断，直接
+		// 放行会让一次请求越过额度太多，结算再补记也追不回免费额度外的用量。
+		if reserved < want {
 			p.settle(r, userID, day, model.Kind, keyID, reserved, 0, Usage{})
 			return nil, ErrQuotaExceeded
 		}
 		return func(result attemptResult) {
 			canceled := result.clientCanceled || r.Context().Err() != nil
 			// 计费量只在这里算一次：账号账本、实例账本、已购余额与路由统计都用
-			// 它，四处的数字因此不会各算一套。没有 usage 时沿用预留量。
-			billed := reserved
-			if !result.unknown {
-				billed = result.usage.Billed(model.Kind)
-			}
+			// 它，四处的数字因此不会各算一套。
+			billed := billedTokens(model.Kind, estimate, result)
 			p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage)
 			if p.usage != nil && !result.notSent {
-				tokens, estimated := result.usage.Total(), result.estimated
-				if result.unknown {
-					tokens, estimated = billed, billed
-				}
 				counts := UsageCounts{
-					Attempts: 1, Tokens: tokens, EstimatedTokens: estimated,
-					InputTokens: result.usage.Input, CachedTokens: result.usage.Cached,
+					Attempts: 1, InputTokens: result.usage.Input, CachedTokens: result.usage.Cached,
+				}
+				switch {
+				case result.unbilled:
+					// 没有产生上游计费，Token 记 0，尝试次数与失败原因仍然保留。
+				case result.usage.Total() > 0:
+					counts.Tokens, counts.EstimatedTokens = result.usage.Total(), result.estimated
+				default:
+					// 没有 usage 时按估算的原始用量记，估算部分单独计数。
+					raw := estimate.Input + result.outputEstimate
+					counts.Tokens, counts.EstimatedTokens = raw, raw
 				}
 				if first {
 					counts.FirstAttempts = 1
@@ -428,6 +439,22 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 				}, result.success)
 			}
 		}, nil
+	}
+}
+
+// billedTokens 返回一次尝试应当记的计费 token 数。有 usage 就按 usage；没有
+// usage 时按输入估算与已经转出的输出估算结算，确定没有产生上游费用的失败记 0，
+// 不再沿用预留量。估算仍按未命中缓存的输入折算，与客户端发请求前的判断同口径。
+func billedTokens(kind Kind, estimate Usage, result attemptResult) int64 {
+	switch {
+	case result.notSent || result.unbilled:
+		return 0
+	case result.usage.Total() > 0:
+		return result.usage.Billed(kind)
+	case result.outputEstimate > 0:
+		return Usage{Input: estimate.Input, Output: result.outputEstimate}.Billed(kind)
+	default:
+		return Usage{Input: estimate.Input}.Billed(kind)
 	}
 }
 
@@ -811,6 +838,10 @@ type chatReply struct {
 func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[string]json.RawMessage, stream bool, output int64, deadline time.Time) (chatReply, error) {
 	var lastErr error = errors.New("no usable route")
 	var reply chatReply
+	// 预留按与客户端相同的口径估算：输入按请求里的文字与图片算，不按请求体
+	// 字节数算；输出按常见长度占位。估算一律当作未命中缓存，结算时再按来源报告
+	// 的 usage 多退少补。
+	estimate := Usage{Input: estimateChatInput(fields), Output: reservedOutput(output)}
 	for i, rt := range plan.candidates {
 		if !p.attemptsRemain(plan) {
 			break
@@ -829,9 +860,6 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		if stream {
 			firstOutput = p.firstOutputBudget(plan, i, deadline)
 		}
-		// 预留按计费口径估：请求体按未命中缓存的输入算，输出按权重放大。估算
-		// 一律当作未命中，宁可多留，结算时再按实际拆分多退少补。
-		estimate := Usage{Input: int64(len(body)), Output: output}.reserve(KindChat)
 		attempt, started, err := p.beginAttempt(ctx, plan, rt, estimate)
 		if err != nil {
 			return reply, err
@@ -843,7 +871,10 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		attemptStarted := p.now()
 		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream, firstOutput)
 		if err != nil {
-			p.finishAttempt(plan, attempt, attemptResult{unknown: true}, 0, requestFailure(ctx, err))
+			// 连接都没有建立时上游不可能计费，记 0；已经连上之后超时或被取消
+			// 的尝试按输入估算结算，见 billedTokens。
+			var connection sourceConnectionError
+			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: errors.As(err, &connection)}, 0, requestFailure(ctx, err))
 			if ctx.Err() != nil {
 				return reply, ctx.Err()
 			}
@@ -859,14 +890,14 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			resp.Body.Close()
 			outcome := httpFailure(reply.status, resp.Header.Get("Retry-After"))
 			outcome.reason, outcome.scope = "响应类型不可用", routeFailure
-			p.finishAttempt(plan, attempt, attemptResult{unknown: true}, reply.status, outcome)
+			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status, outcome)
 			lastErr = errors.New("provider did not return a usable response")
 			continue
 		}
 		if reply.status < 200 || reply.status >= 300 {
 			resp.Body.Close()
 			reply.retryAfter = resp.Header.Get("Retry-After")
-			p.finishAttempt(plan, attempt, attemptResult{unknown: rejectedUsage(reply.status) < 0}, reply.status,
+			p.finishAttempt(plan, attempt, attemptResult{unknown: rejectedUsage(reply.status) < 0, unbilled: true}, reply.status,
 				httpFailure(reply.status, reply.retryAfter))
 			if retryable(reply.status) {
 				lastErr = nil
@@ -877,7 +908,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		if stream {
 			if mediaType == "application/json" || mediaType == "text/html" || mediaType == "application/problem+json" {
 				resp.Body.Close()
-				p.finishAttempt(plan, attempt, attemptResult{unknown: true}, reply.status,
+				p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status,
 					healthOutcome{reason: "流式响应类型不可用", scope: routeFailure, sourceReached: true})
 				lastErr = errors.New("provider did not return a chat stream")
 				continue
@@ -926,6 +957,9 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			if gate.failure != nil {
 				resp.Body.Close()
 				result, status, outcome := preludeFailure(gate.failure, resp.Header.Get("Retry-After"))
+				// 首个有效输出之前收到终止事件，且事件里没有用量：来源明确报告
+				// 这次失败，按没有产生计费结算。
+				result.unbilled = result.unknown
 				p.finishAttempt(plan, attempt, result, reply.status, outcome)
 				lastErr = errors.New(outcome.reason)
 				if status != 0 {
@@ -942,7 +976,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		release, reserved := p.mem.reserve(p.cfg.MaxResponseBytes)
 		if !reserved {
 			resp.Body.Close()
-			p.finishAttempt(plan, attempt, attemptResult{unknown: true}, reply.status,
+			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status,
 				healthOutcome{reason: "服务端响应预算不足", sourceReached: true})
 			return reply, errInstanceBusy
 		}
@@ -970,7 +1004,8 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		outcome.sourceReached = true
 		p.finishAttempt(plan, attempt, attemptResult{
 			usage: amount, unknown: amount.Total() <= 0,
-			success: end == responseCompleted, outputLimited: end == responseOutputLimit,
+			outputEstimate: estimateResponseOutput(response.Output),
+			success:        end == responseCompleted, outputLimited: end == responseOutputLimit,
 		}, reply.status, outcome)
 		if outcome.scope == routeFailure {
 			lastErr = errors.New(outcome.reason)
@@ -1363,6 +1398,8 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 				data = bytes.TrimSpace(data)
 				completion, used := streamData(data)
 				end = max(end, completion)
+				// 没有 usage 时按已经转出的输出估算结算，所以逐条累计增量。
+				result.outputEstimate += streamOutputTokens(data)
 				if used.Total() > 0 {
 					result.usage, result.unknown = used, false
 				}

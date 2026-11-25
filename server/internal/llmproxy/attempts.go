@@ -27,7 +27,7 @@ type routeAttempt struct {
 	settle finishAttempt
 }
 
-func (p *Proxy) beginAttempt(ctx context.Context, plan *attemptPlan, rt liveRoute, estimate int64) (routeAttempt, bool, error) {
+func (p *Proxy) beginAttempt(ctx context.Context, plan *attemptPlan, rt liveRoute, estimate Usage) (routeAttempt, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return routeAttempt{}, false, err
 	}

@@ -58,9 +58,13 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if err != nil {
 		return 0, err
 	}
+	freeRemaining := int64(0)
+	if limited {
+		freeRemaining = max(0, limit-used)
+	}
 	reserved := want
 	if limited {
-		allowed := max(0, limit-used)
+		allowed := freeRemaining
 		// 免费额度不够这一次预留时才算余额：额度内的请求不读副本，也不触发查询。
 		if allowed < want && kind == llmproxy.KindChat && s.nowpay != nil {
 			paid, err := s.paidTokens(ctx, q, userID, date, used, limit)
@@ -71,12 +75,20 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 		}
 		reserved = min(reserved, allowed)
 	}
+	// 实例账本只累计免费额度内的部分：超出免费额度、由积分承担的量已经有收入
+	// 覆盖，不再占用给免费额度兜底的实例预算（ADR-0070）。
+	instance := instancePortion(reserved, freeRemaining, limited)
 	if s.instanceDailyTokens > 0 {
 		instanceUsed, err := q.InstanceTokens(ctx, date)
 		if err != nil {
 			return 0, fmt.Errorf("pg: 读取实例当日用量失败: %w", err)
 		}
-		reserved = min(reserved, s.instanceDailyTokens-instanceUsed)
+		if room := max(0, s.instanceDailyTokens-instanceUsed); instance > room {
+			// 免费额度内的部分放不进实例预算时只预留到实例剩余量；调用方发现
+			// 预留不足会整单拒绝并结算退回。
+			reserved = min(reserved, room)
+			instance = instancePortion(reserved, freeRemaining, limited)
+		}
 	}
 	if reserved <= 0 {
 		return 0, llmproxy.ErrQuotaExceeded
@@ -88,7 +100,7 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	}
 	// 实例账本与账号用量在同一个事务里增加：实例预算读的是这份账本，它不随账号
 	// 删除，删号因此不会把已经占用的实例预算重新腾出来（ADR-0036）。
-	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: date, Delta: reserved}); err != nil {
+	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: date, Delta: instance}); err != nil {
 		return 0, fmt.Errorf("pg: 写入实例额度预留失败: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -123,7 +135,8 @@ func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Da
 
 // Settle 按实际用量调整预留；差额为 0 时只记统计用的拆分，不写额度。账号用量与
 // 实例账本在同一个事务里改，任何一步失败都整体回滚，两边的数字不会各写一半。
-// reserved 与 actual 是计费 token，usage 是上游报告的原始拆分。
+// reserved 与 actual 是计费 token，usage 是上游报告的原始拆分。实例账本只加减
+// 免费额度内的那一段，超出部分由积分承担（ADR-0070）。
 func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, reserved, actual int64, usage llmproxy.Usage) error {
 	delta := actual - reserved
 	if delta == 0 && usage.Total() == 0 {
@@ -139,13 +152,25 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := db.New(tx)
+	instanceDelta := delta
+	if limit, limited, err := s.accountLimit(ctx, q, userID, kind); err != nil {
+		return err
+	} else if limited {
+		// 结算前的账号用量含这次预留，减掉它才是这次请求开始时的用量。
+		if used, err := usedTokens(ctx, q, userID, date, kind); err != nil {
+			return err
+		} else {
+			free := max(0, limit-max(0, used-reserved))
+			instanceDelta = min(actual, free) - min(reserved, free)
+		}
+	}
 	if err := q.SettleTokens(ctx, db.SettleTokensParams{
 		UserID: userID, Day: date, Kind: string(kind), ApiKeyID: keyID,
 		Delta: delta, InputTokens: usage.Input, CachedTokens: usage.Cached,
 	}); err != nil {
 		return fmt.Errorf("pg: 结算额度失败: %w", err)
 	}
-	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: date, Delta: delta}); err != nil {
+	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: date, Delta: instanceDelta}); err != nil {
 		return fmt.Errorf("pg: 结算实例额度失败: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -171,4 +196,13 @@ func (s *Store) InstanceUsed(ctx context.Context, day string) (int64, error) {
 		return 0, fmt.Errorf("pg: 读取实例当日用量失败: %w", err)
 	}
 	return used, nil
+}
+
+// instancePortion 返回一次预留里应当记进实例账本的计费 token 数：只有免费额度
+// 内的部分占用实例预算，超出免费额度、由积分承担的部分不占（ADR-0070）。
+func instancePortion(reserved, freeRemaining int64, limited bool) int64 {
+	if !limited {
+		return reserved
+	}
+	return min(reserved, freeRemaining)
 }
