@@ -149,10 +149,12 @@ func run(log *slog.Logger) error {
 	defer stop()
 	// 核销协程跟着进程退出；队列里没有来得及处理的流水留在库里，下一轮请求前补查。
 	// 全局补查每十分钟接手一次，保留期与对账日志每天一次，都在配置了即刻收商品时启用。
+	// 这三个循环都是启动时先跑一次再进循环本身（见 periodic.Run），必须在 goroutine
+	// 里启动，否则第一次补查会把主协程占住，Build 与 ListenAndServe 都走不到。
 	if meter != nil {
 		meter.Start(ctx)
-		nowpay.SweepLoop(ctx, meter, log)
-		nowpay.MaintenanceLoop(ctx, nowpayMaintenance, log)
+		go nowpay.SweepLoop(ctx, meter, log)
+		go nowpay.MaintenanceLoop(ctx, nowpayMaintenance, log)
 	}
 
 	handler, _ := server.Build(ctx, cfg, stores, log)

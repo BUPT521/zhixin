@@ -38,6 +38,8 @@ const (
 // SweepLoop 每十分钟把创建超过五分钟、仍然没有终结的流水排进核销队列。它兜住队列
 // 满、进程重启与补查遗漏：核销失败不回滚已经交付的回答，流水只能靠补查收尾。
 // 失败只记日志，下一轮再试。
+//
+// 函数会先就地跑一次再进循环，一直阻塞到 ctx 结束，调用方要用 goroutine 启动它。
 func SweepLoop(ctx context.Context, meter *Meter, log *slog.Logger) {
 	if meter == nil {
 		return
@@ -73,7 +75,8 @@ func (m *Meter) Sweep(ctx context.Context, olderThan time.Time, limit int) (int,
 }
 
 // MaintenanceLoop 每天记一次对账日志，并按保留期分批删除过期购买入口与终态流水。
-// 启动时先跑一次，之后每天一次；任何一步失败只记日志，不影响服务。
+// 启动时先跑一次，之后每天一次；任何一步失败只记日志，不影响服务。与 SweepLoop
+// 一样会阻塞到 ctx 结束，调用方要用 goroutine 启动它。
 func MaintenanceLoop(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 	if store == nil {
 		return
