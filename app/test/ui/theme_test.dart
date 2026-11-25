@@ -432,6 +432,56 @@ void main() {
     );
   });
 
+  testWidgets('从按钮或列表项开始滚动时不播放缩放，轻点仍能触发操作', (tester) async {
+    var presses = 0;
+    var tilePresses = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: forui.FTheme(
+          data: zhixinForuiTheme,
+          child: ListView(
+            children: [
+              const SizedBox(height: 160),
+              forui.FButton(onPress: () => presses++, child: const Text('保存')),
+              forui.FTile(
+                onPress: () => tilePresses++,
+                title: const Text('检查更新'),
+              ),
+              const SizedBox(height: 1000),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable))
+        .position;
+    final button = find.byType(forui.FButton);
+    final tile = find.byType(forui.FTile);
+    for (final control in [button, tile]) {
+      final gesture = await tester.startGesture(tester.getCenter(control));
+      expect(tester.binding.transientCallbackCount, 0);
+      await gesture.moveBy(const Offset(0, -30));
+      await gesture.moveBy(const Offset(0, -60));
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(position.pixels, greaterThan(0));
+      position.jumpTo(0);
+      await tester.pumpAndSettle();
+    }
+    expect(presses, 0);
+    expect(tilePresses, 0);
+
+    await tester.tap(button);
+    await tester.tap(tile);
+    await tester.pumpAndSettle();
+    expect(presses, 1);
+    expect(tilePresses, 1);
+  });
+
   test('留意标签与主色卡片上的文字都能读清', () {
     for (final theme in [zhixinForuiTheme, zhixinDarkForuiTheme]) {
       final colors = theme.extension<ZhixinTheme>().colors;

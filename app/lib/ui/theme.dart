@@ -490,6 +490,14 @@ forui.FThemeData _foruiTheme(_Palette palette) {
   );
 }
 
+// Forui 在手指落下时就启动缩放，即使随后识别为滚动。持续时间归零后，
+// 按钮与列表项保留按下颜色，缩放只留给页内页签。
+const _noPressScale = forui.FTappableMotion(
+  bounceDownDuration: Duration.zero,
+  bounceUpDuration: Duration.zero,
+  bounceTween: forui.FTappableMotion.noBounceTween,
+);
+
 /// Forui 按钮的默认样式：圆角与其它控件同为 [ZhixinRadius.control]；标签只用
 /// 强调字重，`sm` 标签 12.5、其余尺寸取 `labelLarge` 的 14。带图标的按钮里图标
 /// 与标签之间的间隔按正文档收窄，内容高度不变；`sm` 的横向内边距 14、纵向 8。
@@ -515,6 +523,7 @@ forui.FButtonStyles _buttonStyles(
   }) {
     final content = button.contentStyle;
     return button.copyWith(
+      tappableStyle: button.tappableStyle.copyWith(motion: _noPressScale),
       contentStyle: content.copyWith(
         textStyle: forui.FVariants.all(
           content.textStyle.base.copyWith(
@@ -692,6 +701,7 @@ forui.FTileStyles _tileStyles(
   );
 
   forui.FTileStyle fixed(forui.FTileStyle tile) => tile.copyWith(
+    tappableStyle: tile.tappableStyle.copyWith(motion: _noPressScale),
     contentStyle: tile.contentStyle.copyWith(
       titleTextStyle: forui.FVariants.all(
         text.titleSmall.copyWith(color: colors.foreground),
