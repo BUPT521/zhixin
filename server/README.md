@@ -246,7 +246,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 | `ZHIXIN_ALIPAY_APP_ID` | 支付宝应用 ID，与即刻收商品属于同一商户 |
 | `ZHIXIN_ALIPAY_PRIVATE_KEY` | RSA2 应用私钥，支持 PEM 或 Base64 DER |
 | `ZHIXIN_ALIPAY_PUBLIC_KEY` | 支付宝公钥，支持 PEM 或 Base64 DER |
-| `ZHIXIN_TOKENS_PER_POINT` | 一个积分覆盖的计费 token 数，默认 `1000`；核销与前台展示共用 |
+| `ZHIXIN_TOKENS_PER_POINT` | 一个积分覆盖的计费 token 数，代码默认 `1000`，本项目部署为 `10000`；核销与前台展示共用 |
 | `ZHIXIN_NOWPAY_PRODUCT_ID` | 「即刻收」小程序里的商品 ID；为空表示不卖积分包 |
 | `ZHIXIN_NOWPAY_CALLBACK_URL` | 可选，购买页返回后的跳转地址，必须是 HTTPS；它不是到账通知 |
 
