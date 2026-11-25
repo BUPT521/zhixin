@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 
 import '../../domain/models/model_api_key.dart';
 import '../../domain/models/quota_purchase.dart';
+import '../../domain/rules/time_format.dart' show waitText;
 
 /// 服务端的一次拒绝：`application/problem+json` 里的 `code` 是分支依据，
 /// `detail` 只给开发者看，界面按 [userMessage] 给出说明。
@@ -48,10 +49,7 @@ class ServerProblem implements Exception {
     'invalid_credentials' => '邮箱或密码不正确',
     'invalid_code' => '验证码不正确或已经过期，可以重新获取',
     'identifier_taken' => '这个邮箱已经注册过，可以直接登录',
-    'rate_limited' =>
-      retryAfterSeconds == null
-          ? '尝试过于频繁，请稍后再试'
-          : '尝试过于频繁，请 $retryAfterSeconds 秒后再试',
+    'rate_limited' => _rateLimitedMessage,
     'payload_too_large' =>
       extra['resource'] == 'sync' ? '单条同步提交超过服务端允许的大小' : '文件超过服务端允许的大小',
     'contact_unverified' => '请先在账号页验证一种登录方式',
@@ -67,6 +65,14 @@ class ServerProblem implements Exception {
     'not_implemented' => '服务端还没有实现这个操作',
     _ => '服务端没有完成这次请求',
   };
+
+  /// 限流说明按时长换单位：验证码的收信预算用完之后要等几个小时，直接写秒数
+  /// 用户读不出还剩多久。
+  String get _rateLimitedMessage {
+    final seconds = retryAfterSeconds;
+    if (seconds == null || seconds <= 0) return '尝试过于频繁，请稍后再试';
+    return '尝试过于频繁，请 ${waitText(seconds)}后再试';
+  }
 
   /// 额度用完按用途与原因分别说明：聊天的免费额度与积分用完之后可以购买积分继续，
   /// 实例预算用完只能稍后重试，嵌入按原始 token 计、不能用积分支付，只说明次日恢复。

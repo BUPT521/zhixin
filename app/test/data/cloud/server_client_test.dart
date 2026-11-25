@@ -284,6 +284,34 @@ void main() {
     );
   });
 
+  test('长时间的限流按小时说明等待，不写上万秒', () async {
+    final client = ServerClient(
+      baseUrl: 'http://server.test',
+      httpClient: MockClient(
+        (request) async => http.Response(
+          jsonEncode({
+            'type': 'urn:zhixin:problem:rate_limited',
+            'title': 'rate_limited',
+            'status': 429,
+            'code': 'rate_limited',
+          }),
+          429,
+          headers: {'retry-after': '7200'},
+        ),
+      ),
+    );
+    await expectLater(
+      client.deleteMe('token', password: 'wrong-password'),
+      throwsA(
+        isA<ServerProblem>().having(
+          (error) => error.userMessage,
+          'message',
+          '尝试过于频繁，请 2 小时后再试',
+        ),
+      ),
+    );
+  });
+
   test('推送在服务端位置变化时给出 conflict 与最新 head', () async {
     final server = FakeServer();
     final client = ServerClient(

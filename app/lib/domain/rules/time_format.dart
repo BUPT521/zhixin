@@ -26,6 +26,16 @@ DateTime requiredDateTime(String value) {
   return parsed;
 }
 
+/// 还要等多久的短说明：一分钟以内写秒，一小时以内写分钟，再长写小时。
+///
+/// 限流给出的等待秒数动辄上万（验证码的收信预算用完时要等几个小时），界面直接
+/// 写秒数读不出还剩多久；一律向上取整，避免提前放行之后再被拒绝一次。
+String waitText(int seconds) {
+  if (seconds >= 3600) return '${(seconds / 3600).ceil()} 小时';
+  if (seconds > 60) return '${(seconds / 60).ceil()} 分钟';
+  return '$seconds 秒';
+}
+
 /// 解析可空时刻：缺失或空串返回 null，非空坏值仍抛错。
 DateTime? optionalDateTime(String? value) {
   final text = value?.trim();

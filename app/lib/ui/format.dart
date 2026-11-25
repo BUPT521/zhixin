@@ -4,6 +4,8 @@ import '../domain/rules/weekdays.dart';
 
 // 星期名在 domain/rules/weekdays.dart 里只写一份，这里转出给界面使用。
 export '../domain/rules/weekdays.dart' show weekdayLabel;
+// 等待时长的写法与限流说明共用一份，见 domain/rules/time_format.dart。
+export '../domain/rules/time_format.dart' show waitText;
 
 /// 界面上的短时间：今天显示时刻，其余显示日期。
 String shortTime(DateTime time, {DateTime? now}) {

@@ -32,4 +32,12 @@ void main() {
     expect(quotaPoints(1000, null), 0);
     expect(quotaPoints(1000, 0), 0);
   });
+
+  test('等待时长按时长换单位并向上取整', () {
+    expect(waitText(30), '30 秒');
+    expect(waitText(60), '60 秒');
+    expect(waitText(90), '2 分钟');
+    expect(waitText(3600), '1 小时');
+    expect(waitText(21600), '6 小时');
+  });
 }

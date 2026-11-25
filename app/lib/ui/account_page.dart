@@ -61,6 +61,11 @@ class _AccountPageState extends State<AccountPage> {
   bool _showReset = false;
   bool _codeSent = false;
 
+  /// 重发倒计时：服务端对同一条登录方式一分钟内只发一封（`ZHIXIN_CODE_COOLDOWN`
+  /// 默认 60 秒），界面按同一个间隔禁用按钮，用户不必先点一次拿到 429 才知道要等。
+  int _resendWait = 0;
+  Timer? _resendTicker;
+
   /// 页面顶部的一次性说明：失败用就地说明，成功用一行小字。
   String? _notice;
   bool _failed = false;
@@ -93,6 +98,7 @@ class _AccountPageState extends State<AccountPage> {
 
   @override
   void dispose() {
+    _resendTicker?.cancel();
     _identifier.dispose();
     _password.dispose();
     _verifyCode.dispose();
@@ -223,8 +229,67 @@ class _AccountPageState extends State<AccountPage> {
     return null;
   }
 
+  /// 服务端默认的冷却时间；成功响应不带 `Retry-After`，先按这个值禁用按钮。
+  static const _resendCooldownSeconds = 60;
+
+  /// 按服务端给出的等待秒数开始倒计时，0 表示现在就可以再发。
+  void _startResendCooldown(int seconds) {
+    _resendTicker?.cancel();
+    _resendTicker = null;
+    if (seconds <= 0) {
+      if (_resendWait != 0) setState(() => _resendWait = 0);
+      return;
+    }
+    setState(() => _resendWait = seconds);
+    // 收信预算用完时要等几个小时，按秒刷新只会白白唤醒页面，长等待按半分钟走。
+    final step = seconds > 120 ? 30 : 1;
+    _resendTicker = Timer.periodic(Duration(seconds: step), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      final next = _resendWait - step;
+      if (next <= 0) {
+        timer.cancel();
+        _resendTicker = null;
+        setState(() => _resendWait = 0);
+      } else {
+        setState(() => _resendWait = next);
+      }
+    });
+  }
+
+  /// 服务端说还要等多久就按这个秒数继续禁用按钮；其余失败不动倒计时。
+  void _startResendCooldownFrom(Object error) {
+    if (error is! ServerProblem) return;
+    final seconds = error.retryAfterSeconds;
+    if (seconds == null || seconds <= 0) return;
+    _startResendCooldown(seconds);
+  }
+
+  /// 登录与找回密码之间切换时清掉，另一个入口的冷却不该挡住这一次发送。
+  void _clearResendCooldown() {
+    _resendTicker?.cancel();
+    _resendTicker = null;
+    _resendWait = 0;
+  }
+
+  /// 验证码的发送按钮：冷却期间不可点，把还要等多久写在按钮上。
+  Widget _sendCodeButton({required VoidCallback send}) {
+    final cooling = _resendWait > 0;
+    return forui.FButton(
+      mainAxisSize: MainAxisSize.min,
+      onPress: (_busy || cooling) ? null : send,
+      child: Text(
+        cooling
+            ? '${waitText(_resendWait)}后可重发'
+            : (_codeSent ? '重新发送' : '发送验证码'),
+      ),
+    );
+  }
+
   Future<void> _sendVerification() async {
-    if (_busy) return;
+    if (_busy || _resendWait > 0) return;
     final identity = _unverifiedIdentity;
     if (identity == null) {
       _report('这个账号的登录方式都已经确认过');
@@ -235,9 +300,11 @@ class _AccountPageState extends State<AccountPage> {
       await AppScope.of(context).accountServices.account
           .requestIdentityVerification(identity.id);
       _codeSent = true;
-      _report('验证码已经发到${identity.kindLabel}，十分钟内有效');
+      _startResendCooldown(_resendCooldownSeconds);
+      _report('验证码已经发到 ${identity.identifier}，十分钟内有效');
     } catch (error, stack) {
       if (!mounted) return;
+      _startResendCooldownFrom(error);
       _report(
         describeFailure(
           context,
@@ -292,7 +359,7 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _sendResetCode() async {
-    if (_busy) return;
+    if (_busy || _resendWait > 0) return;
     final identifier = _identifier.text.trim();
     if (identifier.isEmpty) {
       _report('先填写注册用的邮箱', failed: true);
@@ -302,9 +369,11 @@ class _AccountPageState extends State<AccountPage> {
     try {
       await AppScope.of(context).accountServices.account
           .requestPasswordReset(identifier);
+      _startResendCooldown(_resendCooldownSeconds);
       _report('如果这个邮箱注册并验证过，验证码已经发出；十分钟内有效');
     } catch (error, stack) {
       if (!mounted) return;
+      _startResendCooldownFrom(error);
       _report(
         describeFailure(
           context,
@@ -948,6 +1017,7 @@ class _AccountPageState extends State<AccountPage> {
                               setState(() {
                                 _showReset = true;
                                 _codeSent = false;
+                                _clearResendCooldown();
                               });
                               _report('先点“发送验证码”，再填写邮件里的六位数字');
                             },
@@ -974,11 +1044,7 @@ class _AccountPageState extends State<AccountPage> {
                   spacing: theme.space.sm,
                   runSpacing: theme.space.sm,
                   children: [
-                    forui.FButton(
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : _sendResetCode,
-                      child: Text(_codeSent ? '重新发送' : '发送验证码'),
-                    ),
+                    _sendCodeButton(send: _sendResetCode),
                     if (_codeSent)
                       forui.FButton(
                         variant: forui.FButtonVariant.outline,
@@ -994,6 +1060,7 @@ class _AccountPageState extends State<AccountPage> {
                           : () => setState(() {
                               _showReset = false;
                               _codeSent = false;
+                              _clearResendCooldown();
                               _resetCode.clear();
                               _newPassword.clear();
                             }),
@@ -1001,6 +1068,15 @@ class _AccountPageState extends State<AccountPage> {
                     ),
                   ],
                 ),
+                if (_codeSent) ...[
+                  SizedBox(height: theme.space.sm),
+                  Text(
+                    '没收到先看垃圾邮件；同一条登录方式一分钟内只能发一封，反复重发要等几小时。',
+                    style: theme.text.bodySmall.copyWith(
+                      color: theme.colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ],
             ],
           ),
@@ -1106,11 +1182,7 @@ class _AccountPageState extends State<AccountPage> {
                   spacing: theme.space.sm,
                   runSpacing: theme.space.sm,
                   children: [
-                    forui.FButton(
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : _sendVerification,
-                      child: Text(_codeSent ? '重新发送' : '发送验证码'),
-                    ),
+                    _sendCodeButton(send: _sendVerification),
                     if (_codeSent)
                       forui.FButton(
                         variant: forui.FButtonVariant.outline,
@@ -1120,6 +1192,15 @@ class _AccountPageState extends State<AccountPage> {
                       ),
                   ],
                 ),
+                if (_codeSent) ...[
+                  SizedBox(height: theme.space.sm),
+                  Text(
+                    '没收到先看垃圾邮件；同一条登录方式一分钟内只能发一封，反复重发要等几小时。',
+                    style: theme.text.bodySmall.copyWith(
+                      color: theme.colors.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
