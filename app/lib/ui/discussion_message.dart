@@ -148,14 +148,28 @@ class DiscussionMessage extends StatelessWidget {
   }
 }
 
-class _CitationTile extends StatelessWidget {
+class _CitationTile extends StatefulWidget {
   const _CitationTile({super.key, required this.citation, this.onOpen});
 
   final Citation citation;
   final VoidCallback? onOpen;
 
   @override
+  State<_CitationTile> createState() => _CitationTileState();
+}
+
+class _CitationTileState extends State<_CitationTile> {
+  /// 展开过一次之后才把引文正文放进树里。
+  ///
+  /// 折叠面板会把内容一起排版，收起时也占一次整段引文的排版与一套选择区；
+  /// 一条回答常带三五条引用，打开讨论时就都要付一遍。这里改成展开之后才建，
+  /// 收起状态只剩标题与状态。
+  bool _opened = false;
+
+  @override
   Widget build(BuildContext context) {
+    final citation = widget.citation;
+    final onOpen = widget.onOpen;
     final theme = context.zhixin;
     final colors = theme.colors;
     return Container(
@@ -165,6 +179,10 @@ class _CitationTile extends StatelessWidget {
         borderRadius: theme.radius.control,
       ),
       child: forui.FAccordion(
+        control: forui.FAccordionControl.lifted(
+          expanded: (_) => _opened,
+          onChange: (_, expanded) => setState(() => _opened = expanded),
+        ),
         style: .delta(
           titlePadding: .value(
             EdgeInsets.symmetric(
@@ -212,18 +230,23 @@ class _CitationTile extends StatelessWidget {
                 ),
               ],
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (!citation.verified)
-                  const InlineNotice(
-                    message: '这段引文与材料原文对不上，标为未能核对；可以打开原文逐字对照。',
-                  ),
-                SelectionArea(
-                  child: Text(citation.quote, style: theme.text.bodySmall),
-                ),
-              ],
-            ),
+            child: _opened
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (!citation.verified)
+                        const InlineNotice(
+                          message: '这段引文与材料原文对不上，标为未能核对；可以打开原文逐字对照。',
+                        ),
+                      SelectionArea(
+                        child: Text(
+                          citation.quote,
+                          style: theme.text.bodySmall,
+                        ),
+                      ),
+                    ],
+                  )
+                : const SizedBox.shrink(),
           ),
           if (onOpen != null)
             forui.FButton(

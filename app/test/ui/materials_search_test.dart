@@ -249,11 +249,12 @@ void main() {
     await pumpUntil(tester, find.text('第 1 处 / 共 4 处'));
 
     // 命中处有可见的高亮：正文按命中位置切成带底色的片段。
-    final selectables = tester
-        .widgetList<SelectableText>(find.byType(SelectableText))
-        .toList();
-    final highlighted = selectables
-        .expand((widget) => widget.textSpan?.children ?? const <InlineSpan>[])
+    final highlighted = tester
+        .widgetList<Text>(find.byType(Text))
+        .expand(
+          (widget) =>
+              (widget.textSpan as TextSpan?)?.children ?? const <InlineSpan>[],
+        )
         .where((span) => span.style?.backgroundColor != null);
     expect(highlighted, isNotEmpty);
 
@@ -287,7 +288,16 @@ void main() {
     await tester.tap(find.text('清除查找'));
     await settle(tester);
     expect(find.textContaining('共 4 处'), findsNothing);
-    expect(find.byType(SelectableText), findsWidgets);
+    // 清除查找之后正文回到不带高亮的原样，选中交给列表外层的同一个选择区。
+    expect(find.byType(SelectionArea), findsWidgets);
+    final plain = tester
+        .widgetList<Text>(find.byType(Text))
+        .expand(
+          (widget) =>
+              (widget.textSpan as TextSpan?)?.children ?? const <InlineSpan>[],
+        )
+        .where((span) => span.style?.backgroundColor != null);
+    expect(plain, isEmpty);
     expect(tester.takeException(), isNull);
   });
 }

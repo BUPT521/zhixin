@@ -150,12 +150,12 @@ final value = computeSomethingVeryLong(alpha, beta, gamma, delta);
     expect(find.text('已核对'), findsOneWidget);
     expect(find.text('未能核对'), findsOneWidget);
     final quote = find.text('概率只在所给事件中重新计算。');
-    // Forui 的分组即使收起也会把内容留在控件树里，只是裁掉；这里按能否点击判断可见性。
-    expect(quote.hitTestable(), findsNothing);
+    // 收起时不建引文正文，展开之后才放进树里。
+    expect(quote, findsNothing);
 
     await tester.tap(find.text('《概率论》 第 7 页'));
     await tester.pumpAndSettle();
-    expect(quote.hitTestable(), findsOneWidget);
+    expect(quote, findsOneWidget);
     expect(
       find.ancestor(of: quote, matching: find.byType(SelectionArea)),
       findsOneWidget,

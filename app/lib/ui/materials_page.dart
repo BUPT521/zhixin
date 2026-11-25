@@ -596,92 +596,104 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     _findIndex = _findMatches.isEmpty
         ? 0
         : _findIndex.clamp(0, _findMatches.length - 1);
+    // 材料信息固定在最前面，页面正文按需构建：只有滚到附近的一页才解析与排版
+    // 自己的整段原文，打开几十页的材料时首帧开销与页数无关；列表外层只放一个
+    // 选择区，逐页的 SelectableText 换成普通 Text，每页不再各带一套选择状态。
+    final leading = <Widget>[
+      if (_notice != null) InlineNotice(message: _notice!, onRetry: _reload),
+      TagRow(
+        children: [
+          StatusTag(material.kindLabel),
+          _GoalTag(material: material),
+          if (material.sourceRef != null)
+            StatusTag(material.sourceRef!, tone: TagTone.muted),
+        ],
+      ),
+      if (_hasRange) ...[
+        SizedBox(height: theme.space.gap),
+        forui.FCard(
+          child: Padding(
+            padding: EdgeInsets.all(theme.space.md),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.stepTitle ?? '本次学习步骤',
+                  style: theme.text.titleSmall,
+                ),
+                SizedBox(height: theme.space.xs),
+                Text(
+                  '本次范围：${_rangeLabel(material)}',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+                forui.FButton(
+                  variant: forui.FButtonVariant.ghost,
+                  size: forui.FButtonSizeVariant.sm,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: () => setState(() => _showAllPages = !_showAllPages),
+                  child: Text(_showAllPages ? '只看本次范围' : '查看全部页面'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+      SizedBox(height: theme.space.gap),
+    ];
+    final tail = loading || all.isEmpty || visible.isEmpty ? 1 : visible.length;
     return Column(
       children: [
         if (!loading && all.isNotEmpty) _findBar(theme),
         Expanded(
-          child: ListView(
-            controller: _scroll,
-            padding: theme.space.pageInsets(),
-            children: [
-              if (_notice != null)
-                InlineNotice(message: _notice!, onRetry: _reload),
-              TagRow(
-                children: [
-                  StatusTag(material.kindLabel),
-                  _GoalTag(material: material),
-                  if (material.sourceRef != null)
-                    StatusTag(material.sourceRef!, tone: TagTone.muted),
-                ],
-              ),
-              if (_hasRange) ...[
-                SizedBox(height: theme.space.gap),
-                forui.FCard(
-                  child: Padding(
-                    padding: EdgeInsets.all(theme.space.md),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          widget.stepTitle ?? '本次学习步骤',
-                          style: theme.text.titleSmall,
-                        ),
-                        SizedBox(height: theme.space.xs),
-                        Text(
-                          '本次范围：${_rangeLabel(material)}',
-                          style: theme.text.bodySmall.copyWith(
-                            color: theme.colors.onSurfaceVariant,
+          child: SelectionArea(
+            child: ListView.builder(
+              controller: _scroll,
+              padding: theme.space.pageInsets(),
+              itemCount: leading.length + tail,
+              itemBuilder: (context, index) {
+                if (index < leading.length) return leading[index];
+                if (loading) return const ListSkeleton(rows: 3);
+                if (all.isEmpty) {
+                  return EmptyState(
+                    icon: FLucideIcons.fileText,
+                    title: '这份材料还没有原文',
+                    description: material.isDocx
+                        ? 'Word 材料的片段随导入写入，这里不逐段添加；可以重新导入一份。'
+                        : '补充这一页的原文之后，可以引用原文或从这一页开始讨论。',
+                    action: material.isDocx
+                        ? null
+                        : forui.FButton(
+                            mainAxisSize: MainAxisSize.min,
+                            onPress: () => addMaterialPage(context, material),
+                            prefix: const Icon(FLucideIcons.filePlus),
+                            child: const Text('添加一页'),
                           ),
-                        ),
-                        forui.FButton(
-                          variant: forui.FButtonVariant.ghost,
-                          size: forui.FButtonSizeVariant.sm,
-                          mainAxisSize: MainAxisSize.min,
-                          onPress: () =>
-                              setState(() => _showAllPages = !_showAllPages),
-                          child: Text(_showAllPages ? '只看本次范围' : '查看全部页面'),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-              SizedBox(height: theme.space.gap),
-              if (loading)
-                const ListSkeleton(rows: 3)
-              else if (all.isEmpty)
-                EmptyState(
-                  icon: FLucideIcons.fileText,
-                  title: '这份材料还没有原文',
-                  description: material.isDocx
-                      ? 'Word 材料的片段随导入写入，这里不逐段添加；可以重新导入一份。'
-                      : '补充这一页的原文之后，可以引用原文或从这一页开始讨论。',
-                  action: material.isDocx
-                      ? null
-                      : forui.FButton(
-                          mainAxisSize: MainAxisSize.min,
-                          onPress: () => addMaterialPage(context, material),
-                          prefix: const Icon(FLucideIcons.filePlus),
-                          child: const Text('添加一页'),
-                        ),
-                )
-              else if (visible.isEmpty)
-                EmptyState(
-                  icon: FLucideIcons.fileText,
-                  title: '这一步的页码还没有原文',
-                  description: '可以查看全部页面，或先补充这一页。',
-                  action: material.isDocx
-                      ? null
-                      : forui.FButton(
-                          variant: forui.FButtonVariant.outline,
-                          mainAxisSize: MainAxisSize.min,
-                          onPress: () => addMaterialPage(context, material),
-                          child: const Text('添加一页'),
-                        ),
-                )
-              else
-                for (final page in visible) _pageCard(theme, material, page),
-            ],
+                  );
+                }
+                if (visible.isEmpty) {
+                  return EmptyState(
+                    icon: FLucideIcons.fileText,
+                    title: '这一步的页码还没有原文',
+                    description: '可以查看全部页面，或先补充这一页。',
+                    action: material.isDocx
+                        ? null
+                        : forui.FButton(
+                            variant: forui.FButtonVariant.outline,
+                            mainAxisSize: MainAxisSize.min,
+                            onPress: () => addMaterialPage(context, material),
+                            child: const Text('添加一页'),
+                          ),
+                  );
+                }
+                return _pageCard(
+                  theme,
+                  material,
+                  visible[index - leading.length],
+                );
+              },
+            ),
           ),
         ),
       ],
@@ -821,12 +833,16 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     );
   }
 
-  /// 一页的正文：没有查找时按原样可选，有查找时把每一处命中标出来。
+  /// 一页的正文：没有查找时按原样显示，有查找时把每一处命中标出来。
+  ///
+  /// 正文用普通 [Text]，选中与复制交给列表外层同一个 [SelectionArea]：
+  /// `SelectableText` 每页各建一套文本选择状态，一页原文很长时还要为选中
+  /// 再排版一遍，逐页构建之后这部分开销可以省掉。
   Widget _pageContent(ZhixinTheme theme, MaterialPage page) {
     if (_findQuery.isEmpty) {
-      return SelectableText(page.content, style: theme.text.bodyMedium);
+      return Text(page.content, style: theme.text.bodyMedium);
     }
-    return SelectableText.rich(
+    return Text.rich(
       TextSpan(children: _highlightSpans(theme, page)),
       style: theme.text.bodyMedium,
     );

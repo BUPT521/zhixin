@@ -29,6 +29,7 @@ class ZhixinMenu extends StatelessWidget {
     required this.triggerBuilder,
     this.menuAnchor = AlignmentDirectional.topEnd,
     this.childAnchor = AlignmentDirectional.bottomEnd,
+    this.control = const forui.FPopoverControl.managed(),
     super.key,
   });
 
@@ -42,9 +43,13 @@ class ZhixinMenu extends StatelessWidget {
   final AlignmentGeometry menuAnchor;
   final AlignmentGeometry childAnchor;
 
+  /// 菜单显示与否的控制方式；默认自己管，点开与关掉都交给浮层控制器。
+  final forui.FPopoverControl control;
+
   @override
   Widget build(BuildContext context) {
     return forui.FPopoverMenu.tiles(
+      control: control,
       semanticsLabel: semanticsLabel,
       barrierSemanticsLabel: '关闭$semanticsLabel',
       menuAnchor: menuAnchor,
@@ -75,16 +80,55 @@ class ZhixinMenu extends StatelessWidget {
 }
 
 /// 三横点触发的菜单，多数列表项的“更多”入口用这一种。
-ZhixinMenu moreMenu({
+///
+/// 菜单要等到点开时才挂出来。一个 [ZhixinMenu] 带一套浮层控制器、焦点域与
+/// 弹出层，记录列表一屏就有七八行，快速滑过时每帧都要新建几行；改成点开才
+/// 挂之后，没点开的行只有一个普通图标按钮，滑过去不再付这份建树开销。
+Widget moreMenu({
   required List<ZhixinMenuItem> items,
   String label = '更多',
   IconData icon = FLucideIcons.ellipsis,
-}) => ZhixinMenu(
-  semanticsLabel: label,
-  items: items,
-  triggerBuilder: (context, controller) => ZhixinIconButton(
-    tooltip: label,
-    icon: icon,
-    onPressed: controller.toggle,
-  ),
-);
+}) => _LazyMoreMenu(items: items, label: label, icon: icon);
+
+class _LazyMoreMenu extends StatefulWidget {
+  const _LazyMoreMenu({
+    required this.items,
+    required this.label,
+    required this.icon,
+  });
+
+  final List<ZhixinMenuItem> items;
+  final String label;
+  final IconData icon;
+
+  @override
+  State<_LazyMoreMenu> createState() => _LazyMoreMenuState();
+}
+
+class _LazyMoreMenuState extends State<_LazyMoreMenu> {
+  /// 点开过一次就保持挂载；关掉之后再次点击由同一个浮层控制器打开，
+  /// 这样反复开关不必重建菜单，也没有第二次建树。
+  bool _opened = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_opened) {
+      return ZhixinIconButton(
+        tooltip: widget.label,
+        icon: widget.icon,
+        onPressed: () => setState(() => _opened = true),
+      );
+    }
+    return ZhixinMenu(
+      semanticsLabel: widget.label,
+      items: widget.items,
+      // 点开发生在上一帧，这一次建树直接把菜单显示出来，用户只点一下。
+      control: const forui.FPopoverControl.managed(initial: true),
+      triggerBuilder: (context, controller) => ZhixinIconButton(
+        tooltip: widget.label,
+        icon: widget.icon,
+        onPressed: controller.toggle,
+      ),
+    );
+  }
+}

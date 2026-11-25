@@ -150,7 +150,10 @@ class BuddyTimeline extends StatelessWidget {
     if (entries.isEmpty) return adapter.emptyState ?? const SizedBox.shrink();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [for (final entry in entries) _entry(context, entry)],
+      children: [
+        for (final entry in entries)
+          BuddyTimelineEntryView(adapter: adapter, entry: entry),
+      ],
     );
   }
 
@@ -171,7 +174,10 @@ class BuddyTimeline extends StatelessWidget {
       itemBuilder: (context, index) {
         if (index == entries.length) return _olderFooter(context);
         // 倒序列表的逻辑顺序与新到旧相反，按条目倒着取。
-        return _entry(context, entries[entries.length - 1 - index]);
+        return BuddyTimelineEntryView(
+          adapter: adapter,
+          entry: entries[entries.length - 1 - index],
+        );
       },
     );
   }
@@ -194,8 +200,25 @@ class BuddyTimeline extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _entry(BuildContext context, BuddyTimelineEntry entry) {
+/// 时间线里的一条内容。
+///
+/// 讨论页由 [BuddyTimeline] 把它铺进滚动列表；学习页把它直接作为页面列表的
+/// 一项，于是帮助、记忆与说明各自只在自己滚到附近时才建树，一次全建出来
+/// 的只有当前视口里的几条。
+class BuddyTimelineEntryView extends StatelessWidget {
+  const BuddyTimelineEntryView({
+    super.key,
+    required this.adapter,
+    required this.entry,
+  });
+
+  final BuddyTimelineAdapter adapter;
+  final BuddyTimelineEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
     final space = context.zhixin.space;
     return switch (entry) {
       BuddyMessageEntry(:final message, :final footer) => Padding(
@@ -216,7 +239,7 @@ class BuddyTimeline extends StatelessWidget {
           builder: (context, value, _) => StreamingMessage(text: value),
         ),
       ),
-      BuddyHelpEntry() => _helpCard(context, entry),
+      BuddyHelpEntry help => _helpCard(context, help),
       BuddyMemoryEntry(:final item) => Padding(
         padding: EdgeInsets.only(top: adapter.scrollable ? 0 : space.sm),
         child: MemoryCard(
@@ -244,40 +267,40 @@ class BuddyTimeline extends StatelessWidget {
       ),
     };
   }
+}
 
-  /// 学习页的帮助卡：生成中显示流式正文，生成完显示这一次保存的正文。
-  ///
-  /// 与回答、记忆、建议共用 [DiscussionCard]，帮助不再单独用提醒色底——这个
-  /// 颜色只表示草稿与优先这类需要留意的状态。
-  Widget _helpCard(BuildContext context, BuddyHelpEntry entry) {
-    final theme = context.zhixin;
-    if (!entry.generating && (entry.text?.trim().isEmpty ?? true)) {
-      return const SizedBox.shrink();
-    }
-    return DiscussionCard(
-      margin: EdgeInsets.only(top: theme.space.md),
-      icon: FLucideIcons.lightbulb,
-      title: '搭子的帮助',
-      status: entry.generating ? '正在生成' : null,
-      children: [
-        if (entry.generating)
-          ValueListenableBuilder<String>(
-            valueListenable: entry.streaming,
-            builder: (context, text, _) => text.trim().isEmpty
-                ? Row(
-                    children: [
-                      const forui.FCircularProgress(size: .xs),
-                      SizedBox(width: theme.space.sm),
-                      Text('正在生成', style: theme.text.bodySmall),
-                    ],
-                  )
-                : MarkdownText(text, streaming: true, large: true),
-          )
-        else
-          MarkdownText(entry.text!, large: true),
-      ],
-    );
+/// 学习页的帮助卡：生成中显示流式正文，生成完显示这一次保存的正文。
+///
+/// 与回答、记忆、建议共用 [DiscussionCard]，帮助不再单独用提醒色底——这个
+/// 颜色只表示草稿与优先这类需要留意的状态。
+Widget _helpCard(BuildContext context, BuddyHelpEntry entry) {
+  final theme = context.zhixin;
+  if (!entry.generating && (entry.text?.trim().isEmpty ?? true)) {
+    return const SizedBox.shrink();
   }
+  return DiscussionCard(
+    margin: EdgeInsets.only(top: theme.space.md),
+    icon: FLucideIcons.lightbulb,
+    title: '搭子的帮助',
+    status: entry.generating ? '正在生成' : null,
+    children: [
+      if (entry.generating)
+        ValueListenableBuilder<String>(
+          valueListenable: entry.streaming,
+          builder: (context, text, _) => text.trim().isEmpty
+              ? Row(
+                  children: [
+                    const forui.FCircularProgress(size: .xs),
+                    SizedBox(width: theme.space.sm),
+                    Text('正在生成', style: theme.text.bodySmall),
+                  ],
+                )
+              : MarkdownText(text, streaming: true, large: true),
+        )
+      else
+        MarkdownText(entry.text!, large: true),
+    ],
+  );
 }
 
 /// 学习页底部的一条讨论摘要：只显示前两行，完整讨论另开。

@@ -657,6 +657,67 @@ class _LearningPageState extends State<LearningPage> {
   Widget _questionPage(BuildContext context, QuestionView view) {
     final theme = context.zhixin;
     final attempts = view.attempts;
+    final timeline = _timelineAdapter.entries;
+    final sections = <Widget>[
+      _questionCard(context, view),
+      SizedBox(height: theme.space.md),
+      _draftCard(theme),
+      if (AppScope.of(context).broughtSources.length > 0) ...[
+        SizedBox(height: theme.space.gap),
+        _broughtSourcesRow(theme),
+      ],
+      SizedBox(height: theme.space.md),
+      // 三个求助入口排在草稿之后，结果落在下面，提交按钮再往下，
+      // 看完帮助不用往回滚就能提交。
+      _helpRow(theme),
+      if (_busy)
+        Padding(
+          padding: EdgeInsets.symmetric(vertical: theme.space.md),
+          child: const forui.FProgress(),
+        ),
+      for (final entry in timeline)
+        BuddyTimelineEntryView(adapter: _timelineAdapter, entry: entry),
+      _submitSection(theme),
+      if (!_independentRedo) ...[
+        SectionHeading(
+          title: '历次尝试',
+          action: attempts.isNotEmpty && _view?.openAttempt == null
+              ? forui.FButton(
+                  variant: forui.FButtonVariant.ghost,
+                  size: forui.FButtonSizeVariant.sm,
+                  mainAxisSize: MainAxisSize.min,
+                  onPress: _busy ? null : _startRedo,
+                  prefix: const Icon(FLucideIcons.refreshCw),
+                  child: const Text('复查（先不看上次）'),
+                )
+              : null,
+        ),
+        if (attempts.isEmpty)
+          Padding(
+            padding: EdgeInsets.only(bottom: theme.space.sm),
+            child: Text('提交答案后，这里会显示作答记录。', style: theme.text.bodySmall),
+          ),
+        for (final attempt in attempts) _attemptTile(theme, attempt),
+      ] else
+        Padding(
+          padding: EdgeInsets.only(top: theme.space.md),
+          child: Text(
+            '独立重做：这次不显示以前的答案与帮助，提交后恢复显示。',
+            style: theme.text.bodySmall,
+          ),
+        ),
+      if (!_independentRedo && _recentMessages.isNotEmpty) ...[
+        SectionHeading(
+          title: '同一条记录里的讨论',
+          action: SectionLink(
+            label: '打开完整讨论',
+            onPressed: _busy ? null : _openDiscussion,
+          ),
+        ),
+        for (final message in _timelineMessages)
+          ChatMessagePreview(message: message),
+      ],
+    ];
     return PopScope<void>(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -673,67 +734,12 @@ class _LearningPageState extends State<LearningPage> {
             ),
           ],
         ),
-        child: ListView(
+        // 整页按项建树：原题、草稿与提交按钮在视口里时才建，帮助、记忆与
+        // 说明由时间线逐条拆成列表项，帮助正文很长时也只有滚到它才解析与排版。
+        child: ListView.builder(
           padding: theme.space.pageInsets(),
-          children: [
-            _questionCard(context, view),
-            SizedBox(height: theme.space.md),
-            _draftCard(theme),
-            if (AppScope.of(context).broughtSources.length > 0) ...[
-              SizedBox(height: theme.space.gap),
-              _broughtSourcesRow(theme),
-            ],
-            SizedBox(height: theme.space.md),
-            // 三个求助入口排在草稿之后，结果落在下面，提交按钮再往下，
-            // 看完帮助不用往回滚就能提交。
-            _helpRow(theme),
-            if (_busy)
-              Padding(
-                padding: EdgeInsets.symmetric(vertical: theme.space.md),
-                child: const forui.FProgress(),
-              ),
-            BuddyTimeline(adapter: _timelineAdapter),
-            _submitSection(theme),
-            if (!_independentRedo) ...[
-              SectionHeading(
-                title: '历次尝试',
-                action: attempts.isNotEmpty && _view?.openAttempt == null
-                    ? forui.FButton(
-                        variant: forui.FButtonVariant.ghost,
-                        size: forui.FButtonSizeVariant.sm,
-                        mainAxisSize: MainAxisSize.min,
-                        onPress: _busy ? null : _startRedo,
-                        prefix: const Icon(FLucideIcons.refreshCw),
-                        child: const Text('复查（先不看上次）'),
-                      )
-                    : null,
-              ),
-              if (attempts.isEmpty)
-                Padding(
-                  padding: EdgeInsets.only(bottom: theme.space.sm),
-                  child: Text('提交答案后，这里会显示作答记录。', style: theme.text.bodySmall),
-                ),
-              for (final attempt in attempts) _attemptTile(theme, attempt),
-            ] else
-              Padding(
-                padding: EdgeInsets.only(top: theme.space.md),
-                child: Text(
-                  '独立重做：这次不显示以前的答案与帮助，提交后恢复显示。',
-                  style: theme.text.bodySmall,
-                ),
-              ),
-            if (!_independentRedo && _recentMessages.isNotEmpty)
-              SectionHeading(
-                title: '同一条记录里的讨论',
-                action: SectionLink(
-                  label: '打开完整讨论',
-                  onPressed: _busy ? null : _openDiscussion,
-                ),
-              ),
-            if (!_independentRedo && _recentMessages.isNotEmpty)
-              for (final message in _timelineMessages)
-                ChatMessagePreview(message: message),
-          ],
+          itemCount: sections.length,
+          itemBuilder: (context, index) => sections[index],
         ),
       ),
     );
