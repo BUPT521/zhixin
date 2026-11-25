@@ -334,7 +334,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
       final config = await _settingsEdit.config();
       final account = await _account.snapshot();
       var models = const <String>[];
-      if (account.signedIn) {
+      if (account.signedIn && await _account.developerMode()) {
         try {
           models = [
             for (final model in await _account.models())
@@ -1036,7 +1036,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     if (read.failureOrNull case final failure?) {
       throw LlmConfigReadFailure(failure.detail ?? failure.message);
     }
-    return _account.authorizeModelConfig(stored);
+    return _account.authorizeModelConfig(stored ?? const LlmConfig());
   }
 
   /// 首帧交出之后在后台整理附件：先删掉数据库不再引用的图片，必要时补建缓存。
@@ -1206,15 +1206,8 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     super.dispose();
   }
 
-  /// 模型是否可用：填了模型名并且有登录会话，访问令牌代替 key 发请求。页面用
-  /// 它决定回答下方给“用模型重新回答”还是“配置模型”，与实际发起请求时的判断
-  /// 保持一致。
-  Future<bool> modelReady() async {
-    final read = await settings.edit.config();
-    final config = read.valueOrNull;
-    if (config == null || !config.isConfigured) return false;
-    return (await _account.snapshot()).session != null;
-  }
+  /// 回答恢复入口只核对是否有登录会话，实际请求再读取配置与访问令牌。
+  Future<bool> modelReady() async => (await _account.snapshot()).signedIn;
 
   /// 失败页复制与反馈用的诊断摘要：版本、平台、时间、错误和截断后的调用栈。
   /// 与崩溃记录同一套脱敏说明，不含学习正文、文件路径与密钥。

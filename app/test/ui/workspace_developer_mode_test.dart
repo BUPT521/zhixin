@@ -23,7 +23,7 @@ Future<void> _waitUntil(WidgetTester tester, bool Function() ready) async {
 void main() {
   registerWorkspaceTests();
 
-  testWidgets('开发者模式仅开放兼容的知新实例地址，并保留已保存的地址', (tester) async {
+  testWidgets('开发者模式控制实例地址、密钥和模型配置入口', (tester) async {
     const customAddress = 'https://zhixin.example.test';
     final checked = <String>[];
     final backend = MockClient((request) async {
@@ -50,6 +50,7 @@ void main() {
     final mode = find.widgetWithText(forui.FSwitch, '开发者模式');
     final address = find.widgetWithText(forui.FTile, '知新服务地址');
     final keys = find.widgetWithText(forui.FTile, '知新 API Key');
+    final model = find.widgetWithText(forui.FTextField, '模型名');
     await tester.scrollUntilVisible(
       mode,
       160,
@@ -58,6 +59,7 @@ void main() {
     expect(tester.widget<forui.FSwitch>(mode).value, isFalse);
     expect(address, findsNothing);
     expect(keys, findsNothing);
+    expect(model, findsNothing);
 
     tester.widget<forui.FSwitch>(mode).onChange!(true);
     await _waitUntil(tester, () => tester.widget<forui.FSwitch>(mode).value);
@@ -69,6 +71,10 @@ void main() {
     );
     expect(keys, findsOneWidget);
     await tester.ensureVisible(address);
+    await _waitUntil(
+      tester,
+      () => tester.widget<forui.FTile>(address).onPress != null,
+    );
     await tester.tap(address);
     await settle(tester);
 
@@ -90,6 +96,14 @@ void main() {
     expect(await tester.runAsync(account.serverBaseUrl), customAddress);
     expect(checked, ['https://provider.example.test', customAddress]);
 
+    await tester.scrollUntilVisible(
+      model,
+      120,
+      scrollable: settingsScrollable(),
+    );
+    expect(model, findsOneWidget);
+    expect(find.text('zhixin-chat'), findsOneWidget);
+
     tester.state<ScrollableState>(settingsScrollable()).position.jumpTo(0);
     await tester.pump();
     await tester.scrollUntilVisible(
@@ -102,6 +116,7 @@ void main() {
     await settle(tester);
     expect(address, findsNothing);
     expect(keys, findsNothing);
+    expect(model, findsNothing);
     expect(await tester.runAsync(account.serverBaseUrl), customAddress);
   });
 }

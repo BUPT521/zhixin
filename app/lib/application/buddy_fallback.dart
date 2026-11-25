@@ -1,26 +1,40 @@
 import '../domain/models/buddy_protocol.dart';
 import '../domain/rules/text.dart';
 
-/// 没有模型时的本地回答与下一步（06 第 5 章 R3 的兜底）。
-///
-/// 本地规则不读题，也不判断对错，因此它只做三件事：接住这次的问题，按问法
-/// 给出一组可以自己执行的步骤，并说明登录之后从哪里继续回答；模型只有知新
-/// 服务一种来源，没有登录时本地规则照常可用（ADR-0050）。用户已经写下问题时，回答不转到待办或别的题目上。
-///
-/// [text] 是用户这次写下的话：讨论里没有题目记录，只能由调用方传进来；
-/// [hasImages] 表示这次只发了图片，本地读不了图；[modelMissing] 为 false 时
-/// 说明这次是调用失败，不写成“没有接模型”，以免和上一条失败提示对不上。
+/// 在线回答不可用时，按本轮输入给出可独立执行的学习步骤。
 String localBuddyReply(
   BuddyContext context, {
-  bool modelMissing = true,
   String text = '',
   bool hasImages = false,
 }) {
   final asked = _askedText(context, text);
-  if (asked.isNotEmpty) {
-    return _replyForQuestion(context, asked, modelMissing: modelMissing);
+  final help = switch (context.mode) {
+    BuddyMode.hint => ('本地提示', _hintSteps),
+    BuddyMode.explain => ('本地讲解提纲', _explainSteps),
+    BuddyMode.check => ('本地检查清单', _checkSteps),
+    BuddyMode.chat || BuddyMode.plan => null,
+  };
+  if (asked.isEmpty && hasImages) {
+    return '图片已保存在本次记录中。请先写下题目要解决的问题、已知条件和卡住的步骤，再按文字继续。';
   }
-  if (hasImages) return _replyForImages(modelMissing: modelMissing);
+  if (help != null || asked.isNotEmpty) {
+    final steps = help?.$2 ?? _stepsFor(_shapeOf(asked));
+    return [
+      if (help != null) help.$1 else '围绕「${_excerpt(asked)}」先做这几步。',
+      '',
+      for (var index = 0; index < steps.length; index++)
+        '${index + 1}. ${steps[index]}',
+      if (context.material case final material?)
+        if (context.materialPage case final page?) ...[
+          '',
+          '可对照《${material.title}》${material.position(page.pageNo)}核对依据。',
+        ],
+      if (help != null && context.attempt?.hintUsed == true) ...[
+        '',
+        '这次已经使用过帮助，可以先独立写一步，再对照上次记录。',
+      ],
+    ].join('\n');
+  }
 
   final attempt = context.attempt;
   if (attempt != null) {
@@ -35,8 +49,7 @@ String localBuddyReply(
   }
   if (context.openItems.isNotEmpty) {
     final first = context.openItems.first;
-    final prompt = modelMissing ? '本地建议：开始学习事项' : '可以开始学习事项';
-    return '$prompt「${first.title}」。'
+    return '本地建议：开始学习事项「${first.title}」。'
         '${first.note == null ? '完成后记录结果。' : '说明：${first.note}。'}';
   }
   final attempts = context.recentAttempts;
@@ -54,115 +67,37 @@ String localBuddyReply(
     return '最近的学习记忆：${context.memories.first.content}。'
         '提一个问题或贴一道题，本地规则会按问法给出步骤。';
   }
-  return '写下本周目标，或提一个问题、贴一道题开始学习；'
-      '本地规则会先给一组合用的步骤，登录之后再用模型回答同一个问题。';
+  return '写下一道想做的题，或为本周目标写下一件今天能完成的学习事项。';
 }
 
-/// 一次提问的本地回答：先说问的是哪一句，再给步骤，最后说明现在能做什么、
-/// 配置之后从哪里继续。
-String _replyForQuestion(
-  BuddyContext context,
-  String asked, {
-  required bool modelMissing,
-}) {
-  if (context.mode == BuddyMode.hint ||
-      context.mode == BuddyMode.explain ||
-      context.mode == BuddyMode.check) {
-    return _replyForHelp(context, modelMissing: modelMissing);
-  }
-  final steps = _stepsFor(_shapeOf(asked));
-  final opening = modelMissing
-      ? '本地建议：你问的是「${_excerpt(asked)}」。这次没有登录账号，本地规则不读题，只能按问法给通用步骤。'
-      : '本地建议：你问的是「${_excerpt(asked)}」。这次模型没有返回内容，本地规则不读题，只能按问法给通用步骤。';
-  final lines = <String>[
-    opening,
-    '',
-    for (var index = 0; index < steps.length; index++)
-      '${index + 1}. ${steps[index]}',
-    '',
-    if (context.material != null && context.materialPage != null)
-      '这次带入了《${context.material!.title}》${context.material!.position(context.materialPage!.pageNo)}，'
-          '可以对照原文核对第二步。',
-    if (modelMissing)
-      '登录之前可以记录题目与作答、查看材料原文、安排时间；登录之后回到这条讨论，'
-          '点「用模型重新回答」会接着回答同一个问题，不用重发。'
-    else
-      '问题已经保存，可以稍后再点一次「用模型重新回答」。',
-  ];
-  return lines.join('\n');
-}
+const _hintSteps = [
+  '先标出已知条件和题目要求，圈出还缺的一步。',
+  '从材料中找一条能连接已知条件与目标的定义或公式，先用它写出一步。',
+];
 
-/// 学习中的提示、讲解与检查：本地给不了内容，只能给方向、次序和自查清单。
-String _replyForHelp(BuddyContext context, {required bool modelMissing}) {
-  final lines = <String>[];
-  switch (context.mode) {
-    case BuddyMode.hint:
-      lines
-        ..add('本地提示：这次没有可用的模型，本地不读题，只按问法给一个方向。')
-        ..add('')
-        ..add(
-          '这道题可以先做一件事：写下已知条件与要求的量，'
-          '再从材料里找一条能连接两者的定义或公式；连接不上时，把缺的那条条件记下来。',
-        );
-      break;
-    case BuddyMode.explain:
-      lines
-        ..add(
-          '本地讲解：这次没有可用的模型，本地给不出这道题的讲解，'
-          '只能给一个自己讲下来的次序。',
-        )
-        ..add('')
-        ..add('1. 用一句话写下这道题在问什么。')
-        ..add('2. 写清已知条件、要求的量与可能用到的定义。')
-        ..add('3. 一步一个理由往下写，每一步标出依据。')
-        ..add('4. 回到材料或课本核对，把对不上的那一步记下来。');
-      break;
-    case BuddyMode.check:
-      lines
-        ..add('本地检查：这次没有可用的模型，本地没法核对做法，只能给一份自查清单。')
-        ..add('')
-        ..add('1. 题目的条件是否都用上，有没有漏掉或重复使用。')
-        ..add('2. 每一步是否有依据，依据来自定义、公式还是材料原文。')
-        ..add('3. 结果能否代回原题或用特例检验。')
-        ..add('')
-        ..add('三处里有对不上的，先把那一处改掉，再提交作答。');
-      break;
-    case BuddyMode.chat:
-    case BuddyMode.plan:
-      break;
-  }
-  final attempt = context.attempt;
-  if (attempt != null && attempt.helps.isNotEmpty) {
-    lines
-      ..add('')
-      ..add('这次已经用过 ${attempt.helps.length} 次应用内帮助，可以先独立写一步，再对照上一条。');
-  }
-  lines
-    ..add('')
-    ..add(
-      modelMissing
-          ? '登录之后回到这道题，再点一次这个按钮，回答会结合当前题目与上一次尝试，不用重写题目。'
-          : '这次调用没有成功，题目、作答和帮助都已保存，可以稍后再点一次。',
-    );
-  return lines.join('\n');
-}
+const _explainSteps = [
+  '写出题目的目标、已知条件和你准备用的定义。',
+  '按顺序写出关键步骤，每一步补一句理由。',
+  '对照材料或例题，标出第一处需要进一步确认的推导。',
+];
 
-/// 只发了图片、又没有模型时的回答：图片已经保存，读图要等模型。
-String _replyForImages({required bool modelMissing}) {
-  if (!modelMissing) {
-    return '图片已保存在本次讨论中，这次模型没有返回内容。'
-        '可以稍后点「用模型重新回答」，或先写下已知条件与卡住的地方。';
-  }
-  return '图片已保存在本次讨论中。本地规则读不了图，可以先用文字写下这道题在问什么、'
-      '已知哪些条件、卡在哪一步；登录之后回到这条讨论，点「用模型重新回答」，'
-      '会接着回答这张图对应的问题。';
-}
+const _checkSteps = [
+  '从第一步开始，逐行核对每个结论所用的条件和依据。',
+  '用代回原题、检查单位或取一个简单例子来验证结果。',
+  '改正第一处对不上的地方，再重新检查后续步骤。',
+];
 
 /// 本地可给的一步：用户当次问的是具体问题时不另给建议，避免把话题转到
 /// 已有的待办上；明确在问安排，或者没有当次问题时，才看今天的预约与待办。
-List<NextStepDraft> localNextStep(BuddyContext context, {String text = ''}) {
+List<NextStepDraft> localNextStep(
+  BuddyContext context, {
+  String text = '',
+  bool hasImages = false,
+}) {
   final asked = _askedText(context, text);
-  if (asked.isNotEmpty && !_wantsPlan(asked)) return const [];
+  if (asked.isEmpty ? hasImages : _shapeOf(asked) != _QuestionShape.planning) {
+    return const [];
+  }
   return _planStep(context);
 }
 
@@ -284,12 +219,12 @@ const List<String> _planningMarkers = [
 _QuestionShape _shapeOf(String text) {
   final lower = text.toLowerCase();
   bool has(List<String> markers) => markers.any(lower.contains);
+  if (has(_codeMarkers)) return _QuestionShape.code;
   final hasNumber = RegExp(r'\d').hasMatch(lower);
   if (has(_mathMarkers) ||
       (hasNumber && RegExp(r'[+\-×÷*/=<>^]').hasMatch(lower))) {
     return _QuestionShape.math;
   }
-  if (has(_codeMarkers)) return _QuestionShape.code;
   if (has(_languageMarkers)) return _QuestionShape.language;
   if (has(_explainMarkers)) return _QuestionShape.explain;
   if (has(_planningMarkers)) return _QuestionShape.planning;
@@ -328,11 +263,6 @@ List<String> _stepsFor(_QuestionShape shape) => switch (shape) {
     '带着这两条去查材料或课本的对应段落，再回来补充答案。',
   ],
 };
-
-bool _wantsPlan(String text) {
-  final lower = text.toLowerCase();
-  return _planningMarkers.any(lower.contains);
-}
 
 /// 这次的问题：讨论里用用户刚写下的话，学习中用题目原文。
 String _askedText(BuddyContext context, String text) {

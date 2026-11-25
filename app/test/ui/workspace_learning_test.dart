@@ -105,8 +105,12 @@ void main() {
         identifier: 'retry@example.test',
         password: syncTestPassword,
       );
-      await scope!.settings.edit.saveConfig(const LlmConfig());
+      expect((await scope!.settings.edit.config()).valueOrNull, isNull);
       expect(await scope!.modelReady(), isTrue);
+      final config = (await scope!.settings.edit.ai.config()).valueOrNull!;
+      expect(config.model, 'zhixin-chat');
+      expect(config.endpoint, '$syncTestServerUrl/v1/llm/responses');
+      expect(config.apiKey, isNotEmpty);
       final id = await scope!.chat.learning.capture(stem: '原题：证明等式');
       await scope!.chat.learning.help(questionId: id, mode: BuddyMode.hint);
       return id;
@@ -316,7 +320,10 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.textContaining('· 提示：'), findsNWidgets(2));
-    await tester.tap(find.text('查看全部 3 次帮助'));
+    final showAllHelp = find.text('查看全部 3 次帮助');
+    await tester.ensureVisible(showAllHelp);
+    await tester.pump();
+    await tester.tap(showAllHelp);
     await settle(tester);
     expect(find.text('收起较早帮助'), findsOneWidget);
     expect(find.textContaining('· 提示：'), findsNWidgets(3));

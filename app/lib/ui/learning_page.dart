@@ -474,8 +474,13 @@ class _LearningPageState extends State<LearningPage> {
           '提示、讲解和检查经登录后的知新服务发出。登录之后，回答会结合当前题目与上次尝试；'
           '现在可以先写已知条件、记录卡住的地方，题目、作答与帮助都会保存在本机。'
           '登录完成回到这道题，点「用模型重新获取」，会接着回答同一个问题，不用重写题目。',
-      onConfigure: _openSettings,
+      onConfigure: _openModelAccount,
     );
+  }
+
+  Future<void> _openModelAccount() async {
+    await openAccount(context);
+    if (mounted) await _readConfigured();
   }
 
   /// 打开设置页并重新读取登录状态；返回后可以就地重新获取这一次帮助。
@@ -1282,7 +1287,12 @@ class _LearningTimeline extends BuddyTimelineAdapter {
                 signedIn: state._configured,
                 primaryLabel: retry ? '重试这次回答' : '用模型重新获取',
                 onPrimary: () => state._ask(mode),
-                onSignIn: state._openSettings,
+                onSignIn: state._openModelAccount,
+                onOpenSettings:
+                    llmFailureFromName(help?.failureName) ==
+                        LlmFailure.modelNotAllowed
+                    ? state._openSettings
+                    : null,
                 enabled: !state._busy,
               ),
           ],

@@ -38,11 +38,6 @@ class BuddyAnswerRun {
   /// 没有可发送的内容，本次没有调用模型。
   final bool notSent;
 
-  /// 模型没有配置好：没有配置项，或配置读取失败。本地回答据此说明原因。
-  bool get modelMissing =>
-      notices.contains(Notice.modelNotConfigured) ||
-      notices.contains(Notice.modelConfigReadFailed);
-
   /// 模型已经配置、调用失败；界面据此给出重试入口。
   bool get modelFailed => notices.contains(Notice.modelCallFailed);
 }
@@ -92,7 +87,9 @@ Future<BuddyAnswerRun> askBuddyModel({
 
   // 有图但一张都发不出去、又没有文字时没有可问的内容，不调用模型。
   if (prepared.images.isEmpty && text.trim().isEmpty) {
-    if (!modelReady) notices.add(Notice.modelNotConfigured);
+    if (!modelReady && !notices.contains(Notice.modelConfigReadFailed)) {
+      notices.add(Notice.modelNotConfigured);
+    }
     notices.add(Notice.noSendableContent);
     return BuddyAnswerRun(
       config: current,
@@ -125,11 +122,11 @@ Future<BuddyAnswerRun> askBuddyModel({
     if (error.failure != LlmFailure.cancelled) {
       recordFailure?.call(error, stack, kind: 'model_call');
     }
-    notices.add(
-      error.failure == LlmFailure.notConfigured
-          ? Notice.modelNotConfigured
-          : Notice.modelCallFailed,
-    );
+    if (error.failure != LlmFailure.notConfigured) {
+      notices.add(Notice.modelCallFailed);
+    } else if (!notices.contains(Notice.modelConfigReadFailed)) {
+      notices.add(Notice.modelNotConfigured);
+    }
     return BuddyAnswerRun(
       config: current,
       answer: null,

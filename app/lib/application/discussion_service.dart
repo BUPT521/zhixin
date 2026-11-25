@@ -584,12 +584,10 @@ class DiscussionService {
     _ensureCurrentEpoch(requestEpoch);
     final modelReady = run.config?.isConfigured ?? false;
 
-    var reply = localBuddyReply(
-      facts,
-      modelMissing: run.modelMissing,
-      text: text,
-      hasImages: hasImages || earlierImages.isNotEmpty,
-    );
+    final hasLocalImages = hasImages || earlierImages.isNotEmpty;
+    String fallback() =>
+        localBuddyReply(facts, text: text, hasImages: hasLocalImages);
+    var reply = fallback();
     var fromModel = false;
     var stopped = false;
     var interrupted = false;
@@ -607,19 +605,14 @@ class DiscussionService {
       if (modelReady) {
         reply = '图片已保存在本次讨论中。请重新选择可读取的图片，或输入文字继续。';
       }
-      nextSteps = localNextStep(facts, text: text);
+      nextSteps = localNextStep(facts, text: text, hasImages: hasLocalImages);
     } else if (answer != null) {
       final outcome = interpretModelAnswer(
         answer,
         notices: notices,
         omittedImages: run.omittedImages,
         failure: failure,
-        localFallback: () => localBuddyReply(
-          facts,
-          modelMissing: false,
-          text: text,
-          hasImages: hasImages || earlierImages.isNotEmpty,
-        ),
+        localFallback: fallback,
       );
       reply = outcome.text;
       fromModel = outcome.fromModel;
@@ -640,7 +633,7 @@ class DiscussionService {
       }
     } else {
       // 模型没配置或调用失败：本地回答已经写好，再补一条本地建议。
-      nextSteps = localNextStep(facts, text: text);
+      nextSteps = localNextStep(facts, text: text, hasImages: hasLocalImages);
     }
 
     final drafts =
