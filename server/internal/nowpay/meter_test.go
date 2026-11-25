@@ -415,8 +415,10 @@ func TestRefreshBalanceCoalescesRepeatedRequests(t *testing.T) {
 // 核销仍由另一个协程完成，不占核销的时间预算（ADR-0073）。
 func TestBalanceRefreshDoesNotBlockCharges(t *testing.T) {
 	release := make(chan struct{})
+	started := make(chan string, 8)
 	caller := &fakeCaller{
 		blockQuota: release,
+		started:    started,
 		replies: map[string]string{
 			methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","remaining":97}`,
 			methodQuota:  `{"code":"10000","quota_unit":"POINT","remaining":10}`,
@@ -431,6 +433,9 @@ func TestBalanceRefreshDoesNotBlockCharges(t *testing.T) {
 	if !meter.RefreshBalance(ctx, "user_1") {
 		t.Fatal("余额查询应入队")
 	}
+	// 刷新协程调进 quota.query 之后才会卡在网关上，等到这一步就可以确认任务已经
+	// 离开队列：按队列长度判断会随调度顺序时好时坏，CI 上的 -race 一慢就失败。
+	waitForMethod(t, started, methodQuota)
 	meter.enqueue(job{
 		charge: Charge{ID: "nc_1", UserID: "user_1", Points: 3, Status: StatusPending},
 		verify: true,
@@ -444,8 +449,21 @@ func TestBalanceRefreshDoesNotBlockCharges(t *testing.T) {
 		t.Fatal("余额查询卡住时核销没有完成，说明两条队列仍互相阻塞")
 	}
 	// 刷新协程仍在等网关；这里只确认核销已经落库。
-	if len(meter.refreshQueue) != 0 {
-		t.Fatalf("刷新任务应已被取走，实际队列 %d", len(meter.refreshQueue))
+}
+
+// waitForMethod 等到 fakeCaller 收到指定的 method，超过两秒按失败处理。
+func waitForMethod(t *testing.T, started <-chan string, method string) {
+	t.Helper()
+	timeout := time.After(2 * time.Second)
+	for {
+		select {
+		case got := <-started:
+			if got == method {
+				return
+			}
+		case <-timeout:
+			t.Fatalf("两秒内没有等到 %s 调用", method)
+		}
 	}
 }
 
