@@ -90,7 +90,7 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 |---|---|---|
 | `nowpay_charge` | 即刻收的积分核销流水，一笔对话结算之后按差额申请一个积分数；`id` 同时是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试 | `user_id` 外键可空，删号时解除关联而不删行；`day` 是记账自然日，`points` 与 `billed_tokens` 是这次申请的积分与折算前的计费 token 数，`status` 的 check 约束为 `pending`、`processing`、`succeeded`、`failed`；`(user_id, day)` 支撑当天已申请量的汇总，部分索引 `(user_id, created_at) WHERE status IN ('pending','processing')` 支撑补查 |
 | `nowpay_purchase` | 购买入口请求，同一账号同一档位在链接有效期内复用原链接，不重复创单 | `out_request_no` 主键，`user_id` 外键可空，删号时解除关联；`sku_id`、`purchase_url` 与 `expires_at`；`(user_id, created_at DESC) WHERE user_id IS NOT NULL` 支撑取最近一次仍在有效期内的入口 |
-| `nowpay_balance` | 积分余额的本地副本，额度预留按它放行免费额度之外的用量，请求路径上不调用即刻收（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)） | `user_id` 主键，外键级联删除，因为副本随账号消失没有保留价值；`remaining_points` 不为负，`synced_at` 是最后一次写入的时间；查询余额、刷新余额与核销结果都覆盖同一个值 |
+| `nowpay_balance` | 积分余额的本地副本，额度预留按它放行免费额度之外的用量，请求路径上不调用即刻收（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)、[ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)） | `user_id` 主键，外键级联删除，因为副本随账号消失没有保留价值；`remaining_points` 不为负，`synced_at` 是余额对应的快照时刻而不是写入时刻，晚到的旧快照不会覆盖新副本；查询余额、刷新余额与核销结果都覆盖同一个值 |
 
 ## 目录
 
@@ -240,7 +240,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 `nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，同一账号同一档位在链接有效期内复用；`nowpay_balance` 保存积分余额的本地副本，额度预留按它放行。三张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
 
-额度预留先看当天免费额度，聊天在免费额度之外再加上余额副本折成的计费 token（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)）。副本由三个地方写入：概览与单独查余额两个接口在 `quota.query` 成功之后写，核销或补查的响应带剩余积分时写，`NOW_PAY_QUOTA_INSUFFICIENT` 时按零写。副本超过十分钟没有同步或者还没有副本时，预留排一次异步查询，这一轮按现有副本判断，因此请求路径上不调用即刻收；免费额度以内的请求不读副本，也不触发查询。可用积分还要减去副本同步之后才写入的核销流水，以及当天已经发生、还没有记进流水的计费量，同一笔用量不会因为预留与核销的先后被放行两次。
+额度预留先看当天免费额度，聊天在免费额度之外再加上余额副本折成的计费 token（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)）。副本由三个地方写入：概览与单独查余额两个接口在 `quota.query` 成功之后写，核销或补查的响应带剩余积分时写，`NOW_PAY_QUOTA_INSUFFICIENT` 时按零写。`quota.query` 的响应带 `as_of_time` 时用它做副本的快照时刻，没有时用查询发起的时刻；核销结果只在 `SUCCEEDED`、`FAILED` 与余额不足时写副本，`PROCESSING` 的剩余积分不覆盖副本，因为还不知道它有没有扣住那笔预占（[ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)）。副本超过一分钟没有同步或者还没有副本时，预留排一次异步查询，这一轮仍按现有副本判断；如果这一轮本来就放行不了，429 的原因写 `syncing`，客户端只提示稍后重试，不引导购买。请求路径上因此不调用即刻收；免费额度以内的请求不读副本，也不触发查询。可用积分还要减去副本没有反映的核销：`pending` 与 `processing` 一律计入，`succeeded` 只在快照之后确认的计入；再减去当天已经发生、还没有记进流水的计费量，同一笔用量不会因为预留与核销的先后被放行两次。
 
 核销在交付之后。每轮对话结算提交之后，服务端按当天用量算出应当由积分承担的计费 token 数（先减免费额度，超出部分才折成积分），按“一个积分等于 `ZHIXIN_TOKENS_PER_POINT` 个计费 token”向上取整，差额写一条 `pending` 流水并排进核销队列。申请之前先按余额副本收口：副本已知且为零时不再写流水、也不调用即刻收，副本小于应扣积分时只申请副本里的那一部分，差额等余额补上之后的下一次结算再算；否则余额不足的流水每一轮都会重新申请一次、再失败一次。副本缺失、余额表未就绪或读取失败时保持整额申请，一次读取失败不会少记账。`SUCCEEDED` 记成功；`FAILED` 与 `NOW_PAY_QUOTA_INSUFFICIENT` 记失败，下一次结算重新算差额；`PROCESSING`、超时与网关错误保持原状态，下一轮对话开工前用 `quota.refresh` 补查。核销不提供撤销与返还，交付失败时只能由下一次结算的差额或人工处理。
 

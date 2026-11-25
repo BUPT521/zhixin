@@ -162,20 +162,24 @@ func (q *Queries) LatestPurchaseLink(ctx context.Context, arg LatestPurchaseLink
 
 const saveBalance = `-- name: SaveBalance :exec
 INSERT INTO nowpay_balance (user_id, remaining_points, synced_at)
-VALUES ($1, GREATEST($2::bigint, 0), now())
+VALUES ($1, GREATEST($2::bigint, 0), $3)
 ON CONFLICT (user_id) DO UPDATE
 SET remaining_points = GREATEST($2::bigint, 0),
-    synced_at = now()
+    synced_at = $3
+WHERE nowpay_balance.synced_at <= EXCLUDED.synced_at
 `
 
 type SaveBalanceParams struct {
 	UserID          string
 	RemainingPoints int64
+	SyncedAt        pgtype.Timestamptz
 }
 
-// 余额副本（ADR-0069）。查询余额与核销结果覆盖同一个值，负数按 0 落库。
+// 余额副本（ADR-0069、ADR-0073）。查询余额与核销结果覆盖同一个值，负数按 0 落库；
+// synced_at 是这份余额对应的快照时刻，不是写入时刻。只有不比现有副本旧的快照才覆盖，
+// 查询与核销并发、响应乱序时，晚到的旧快照不会让副本回退。
 func (q *Queries) SaveBalance(ctx context.Context, arg SaveBalanceParams) error {
-	_, err := q.db.Exec(ctx, saveBalance, arg.UserID, arg.RemainingPoints)
+	_, err := q.db.Exec(ctx, saveBalance, arg.UserID, arg.RemainingPoints, arg.SyncedAt)
 	return err
 }
 
@@ -201,19 +205,21 @@ func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams
 const unreflectedChargePoints = `-- name: UnreflectedChargePoints :one
 SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
 WHERE user_id = $1
-  AND status <> 'failed'
-  AND created_at >= $2
+  AND (status IN ('pending', 'processing')
+       OR (status = 'succeeded' AND updated_at > $2))
 `
 
 type UnreflectedChargePointsParams struct {
-	UserID   pgtype.Text
-	SyncedAt pgtype.Timestamptz
+	UserID pgtype.Text
+	AsOf   pgtype.Timestamptz
 }
 
-// 副本同步之后才写入的核销流水合计的积分。副本已经反映它们之前的扣减，这部分
-// 还没有反映；failed 表示确认没有扣减，不计入。
+// 副本还没有反映的核销积分（ADR-0073）。pending 与 processing 一律计入，因为扣减
+// 还没有确认；succeeded 只有在快照之后才确认的才计入，终态行的 updated_at 视为确认
+// 时间；failed 确认没有扣减，不计入。按确认时间而不是创建时间判断，是因为核销行先
+// 创建、后成功，乱序时旧规则会把已经反映的扣减再算一遍。
 func (q *Queries) UnreflectedChargePoints(ctx context.Context, arg UnreflectedChargePointsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, unreflectedChargePoints, arg.UserID, arg.SyncedAt)
+	row := q.db.QueryRow(ctx, unreflectedChargePoints, arg.UserID, arg.AsOf)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err

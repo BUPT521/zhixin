@@ -1137,6 +1137,8 @@ func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userI
 		detail = "available points are not enough for this request"
 	case QuotaReasonInstance:
 		detail = "instance daily budget used up"
+	case QuotaReasonSyncing:
+		detail = "the points balance is being synced; retry later"
 	}
 	httpx.WriteProblemExtra(w, r, http.StatusTooManyRequests, httpx.CodeQuotaExceeded, detail,
 		map[string]any{

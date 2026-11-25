@@ -34,13 +34,16 @@ func (f *fakePurchases) InsertPurchaseLink(_ context.Context, _ string, purchase
 
 type fakeBalances struct {
 	saved map[string]int64
+	asOf  map[string]time.Time
 }
 
-func (f *fakeBalances) SaveBalance(_ context.Context, userID string, remaining int64) error {
+func (f *fakeBalances) SaveBalance(_ context.Context, userID string, remaining int64, asOf time.Time) error {
 	if f.saved == nil {
 		f.saved = map[string]int64{}
+		f.asOf = map[string]time.Time{}
 	}
 	f.saved[userID] = remaining
+	f.asOf[userID] = asOf
 	return nil
 }
 

@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
+	"github.com/BUPT521/zhixin/server/internal/store/db"
 )
 
 func TestChargeableTokensSubtractsTheFreeAllowance(t *testing.T) {
@@ -35,6 +39,9 @@ type fakeRecorder struct {
 	perPoint  int64
 	refreshed []string
 	charged   []int64
+	// coalesced 为真时 RefreshBalance 报告这次没有入队，模拟一分钟合并窗口里的
+	// 重复请求。
+	coalesced bool
 }
 
 func (f *fakeRecorder) Record(_ context.Context, _, _ string, chargeable int64) {
@@ -43,8 +50,9 @@ func (f *fakeRecorder) Record(_ context.Context, _, _ string, chargeable int64) 
 
 func (f *fakeRecorder) Resume(context.Context, string) {}
 
-func (f *fakeRecorder) RefreshBalance(_ context.Context, userID string) {
+func (f *fakeRecorder) RefreshBalance(_ context.Context, userID string) bool {
 	f.refreshed = append(f.refreshed, userID)
+	return !f.coalesced
 }
 
 func (f *fakeRecorder) TokensPerPoint() int64 { return f.perPoint }
@@ -84,7 +92,7 @@ func TestPostgresReserveAllowsPointsBeyondTheFreeAllowance(t *testing.T) {
 		t.Fatalf("副本缺失时应排一次余额查询: %+v", recorder.refreshed)
 	}
 	// 写入 5 个积分之后，免费额度之外按 5,000 个 token 放行。
-	if err := st.SaveBalance(ctx, "u1", 5); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 3000); err != nil || got != 3000 {
@@ -116,7 +124,7 @@ func TestPostgresReserveCountsChargesAndUnbilledTokens(t *testing.T) {
 	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	st.SetQuotaLimits(100, 0, 0)
 
-	if err := st.SaveBalance(ctx, "u1", 5); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 3100); err != nil || got != 3100 {
@@ -154,7 +162,7 @@ func TestPostgresReserveRefreshesAStaleBalanceCopy(t *testing.T) {
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
 	st.SetQuotaLimits(100, 0, 0)
-	if err := st.SaveBalance(ctx, "u1", 2); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 2, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
 	if _, err := st.pool.Exec(ctx,
@@ -183,7 +191,7 @@ func TestPostgresChargePayUsesSettledUsageOnly(t *testing.T) {
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
 	st.SetQuotaLimits(100, 0, 0)
-	if err := st.SaveBalance(ctx, "u1", 10); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 10, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
 	// 两个请求同时在途：A 预留 400，B 预留 2,000。
@@ -224,7 +232,7 @@ func TestPostgresPointsView(t *testing.T) {
 	recorder := &fakeRecorder{perPoint: 1000}
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
-	if err := st.SaveBalance(ctx, "u1", 5); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
 	// 副本同步之后有两笔核销：一笔确认成功，一笔还在处理。
@@ -265,7 +273,7 @@ func TestPostgresSaveBalanceClampsNegative(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
-	if err := st.SaveBalance(ctx, "u1", -3); err != nil {
+	if err := st.SaveBalance(ctx, "u1", -3, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
 	row, err := st.q.BalanceForReserve(ctx, "u1")
@@ -295,7 +303,7 @@ func TestPostgresAvailablePointsReadsTheBalanceCopy(t *testing.T) {
 	if points, known, err := st.AvailablePoints(ctx, "u1"); err != nil || known || points != 0 {
 		t.Fatalf("没有副本行时应按未知返回，得到 %d %v %v", points, known, err)
 	}
-	if err := st.SaveBalance(ctx, "u1", 7); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 7, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
 	points, known, err := st.AvailablePoints(ctx, "u1")
@@ -322,7 +330,7 @@ func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {
 	recorder := &fakeRecorder{perPoint: 1000}
 	st.SetNowPay(recorder)
 	st.SetQuotaLimits(100, 0, 0)
-	if err := st.SaveBalance(ctx, "u1", 5); err != nil {
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("缺表时写副本应跳过而不是报错: %v", err)
 	}
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil || got != 100 {
@@ -333,5 +341,143 @@ func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {
 	}
 	if len(recorder.refreshed) != 0 {
 		t.Fatalf("缺表时不应排余额查询: %+v", recorder.refreshed)
+	}
+}
+
+// TestPostgresReserveReportsSyncingWhileTheCopyIsMissing 守住副本缺失时的原因：刷新
+// 刚刚入队，这一轮说不准是不是真的不够，回 syncing 而不是让客户端去购买（ADR-0073）。
+func TestPostgresReserveReportsSyncingWhileTheCopyIsMissing(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	recorder := &fakeRecorder{perPoint: 1000}
+	enablePaidQuota(t, st)
+	st.SetNowPay(recorder)
+	st.SetQuotaLimits(100, 0, 0)
+
+	var quota *llmproxy.QuotaExceededError
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 150); !errors.As(err, &quota) ||
+		quota.Reason != llmproxy.QuotaReasonSyncing {
+		t.Fatalf("副本缺失且刷新入队时应回 syncing，得到 %v", err)
+	}
+	// 一分钟内的第二次请求没有再入队；客户端已经收到过 syncing，这一次按没有积分回
+	// account，不能永远停在“正在同步”。
+	recorder.coalesced = true
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 150); !errors.As(err, &quota) ||
+		quota.Reason != llmproxy.QuotaReasonAccount {
+		t.Fatalf("刷新没有入队时应回 account，得到 %v", err)
+	}
+}
+
+// TestPostgresReserveReportsSyncingForAStaleCopy 守住过期副本的处理：副本超过一分钟
+// 没有同步时先排刷新并回 syncing，副本新鲜却不够时才回 points（ADR-0073）。
+func TestPostgresReserveReportsSyncingForAStaleCopy(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	recorder := &fakeRecorder{perPoint: 1000}
+	enablePaidQuota(t, st)
+	st.SetNowPay(recorder)
+	st.SetQuotaLimits(100, 0, 0)
+	if err := st.SaveBalance(ctx, "u1", 1, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	if _, err := st.pool.Exec(ctx,
+		`UPDATE nowpay_balance SET synced_at = now() - interval '1 hour' WHERE user_id = $1`, "u1"); err != nil {
+		t.Fatalf("backdate balance: %v", err)
+	}
+	var quota *llmproxy.QuotaExceededError
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 3000); !errors.As(err, &quota) ||
+		quota.Reason != llmproxy.QuotaReasonSyncing {
+		t.Fatalf("过期副本且刷新入队时应回 syncing，得到 %v", err)
+	}
+	// 副本换成新快照之后仍然不够：这一轮是明确的积分不足。
+	if err := st.SaveBalance(ctx, "u1", 1, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 3000); !errors.As(err, &quota) ||
+		quota.Reason != llmproxy.QuotaReasonPoints {
+		t.Fatalf("副本新鲜但积分不够时应回 points，得到 %v", err)
+	}
+}
+
+// TestPostgresSaveBalanceKeepsTheNewerSnapshot 守住乱序响应：晚到的旧快照不能覆盖
+// 新副本，新快照照常覆盖（ADR-0073）。
+func TestPostgresSaveBalanceKeepsTheNewerSnapshot(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	base := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	if err := st.SaveBalance(ctx, "u1", 5, base); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	if err := st.SaveBalance(ctx, "u1", 2, base.Add(-time.Hour)); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	row, err := st.q.BalanceForReserve(ctx, "u1")
+	if err != nil {
+		t.Fatalf("read balance: %v", err)
+	}
+	if row.RemainingPoints != 5 || !row.SyncedAt.Time.Equal(base) {
+		t.Fatalf("旧快照不应覆盖新副本，得到 %d %v", row.RemainingPoints, row.SyncedAt.Time)
+	}
+	if err := st.SaveBalance(ctx, "u1", 7, base.Add(time.Minute)); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	row, err = st.q.BalanceForReserve(ctx, "u1")
+	if err != nil {
+		t.Fatalf("read balance: %v", err)
+	}
+	if row.RemainingPoints != 7 || !row.SyncedAt.Time.Equal(base.Add(time.Minute)) {
+		t.Fatalf("新快照应覆盖副本，得到 %d %v", row.RemainingPoints, row.SyncedAt.Time)
+	}
+}
+
+// TestPostgresUnreflectedChargesFollowTheSnapshot 守住未反映流水的判断：pending 与
+// processing 一律计入，succeeded 只在快照之后确认的计入，failed 不计（ADR-0073）。
+func TestPostgresUnreflectedChargesFollowTheSnapshot(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	asOf := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	for _, charge := range []struct {
+		id      string
+		status  string
+		points  int64
+		created time.Time
+		updated time.Time
+	}{
+		{"nc_pending_old", nowpay.StatusPending, 1, asOf.Add(-time.Hour), asOf.Add(-time.Hour)},
+		{"nc_succeeded_new", nowpay.StatusSucceeded, 2, asOf.Add(-time.Hour), asOf.Add(time.Minute)},
+		{"nc_succeeded_old", nowpay.StatusSucceeded, 4, asOf.Add(-2 * time.Hour), asOf.Add(-time.Hour)},
+		{"nc_failed_new", nowpay.StatusFailed, 8, asOf.Add(-time.Hour), asOf.Add(time.Minute)},
+	} {
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
+			 VALUES ($1, 'u1', '2026-11-25'::date, $2, $2, $3, $4, $5)`,
+			charge.id, charge.points, charge.status, charge.created, charge.updated); err != nil {
+			t.Fatalf("insert charge: %v", err)
+		}
+	}
+	got, err := st.q.UnreflectedChargePoints(ctx, db.UnreflectedChargePointsParams{
+		UserID: text("u1"), AsOf: pgtype.Timestamptz{Time: asOf, Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("unreflected: %v", err)
+	}
+	if got != 3 {
+		t.Fatalf("未反映的积分应为 pending 1 + 快照后成功的 2 = 3，得到 %d", got)
 	}
 }

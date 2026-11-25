@@ -43,14 +43,16 @@ type Ledger interface {
 	AvailablePoints(ctx context.Context, userID string) (int64, bool, error)
 	Unsettled(ctx context.Context, userID string, limit int) ([]Charge, error)
 	SetStatus(ctx context.Context, id, status, note string) error
-	// SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本。额度预留按这份副本放行
-	// 免费额度之外的用量，请求路径上因此不调用即刻收（ADR-0069）。
-	SaveBalance(ctx context.Context, userID string, remaining int64) error
+	// SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本，asOf 是这份余额对应的
+	// 快照时刻，不是写入时刻；晚到的旧快照不会覆盖新副本（ADR-0073）。额度预留按
+	// 这份副本放行免费额度之外的用量，请求路径上因此不调用即刻收（ADR-0069）。
+	SaveBalance(ctx context.Context, userID string, remaining int64, asOf time.Time) error
 }
 
-// BalanceTTL 是本地余额副本可以用于放行的最长时间。超过它仍然按旧值放行这一轮，
-// 同时排一次异步查询，下一次请求就能看到新值；预留因此不会在请求路径上等待即刻收。
-const BalanceTTL = 10 * time.Minute
+// BalanceRefreshAfter 是余额副本需要重新查询的间隔。副本缺失或距上次快照超过它时，
+// 预留排一次异步查询，这一轮仍按旧值判断，下一次请求才能看到新值；预留因此不会在
+// 请求路径上等待即刻收（ADR-0073）。
+const BalanceRefreshAfter = time.Minute
 
 // refreshInterval 是同一账号两次余额查询的最小间隔。额度用完之后的每个请求都会
 // 发现副本过期，网关故障时查询也会失败、副本保持过期，不合并就会让每个被拒的请求
@@ -65,9 +67,10 @@ type Recorder interface {
 	Record(ctx context.Context, userID, day string, chargeableTokens int64)
 	// Resume 把账号尚未终结的流水排进队列补查。
 	Resume(ctx context.Context, userID string)
-	// RefreshBalance 排一次余额查询，供额度预留发现副本缺失或过期时调用；它不返回
-	// 查询结果，也不阻塞请求。
-	RefreshBalance(ctx context.Context, userID string)
+	// RefreshBalance 排一次余额查询，供额度预留发现副本缺失或过期时调用；它不阻塞
+	// 请求，并报告这次是否真的入了队：同一个账号一分钟内已经排过时返回 false。
+	// 429 的原因据此区分“正在同步”与“确实没有积分”（ADR-0073）。
+	RefreshBalance(ctx context.Context, userID string) bool
 	// TokensPerPoint 是一个积分覆盖的计费 token 数，额度预留按它把余额折成 token。
 	TokensPerPoint() int64
 }
@@ -196,13 +199,15 @@ func (m *Meter) Resume(ctx context.Context, userID string) {
 }
 
 // RefreshBalance 排一次余额查询并覆盖本地副本。额度预留发现副本缺失或超过
-// BalanceTTL 时调用它；这一轮请求按旧值判断，下一次请求才能看到新余额。同一账号
-// 在 refreshInterval 内只排一次，连续被拒的请求不会各自再排。
-func (m *Meter) RefreshBalance(_ context.Context, userID string) {
+// BalanceRefreshAfter 时调用它；这一轮请求按旧值判断，下一次请求才能看到新余额。
+// 同一账号在 refreshInterval 内只排一次，连续被拒的请求不会各自再排。返回值表示这次
+// 是否真的入了队，429 据此给出“正在同步”（ADR-0073）。
+func (m *Meter) RefreshBalance(_ context.Context, userID string) bool {
 	if userID == "" || !m.markRefresh(userID) {
-		return
+		return false
 	}
 	m.enqueue(job{balance: true, userID: userID})
+	return true
 }
 
 // markRefresh 记下这次余额查询并报告是否要真的排队；同一个账号在合并窗口内重复
@@ -239,7 +244,8 @@ func (m *Meter) enqueue(next job) {
 	}
 }
 
-// run 执行一次核销、补查或余额刷新，并把结果落到流水或余额副本上。
+// run 执行一次核销、补查或余额刷新，并把结果落到流水或余额副本上。asOf 是发起
+// 核销的时刻，核销结果没有携带快照时间时用它写副本（ADR-0073）。
 func (m *Meter) run(parent context.Context, next job) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 20*time.Second)
 	defer cancel()
@@ -247,6 +253,7 @@ func (m *Meter) run(parent context.Context, next job) {
 		m.refresh(ctx, next.userID)
 		return
 	}
+	asOf := time.Now()
 	request := VerifyRequest{
 		OutRequestNo: next.charge.ID, Buyer: next.charge.UserID,
 		Amount: next.charge.Points, Reason: consumeReason,
@@ -260,7 +267,7 @@ func (m *Meter) run(parent context.Context, next job) {
 	} else {
 		consume, err = m.client.Refresh(ctx, request)
 	}
-	m.apply(ctx, next.charge, consume, err)
+	m.apply(ctx, next.charge, consume, err, asOf)
 }
 
 // refresh 查一次余额并覆盖本地副本。查询失败只记日志，副本停在旧值：把失败当成零
@@ -271,15 +278,15 @@ func (m *Meter) refresh(ctx context.Context, userID string) {
 		m.log.Warn("refresh the nowpay balance", "user_id", userID, "error", err)
 		return
 	}
-	m.saveBalance(ctx, userID, balance.Remaining)
+	m.saveBalance(ctx, userID, balance.Remaining, balance.AsOf)
 }
 
 // saveBalance 覆盖本地余额副本。写失败只影响下一轮预留的判断，下一轮请求会再查。
-func (m *Meter) saveBalance(ctx context.Context, userID string, points int64) {
+func (m *Meter) saveBalance(ctx context.Context, userID string, points int64, asOf time.Time) {
 	if userID == "" {
 		return
 	}
-	if err := m.ledger.SaveBalance(ctx, userID, points); err != nil {
+	if err := m.ledger.SaveBalance(ctx, userID, points, asOf); err != nil {
 		m.log.Error("save the nowpay balance", "user_id", userID, "error", err)
 	}
 }
@@ -287,16 +294,23 @@ func (m *Meter) saveBalance(ctx context.Context, userID string, points int64) {
 // apply 按核销结果落状态。只有 SUCCEEDED 记成功；FAILED 与余额不足记失败，让下次
 // 结算重新算差额；处理中与未知结果保持原状态，等下一次补查。
 //
-// 响应里带了剩余积分就覆盖余额副本：额度预留按这份副本放行，它比下一次查询更早
-// 反映这次扣减。
-func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err error) {
-	if consume.RemainingKnown {
-		m.saveBalance(ctx, charge.UserID, consume.Remaining)
+// 响应里带了剩余积分时覆盖余额副本：额度预留按这份副本放行，它比下一次查询更早
+// 反映这次扣减。PROCESSING 不覆盖副本：它返回的剩余积分是否已经扣住这笔预占还没有
+// 与即刻收确认，拿来当余额可能让副本偏低（ADR-0073）。
+func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err error, asOf time.Time) {
+	if !consume.AsOf.IsZero() {
+		asOf = consume.AsOf
 	}
 	switch {
 	case err == nil && consume.Confirmed():
+		if consume.RemainingKnown {
+			m.saveBalance(ctx, charge.UserID, consume.Remaining, asOf)
+		}
 		m.setStatus(ctx, charge, StatusSucceeded, "")
 	case err == nil && consume.Status == ConsumeFailed:
+		if consume.RemainingKnown {
+			m.saveBalance(ctx, charge.UserID, consume.Remaining, asOf)
+		}
 		m.setStatus(ctx, charge, StatusFailed, "即刻收判定本次核销失败")
 	case err == nil && consume.Status == ConsumeProcessing:
 		m.setStatus(ctx, charge, StatusProcessing, "")
@@ -304,7 +318,7 @@ func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err e
 		m.setStatus(ctx, charge, StatusFailed, "积分不足")
 		// 余额不足说明副本比实际高，按零覆盖，下一次预留不再按旧值放行；真正的
 		// 余额在下一次查询或下一次成功核销时补回来。
-		m.saveBalance(ctx, charge.UserID, 0)
+		m.saveBalance(ctx, charge.UserID, 0, asOf)
 	default:
 		// 超时、网关错误与未知状态都不能判失败：扣减可能已经发生，换号重扣会多收
 		// 一次。保留原状态与原请求号，下一轮补查。

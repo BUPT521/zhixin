@@ -65,20 +65,26 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	}
 	paid := int64(0)
 	hasPoints := false
+	syncing := false
 	if limited {
 		allowed := freeRemaining
 		// 免费额度不够这一次预留时才算余额：额度内的请求不读副本，也不触发查询。
 		if allowed < want && kind == llmproxy.KindChat && s.nowpay != nil {
-			paid, hasPoints, err = s.paidTokens(ctx, q, userID, date, used, limit)
+			paid, hasPoints, syncing, err = s.paidTokens(ctx, q, userID, date, used, limit)
 			if err != nil {
 				return 0, err
 			}
 			allowed += paid
 		}
 		if want > allowed {
-			// 有可用积分却仍然不够，说明缺的是积分；没有积分就是免费额度用完。
+			// 余额副本缺失或过期、刷新刚刚入队时，这一轮说不准是不是真的不够，
+			// 回 syncing 让客户端稍后重试；副本新鲜却不够时，有积分是 points，
+			// 没有积分是 account（ADR-0073）。
 			reason := llmproxy.QuotaReasonAccount
-			if hasPoints {
+			switch {
+			case syncing:
+				reason = llmproxy.QuotaReasonSyncing
+			case hasPoints:
 				reason = llmproxy.QuotaReasonPoints
 			}
 			return 0, &llmproxy.QuotaExceededError{Reason: reason}

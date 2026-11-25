@@ -33,13 +33,14 @@ type Quota interface {
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
-	// Points 返回账号的积分视图：当天已经核销成功的积分与余额副本里还可以使用的
-	// 积分。没有开通收款时 Known 为 false，接口据此不回这两个数。
+	// Points 返回账号的积分视图：当天已经核销成功的积分与可用积分（余额副本减去
+	// 没有反映的核销与当天已结算未记流水的计费量）。没有开通收款时 Known 为 false，
+	// 接口据此不回这两个数，见 ADR-0073。
 	Points(ctx context.Context, userID, day string) (Points, error)
 }
 
 // Points 是账号的积分视图，用于账号页展示。Charged 是当天已经落库成功的核销，
-// Remaining 是余额副本里可用的积分。
+// Remaining 是可用积分，与额度放行用同一个口径。
 type Points struct {
 	Charged   int64
 	Remaining int64
@@ -61,6 +62,9 @@ const (
 	QuotaReasonPoints QuotaReason = "points"
 	// QuotaReasonInstance 表示实例当天的预算用完，与账号自己的额度无关。
 	QuotaReasonInstance QuotaReason = "instance"
+	// QuotaReasonSyncing 表示余额副本缺失或过期、服务端刚刚排了一次查询，这一轮
+	// 还不能确定积分够不够。客户端只提示稍后重试，不引导购买，见 ADR-0073。
+	QuotaReasonSyncing QuotaReason = "syncing"
 )
 
 // QuotaExceededError 是预留被拒的原因。errors.Is(err, ErrQuotaExceeded) 对每一类

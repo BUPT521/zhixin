@@ -30,9 +30,10 @@ type PurchaseStore interface {
 }
 
 // BalanceStore 保存积分余额的本地副本，由 store/pg 实现。额度预留按这份副本放行
-// 免费额度之外的用量，所以每次查到余额都要写回（ADR-0069）。
+// 免费额度之外的用量，所以每次查到余额都要写回；asOf 是这份余额对应的快照时刻，
+// 晚到的旧快照不会覆盖新副本（ADR-0069、ADR-0073）。
 type BalanceStore interface {
-	SaveBalance(ctx context.Context, userID string, remaining int64) error
+	SaveBalance(ctx context.Context, userID string, remaining int64, asOf time.Time) error
 }
 
 // Handler 提供查商品与余额、取购买链接、单独查余额三个接口。客户端只负责打开链接
@@ -91,7 +92,7 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	}
 	view.Product = productView(capability)
 	view.BalancePoints = balance.Remaining
-	h.saveBalance(r.Context(), principal.UserID, balance.Remaining)
+	h.saveBalance(r.Context(), principal.UserID, balance.Remaining, balance.AsOf)
 	if h.purchases != nil {
 		existing, ok, err := h.purchases.LatestPurchaseLink(r.Context(), principal.UserID, time.Now())
 		if err != nil {
@@ -118,7 +119,7 @@ func (h *Handler) Balance(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r, "查询即刻收积分余额", err)
 		return
 	}
-	h.saveBalance(r.Context(), principal.UserID, balance.Remaining)
+	h.saveBalance(r.Context(), principal.UserID, balance.Remaining, balance.AsOf)
 	httpx.WriteJSON(w, http.StatusOK, api.QuotaBalance{
 		Remaining: balance.Remaining, Total: balance.Total, Used: balance.Used,
 	})
@@ -126,11 +127,11 @@ func (h *Handler) Balance(w http.ResponseWriter, r *http.Request) {
 
 // saveBalance 把查到的余额写进本地副本，额度预留据此放行免费额度之外的用量。写
 // 失败不影响这次查询的结果，下一次查询或核销会再写一遍。
-func (h *Handler) saveBalance(ctx context.Context, userID string, remaining int64) {
+func (h *Handler) saveBalance(ctx context.Context, userID string, remaining int64, asOf time.Time) {
 	if h.balances == nil {
 		return
 	}
-	if err := h.balances.SaveBalance(ctx, userID, remaining); err != nil {
+	if err := h.balances.SaveBalance(ctx, userID, remaining, asOf); err != nil {
 		h.log.Error("save nowpay balance", "user_id", userID, "error", err)
 	}
 }

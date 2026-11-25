@@ -89,6 +89,27 @@ func TestBalanceRemainingIsKeptSeparateFromTotalMinusUsed(t *testing.T) {
 	if caller.biz[0]["external_buyer_id"] != "user_1" {
 		t.Fatalf("受益人标识应取知新账号: %v", caller.biz[0])
 	}
+	want := time.Date(2026, 11, 25, 10, 0, 0, 0, ChinaTime())
+	if !balance.AsOf.Equal(want) {
+		t.Fatalf("快照时间应取响应里的 as_of_time，得到 %v", balance.AsOf)
+	}
+}
+
+// TestBalanceFallsBackToTheQueryStartWithoutASnapshotTime 守住没有 as_of_time 时的
+// 处理：用查询发起的时刻写副本，而不是零值（ADR-0073）。
+func TestBalanceFallsBackToTheQueryStartWithoutASnapshotTime(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{methodQuota: `{
+		"code":"10000","quota_unit":"POINT","total":200,"used":50,"remaining":140
+	}`}}
+	before := time.Now()
+	balance, err := newTestClient(t, caller).Balance(context.Background(), "user_1")
+	after := time.Now()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if balance.AsOf.Before(before) || balance.AsOf.After(after) {
+		t.Fatalf("没有 as_of_time 时应按查询发起的时刻，得到 %v", balance.AsOf)
+	}
 }
 
 func TestPurchaseSendsSKUAndParsesExpiry(t *testing.T) {

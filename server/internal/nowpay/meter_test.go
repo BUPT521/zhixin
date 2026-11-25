@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 )
 
 type statusChange struct {
@@ -18,6 +19,8 @@ type fakeLedger struct {
 	unsettled []Charge
 	statuses  []statusChange
 	balances  map[string]int64
+	// balanceAsOf 记每次写副本带的快照时刻。
+	balanceAsOf map[string]time.Time
 
 	// available 与 balanceKnown 模拟余额副本；known 为假表示副本缺失或余额表未就绪。
 	available    int64
@@ -43,11 +46,15 @@ func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required in
 	return charge, true, nil
 }
 
-func (f *fakeLedger) SaveBalance(_ context.Context, userID string, remaining int64) error {
+func (f *fakeLedger) SaveBalance(_ context.Context, userID string, remaining int64, asOf time.Time) error {
 	if f.balances == nil {
 		f.balances = map[string]int64{}
 	}
+	if f.balanceAsOf == nil {
+		f.balanceAsOf = map[string]time.Time{}
+	}
 	f.balances[userID] = remaining
+	f.balanceAsOf[userID] = asOf
 	return nil
 }
 
@@ -211,6 +218,53 @@ func TestRunMarksSucceededOnlyOnConfirmedConsume(t *testing.T) {
 	}
 }
 
+// TestSucceededChargeSavesTheCopyAtTheResponseSnapshot 守住副本的时间语义：核销结果
+// 带了 as_of_time 就用它写 synced_at，副本据此判断哪些核销还没有被反映（ADR-0073）。
+func TestSucceededChargeSavesTheCopyAtTheResponseSnapshot(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","consumed":3,"remaining":97,
+			"as_of_time":"2026-11-25 10:00:00"}`,
+	}}
+	ledger := &fakeLedger{}
+	meter := newTestMeter(t, ledger, caller)
+	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
+	meter.run(context.Background(), job{charge: charge, verify: true})
+	want := time.Date(2026, 11, 25, 10, 0, 0, 0, ChinaTime())
+	if !ledger.balanceAsOf["user_1"].Equal(want) {
+		t.Fatalf("副本应按响应的快照时间写入，得到 %v", ledger.balanceAsOf["user_1"])
+	}
+}
+
+// TestFailedChargeSavesTheReportedRemaining 守住失败结果也更新副本：FAILED 表示确认
+// 没有扣减，响应里的剩余积分仍然是一次有效的余额快照。
+func TestFailedChargeSavesTheReportedRemaining(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodVerify: `{"code":"10000","consume_status":"FAILED","remaining":42}`,
+	}}
+	ledger := &fakeLedger{}
+	meter := newTestMeter(t, ledger, caller)
+	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
+	meter.run(context.Background(), job{charge: charge, verify: true})
+	if ledger.balances["user_1"] != 42 {
+		t.Fatalf("FAILED 应把响应里的剩余积分写进副本: %+v", ledger.balances)
+	}
+}
+
+// TestProcessingDoesNotOverwriteTheCopy 守住 PROCESSING 的剩余积分不当余额：它是否
+// 已经扣住这笔预占还没有确认，拿来覆盖副本会让副本偏低（ADR-0073）。
+func TestProcessingDoesNotOverwriteTheCopy(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodVerify: `{"code":"10000","consume_status":"PROCESSING","remaining":10}`,
+	}}
+	ledger := &fakeLedger{balances: map[string]int64{"user_1": 50}}
+	meter := newTestMeter(t, ledger, caller)
+	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
+	meter.run(context.Background(), job{charge: charge, verify: true})
+	if ledger.balances["user_1"] != 50 {
+		t.Fatalf("PROCESSING 不应覆盖副本: %+v", ledger.balances)
+	}
+}
+
 func TestProcessingIsQueriedWithTheSameRequestNo(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodVerify:  `{"code":"10000","consume_status":"PROCESSING","quota_unit":"POINT"}`,
@@ -276,11 +330,14 @@ func TestInsufficientPointsIsMarkedFailedForTheNextSettlement(t *testing.T) {
 
 func TestRefreshBalanceQueriesTheGatewayAndSavesTheCopy(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
-		methodQuota: `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
+		methodQuota: `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55,
+			"as_of_time":"2026-11-25 09:30:00"}`,
 	}}
 	ledger := &fakeLedger{}
 	meter := newTestMeter(t, ledger, caller)
-	meter.RefreshBalance(context.Background(), "user_1")
+	if !meter.RefreshBalance(context.Background(), "user_1") {
+		t.Fatal("第一次余额查询应入队")
+	}
 	if len(meter.queue) != 1 {
 		t.Fatalf("应排一次余额查询，实际 %d", len(meter.queue))
 	}
@@ -294,6 +351,10 @@ func TestRefreshBalanceQueriesTheGatewayAndSavesTheCopy(t *testing.T) {
 	}
 	if ledger.balances["user_1"] != 55 {
 		t.Fatalf("查到的余额应写进副本: %+v", ledger.balances)
+	}
+	want := time.Date(2026, 11, 25, 9, 30, 0, 0, ChinaTime())
+	if !ledger.balanceAsOf["user_1"].Equal(want) {
+		t.Fatalf("副本应按查询响应的快照时间写入，得到 %v", ledger.balanceAsOf["user_1"])
 	}
 }
 
@@ -313,9 +374,15 @@ func TestRefreshBalanceCoalescesRepeatedRequests(t *testing.T) {
 	meter := newTestMeter(t, ledger, &fakeCaller{})
 	// 额度用完之后的每个请求都会发现副本过期，同一账号一分钟内只排一次查询，
 	// 不把核销队列占住。
-	meter.RefreshBalance(context.Background(), "user_1")
-	meter.RefreshBalance(context.Background(), "user_1")
-	meter.RefreshBalance(context.Background(), "user_2")
+	if !meter.RefreshBalance(context.Background(), "user_1") {
+		t.Fatal("第一次查询应入队")
+	}
+	if meter.RefreshBalance(context.Background(), "user_1") {
+		t.Fatal("同一账号一分钟内的第二次查询应合并，不入队")
+	}
+	if !meter.RefreshBalance(context.Background(), "user_2") {
+		t.Fatal("另一个账号应单独入队")
+	}
 	if len(meter.queue) != 2 {
 		t.Fatalf("同一账号的重复查询应合并，实际队列 %d", len(meter.queue))
 	}

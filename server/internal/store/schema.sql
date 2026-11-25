@@ -295,7 +295,8 @@ CREATE TABLE llm_quota (
 -- 未知时只能用原号查询或重试，换号会多扣一次，所以幂等号必须落在本地。points 按
 -- 「1 积分 = 配置的计费 token 数」向上取整折算，只对超出免费额度的部分申请；
 -- status 为 failed 的流水不再计入当天已申请量，下一次结算重新算差额。账号删除时
--- 解除关联而不删行，留作对账。
+-- 解除关联而不删行，留作对账。终态行的 updated_at 视为确认时间，副本据此判断哪些
+-- 核销还没有被余额快照反映（ADR-0073）。
 CREATE TABLE nowpay_charge (
   id            TEXT PRIMARY KEY,
   user_id       TEXT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -324,9 +325,10 @@ CREATE TABLE nowpay_purchase (
 CREATE INDEX nowpay_purchase_user_created_idx
   ON nowpay_purchase (user_id, created_at DESC) WHERE user_id IS NOT NULL;
 
--- 即刻收积分余额的本地副本（ADR-0069）。额度预留按免费额度之外的这份余额放行，
--- 请求路径上因此不必调用即刻收：查询余额、购买页刷新与每次核销的结果都覆盖
--- remaining_points 与 synced_at。它是缓存而不是账本，账号删除时一并删除；真正
+-- 即刻收积分余额的本地副本（ADR-0069、ADR-0073）。额度预留按免费额度之外的这份
+-- 余额放行，请求路径上因此不必调用即刻收：查询余额、购买页刷新与每次核销的结果都
+-- 覆盖 remaining_points 与 synced_at。synced_at 是这份余额对应的快照时刻，不是写入
+-- 时刻；晚到的旧快照不会覆盖新副本。它是缓存而不是账本，账号删除时一并删除；真正
 -- 的余额在支付宝一侧，这里只用于判断能不能放行。
 CREATE TABLE nowpay_balance (
   user_id          TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,

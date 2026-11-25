@@ -98,6 +98,10 @@ type Balance struct {
 	Total     int64
 	Used      int64
 	Remaining int64
+	// AsOf 是这份余额对应的时刻：响应带 as_of_time 时用它，没有时是查询发起的
+	// 时刻。余额副本按它写 synced_at，据此判断哪些核销还没有被这份余额反映
+	// （ADR-0073）。
+	AsOf time.Time
 }
 
 // Link 是一次购买入口。URL 与二维码按不透明链接使用，不解析、不拼接。
@@ -133,6 +137,9 @@ type Consume struct {
 	// 不带这个字段时零值不能被当成“余额为零”，否则会把还在余额内的账号挡住。
 	Remaining      int64
 	RemainingKnown bool
+	// AsOf 是响应给出这份剩余积分的时刻，没有携带时为零值，调用方按发起查询的时刻
+	// 处理（ADR-0073）。
+	AsOf time.Time
 }
 
 // Confirmed 报告这次核销是否已经确认扣减。
@@ -203,11 +210,13 @@ func (c *Client) Charge(ctx context.Context) (Capability, error) {
 }
 
 // Balance 查询账号在这个商品下的积分余额。未购买时三项都是 0，查询失败不能按
-// 零余额处理，所以失败一律返回错误。
+// 零余额处理，所以失败一律返回错误。AsOf 优先取响应里的 as_of_time，没有时用查询
+// 发起的时刻，副本据此判断快照之后才确认的核销（ADR-0073）。
 func (c *Client) Balance(ctx context.Context, buyer string) (Balance, error) {
 	if err := validBuyer(buyer); err != nil {
 		return Balance{}, err
 	}
+	started := time.Now()
 	var result struct {
 		Code      string `json:"code"`
 		SubCode   string `json:"sub_code"`
@@ -216,14 +225,20 @@ func (c *Client) Balance(ctx context.Context, buyer string) (Balance, error) {
 		Total     int64  `json:"total"`
 		Used      int64  `json:"used"`
 		Remaining int64  `json:"remaining"`
+		AsOfTime  string `json:"as_of_time"`
 	}
 	biz := map[string]any{"out_product_id": c.productID, "external_buyer_id": buyer}
 	if err := c.do(ctx, methodQuota, biz, &result); err != nil {
 		return Balance{}, err
 	}
-	return Balance{
+	balance := Balance{
 		Unit: result.QuotaUnit, Total: result.Total, Used: result.Used, Remaining: result.Remaining,
-	}, nil
+		AsOf: started,
+	}
+	if asOf, ok := c.parseTime(result.AsOfTime); ok {
+		balance.AsOf = asOf
+	}
+	return balance, nil
 }
 
 // Purchase 取一个购买入口。不传 SKU 时由用户在托管购买页选择档位。
@@ -302,6 +317,7 @@ func (c *Client) consume(ctx context.Context, method string, biz map[string]any)
 		ConsumeStat string `json:"consume_status"`
 		Consumed    *int64 `json:"consumed"`
 		Remaining   *int64 `json:"remaining"`
+		AsOfTime    string `json:"as_of_time"`
 	}
 	if err := c.do(ctx, method, biz, &result); err != nil {
 		return Consume{}, err
@@ -314,12 +330,28 @@ func (c *Client) consume(ctx context.Context, method string, biz map[string]any)
 		consume.Remaining = *result.Remaining
 		consume.RemainingKnown = true
 	}
+	if asOf, ok := c.parseTime(result.AsOfTime); ok {
+		consume.AsOf = asOf
+	}
 	switch consume.Status {
 	case ConsumeSucceeded, ConsumeFailed, ConsumeProcessing:
 	default:
 		return Consume{}, &APIError{Method: method, Code: "10000", SubMsg: "未知的核销状态 " + consume.Status}
 	}
 	return consume, nil
+}
+
+// parseTime 解析即刻收给出的时刻。格式只有 "2006-01-02 15:04:05" 一种，按东八区
+// 解释；空值或格式不符时返回 false，由调用方改用发起查询的时刻。
+func (c *Client) parseTime(value string) (time.Time, bool) {
+	if value == "" {
+		return time.Time{}, false
+	}
+	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", value, c.china)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 // do 调用一个接口，先看网关与业务错误码，再把业务对象解进 out。code=10000 只说

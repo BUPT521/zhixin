@@ -899,6 +899,10 @@ paths:
         取响应体的 `usage`，缺少用量时保留预留值。错误分类为
         `model_not_allowed`（400）、`contact_unverified`（403）、
         `quota_exceeded`（429）、`unavailable`（503）、`upstream_failed`（502），
+        `quota_exceeded` 的 `extra.reason` 取 `account`（免费额度与积分都用完）、
+        `points`（有积分但不够这一次）、`instance`（实例当天预算用完）与
+        `syncing`（余额副本缺失或过期，服务端刚排了一次查询，稍后重试即可），
+        客户端按原因决定是否引导购买，见 ADR-0073。
         本轮预算用完且没有任何来源交付有效输出时回 504 `upstream_failed`。
         流式响应在交付正文、拒答或完整工具调用之前仍可换来源，先行事件由服务端暂存。
         交付之后，这次流绑定当前来源。达到输出上限时保留截断结果。
@@ -1851,7 +1855,10 @@ components:
           type: integer
           format: int64
           nullable: true
-          description: 余额副本里还可以使用的积分，已排除副本同步之后才写入的核销；没有开通收款或还没有余额副本时为 null
+          description: |
+            可用积分：余额副本减去还没有反映的核销，再减去当天已经结算、还没有记进流水的
+            计费量折成的积分（向下取整）；与额度放行用同一个口径，账号页显示的数不会大于
+            实际能放行的量。没有开通收款或还没有余额副本时为 null，见 ADR-0073。
     Me:
       type: object
       required: [user_id, created_at, identities]

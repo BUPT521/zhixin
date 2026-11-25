@@ -32,25 +32,30 @@ LIMIT 1;
 INSERT INTO nowpay_purchase (out_request_no, user_id, sku_id, purchase_url, expires_at)
 VALUES (sqlc.arg(out_request_no), sqlc.arg(user_id), sqlc.arg(sku_id), sqlc.arg(purchase_url), sqlc.arg(expires_at));
 
--- 余额副本（ADR-0069）。查询余额与核销结果覆盖同一个值，负数按 0 落库。
+-- 余额副本（ADR-0069、ADR-0073）。查询余额与核销结果覆盖同一个值，负数按 0 落库；
+-- synced_at 是这份余额对应的快照时刻，不是写入时刻。只有不比现有副本旧的快照才覆盖，
+-- 查询与核销并发、响应乱序时，晚到的旧快照不会让副本回退。
 -- name: SaveBalance :exec
 INSERT INTO nowpay_balance (user_id, remaining_points, synced_at)
-VALUES (sqlc.arg(user_id), GREATEST(sqlc.arg(remaining_points)::bigint, 0), now())
+VALUES (sqlc.arg(user_id), GREATEST(sqlc.arg(remaining_points)::bigint, 0), sqlc.arg(synced_at))
 ON CONFLICT (user_id) DO UPDATE
 SET remaining_points = GREATEST(sqlc.arg(remaining_points)::bigint, 0),
-    synced_at = now();
+    synced_at = sqlc.arg(synced_at)
+WHERE nowpay_balance.synced_at <= EXCLUDED.synced_at;
 
 -- 预留要用的余额副本；没有行表示这个账号还没有同步过余额。
 -- name: BalanceForReserve :one
 SELECT remaining_points, synced_at FROM nowpay_balance WHERE user_id = sqlc.arg(user_id);
 
--- 副本同步之后才写入的核销流水合计的积分。副本已经反映它们之前的扣减，这部分
--- 还没有反映；failed 表示确认没有扣减，不计入。
+-- 副本还没有反映的核销积分（ADR-0073）。pending 与 processing 一律计入，因为扣减
+-- 还没有确认；succeeded 只有在快照之后才确认的才计入，终态行的 updated_at 视为确认
+-- 时间；failed 确认没有扣减，不计入。按确认时间而不是创建时间判断，是因为核销行先
+-- 创建、后成功，乱序时旧规则会把已经反映的扣减再算一遍。
 -- name: UnreflectedChargePoints :one
 SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
 WHERE user_id = sqlc.arg(user_id)
-  AND status <> 'failed'
-  AND created_at >= sqlc.arg(synced_at);
+  AND (status IN ('pending', 'processing')
+       OR (status = 'succeeded' AND updated_at > sqlc.arg(as_of)));
 
 -- 当天已经折算成积分的累计计费量：流水里的 billed_tokens 是当时的当天累计量，
 -- 取最大值就是最后一次申请时的累计量。failed 的流水没有扣减，不计入。
