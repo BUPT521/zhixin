@@ -796,7 +796,7 @@ func TestQuotaOverrideIsPerAccount(t *testing.T) {
 		TokensPerPoint int64 `json:"tokens_per_point"`
 	}
 	if code := h.json("GET", "/v1/llm/quota", first, nil, &status); code != http.StatusOK ||
-		status.DailyTokens != 5000 || status.TokensPerPoint != 1000 {
+		status.DailyTokens != 5000 || status.TokensPerPoint != 10000 {
 		t.Fatalf("调整后的额度没有生效：%d %+v", code, status)
 	}
 	second := h.signUp("quota-b@b.cn")

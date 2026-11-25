@@ -90,6 +90,23 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 	}, nil
 }
 
+// AvailablePoints 返回本地余额副本里的可用积分，供核销侧决定这次申请多少。与
+// paidTokens 的口径一致：副本表还没建好或账号还没有同步过余额时返回 known=false，
+// 调用方按未知处理，不按副本截断申请量；读取失败只返回错误，不伪装成零余额。
+func (s *Store) AvailablePoints(ctx context.Context, userID string) (int64, bool, error) {
+	if userID == "" || !s.balanceReady.Load() {
+		return 0, false, nil
+	}
+	balance, err := s.q.BalanceForReserve(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("pg: 读取积分余额副本失败: %w", err)
+	}
+	return balance.RemainingPoints, true, nil
+}
+
 // ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。同一天同一账号
 // 的申请用事务级 advisory lock 排队：并发结算是不同请求，行锁管不到还没有的行，
 // 只看一次已申请量会让两笔各自再扣一次。

@@ -49,7 +49,7 @@ func newTestHandler(client *Client, purchases *fakePurchases) *Handler {
 }
 
 func newTestHandlerWith(client *Client, purchases *fakePurchases, balances *fakeBalances) *Handler {
-	handler := NewHandler(client, purchases, balances, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 1000)
+	handler := NewHandler(client, purchases, balances, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 10000)
 	handler.limit, handler.global = ratelimit.Disabled(), ratelimit.Disabled()
 	return handler
 }
@@ -81,7 +81,7 @@ func TestOverviewWithoutProductReturnsTheDefaultRatio(t *testing.T) {
 	if view.Product != nil || view.BalancePoints != 0 {
 		t.Fatalf("未配置商品时不回商品与积分: %+v", view)
 	}
-	if view.TokensPerPoint != 1000 {
+	if view.TokensPerPoint != 10000 {
 		t.Fatalf("未配置商品时仍按默认比例返回: %+v", view)
 	}
 }

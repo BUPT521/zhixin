@@ -379,14 +379,14 @@ func TestParseNowPay(t *testing.T) {
 	}
 }
 
-// 积分折算比例同时用于核销与前台展示，默认一千，写错时启动直接失败。
+// 积分折算比例同时用于核销与前台展示，默认一万，写错时启动直接失败。
 func TestLoadTokensPerPoint(t *testing.T) {
 	cfg, err := Load(env(nil))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLM.TokensPerPoint != 1000 {
-		t.Fatalf("默认比例应为 1000，得到 %d", cfg.LLM.TokensPerPoint)
+	if cfg.LLM.TokensPerPoint != 10000 {
+		t.Fatalf("默认比例应为 10000，得到 %d", cfg.LLM.TokensPerPoint)
 	}
 	cfg, err = Load(env(map[string]string{"ZHIXIN_TOKENS_PER_POINT": "500"}))
 	if err != nil {

@@ -38,6 +38,9 @@ type Charge struct {
 // 已申请量与 required 再决定写不写，否则两个并发结算会各按旧值再扣一次。
 type Ledger interface {
 	ReservePoints(ctx context.Context, charge Charge, required int64) (Charge, bool, error)
+	// AvailablePoints 返回本地余额副本里的可用积分。known 为假表示副本缺失或余额表
+	// 未就绪，此时不能按副本截断申请量，见 Meter.Record。
+	AvailablePoints(ctx context.Context, userID string) (int64, bool, error)
 	Unsettled(ctx context.Context, userID string, limit int) ([]Charge, error)
 	SetStatus(ctx context.Context, id, status, note string) error
 	// SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本。额度预留按这份副本放行
@@ -128,10 +131,15 @@ func (m *Meter) Start(ctx context.Context) {
 
 // Record 按当天累计应当由积分承担的计费 token 数核销差额，传入的不是单轮用量。
 // 当天已经申请过的积分（含待确认与处理中）先扣掉，所以同一轮结算重入不会重复扣款，
-// 一整天多记的积分也不超过一个。
+// 一整天多记的积分也不超过一个。余额副本已知时再按它收口，余额不足的申请不会每轮
+// 重复写一条流水、再核销失败一次，见 capToBalance。
 func (m *Meter) Record(ctx context.Context, userID, day string, chargeableTokens int64) {
 	required := Points(chargeableTokens, m.perPoint)
 	if required <= 0 {
+		return
+	}
+	required, ok := m.capToBalance(ctx, userID, required)
+	if !ok {
 		return
 	}
 	charge := Charge{
@@ -147,6 +155,29 @@ func (m *Meter) Record(ctx context.Context, userID, day string, chargeableTokens
 		return
 	}
 	m.enqueue(job{charge: reserved, verify: true})
+}
+
+// capToBalance 按本地余额副本收口本次申请量，第二个返回值表示是否还要申请。failed
+// 流水不计入当天已申请量，余额不足时若照旧整额申请，每一轮结算都会再写一条流水、再
+// 核销失败一次；副本已知不超过零时直接不申请。副本小于 required 时截到副本，先扣掉
+// 部分余额，避免余额一直攒着不动，差额等余额补上之后的下一次结算再算。副本未知
+// （没有行或余额表未就绪）或读取失败时保持原值，与按副本放行之前的做法一致。
+func (m *Meter) capToBalance(ctx context.Context, userID string, required int64) (int64, bool) {
+	available, known, err := m.ledger.AvailablePoints(ctx, userID)
+	if err != nil {
+		m.log.Error("read the nowpay balance copy", "user_id", userID, "error", err)
+		return required, true
+	}
+	if !known {
+		return required, true
+	}
+	if available <= 0 {
+		return 0, false
+	}
+	if available < required {
+		return available, true
+	}
+	return required, true
 }
 
 // Resume 把还没有确认结果的流水排进队列：pengding 的用原参数重试核销，processing

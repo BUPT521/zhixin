@@ -413,7 +413,7 @@ func Load(getenv func(string) string) (Config, error) {
 		LLM: LLMConfig{
 			RestrictProviders:         get("ZHIXIN_DATABASE_URL", "") != "",
 			DailyTokens:               num("ZHIXIN_LLM_DAILY_TOKENS", "320000"),
-			TokensPerPoint:            num("ZHIXIN_TOKENS_PER_POINT", "1000"),
+			TokensPerPoint:            num("ZHIXIN_TOKENS_PER_POINT", "10000"),
 			InstanceDailyTokens:       num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "32000000"),
 			MaxRequestBytes:           num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
 			RequireVerifiedContact:    get("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1") == "1",

@@ -277,6 +277,33 @@ func TestPostgresSaveBalanceClampsNegative(t *testing.T) {
 	}
 }
 
+// TestPostgresAvailablePointsReadsTheBalanceCopy 守住核销侧的读法：余额表未建好或
+// 账号还没有副本行时按未知返回，有行时返回副本里的剩余积分，核销据此决定是否按
+// 副本收口申请量（ADR-0069）。
+func TestPostgresAvailablePointsReadsTheBalanceCopy(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	// 余额副本表还没建好：按未知返回，不报错。
+	if points, known, err := st.AvailablePoints(ctx, "u1"); err != nil || known || points != 0 {
+		t.Fatalf("余额表未建好时应按未知返回，得到 %d %v %v", points, known, err)
+	}
+	enablePaidQuota(t, st)
+	// 表已建好但账号还没有副本行：同样按未知返回。
+	if points, known, err := st.AvailablePoints(ctx, "u1"); err != nil || known || points != 0 {
+		t.Fatalf("没有副本行时应按未知返回，得到 %d %v %v", points, known, err)
+	}
+	if err := st.SaveBalance(ctx, "u1", 7); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	points, known, err := st.AvailablePoints(ctx, "u1")
+	if err != nil || !known || points != 7 {
+		t.Fatalf("有副本时应返回剩余积分 7，得到 %d %v %v", points, known, err)
+	}
+}
+
 // TestPostgresStartsWithoutTheBalanceTable 守住建表顺序：余额副本是纯新增表，还没
 // 建好时服务照常启动，免费额度之外的放行停用，读写副本都静默跳过（ADR-0069）。
 func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {

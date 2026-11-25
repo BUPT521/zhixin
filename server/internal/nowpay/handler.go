@@ -47,18 +47,17 @@ type Handler struct {
 	global    *ratelimit.Limiter
 
 	// tokensPerPoint 是一个积分覆盖的计费 token 数，概览接口原样返回，供客户端把
-	// 积分换算成 token；没有配置商品时仍按默认比例返回。
+	// 积分换算成 token；比例只有配置一处来源，由 config.Load 校验为正数。
 	tokensPerPoint int64
 }
 
 // NewHandler 装配三个接口。client 为空表示没有配置即刻收商品，接口只返回空余额。
+// tokensPerPoint 由调用方传入已经校验过的配置值，这里不再设默认值，避免配置与
+// 核销各按一套比例。
 func NewHandler(client *Client, purchases PurchaseStore, balances BalanceStore, callback string,
 	log *slog.Logger, rateKeys int, tokensPerPoint int64) *Handler {
 	if log == nil {
 		log = slog.Default()
-	}
-	if tokensPerPoint <= 0 {
-		tokensPerPoint = 1000
 	}
 	return &Handler{
 		client: client, purchases: purchases, balances: balances, callback: callback, log: log,

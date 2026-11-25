@@ -18,6 +18,19 @@ type fakeLedger struct {
 	unsettled []Charge
 	statuses  []statusChange
 	balances  map[string]int64
+
+	// available 与 balanceKnown 模拟余额副本；known 为假表示副本缺失或余额表未就绪。
+	available    int64
+	balanceKnown bool
+	// availableErr 让用例模拟读取副本失败。
+	availableErr error
+}
+
+func (f *fakeLedger) AvailablePoints(context.Context, string) (int64, bool, error) {
+	if f.availableErr != nil {
+		return 0, false, f.availableErr
+	}
+	return f.available, f.balanceKnown, nil
 }
 
 func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required int64) (Charge, bool, error) {
@@ -120,6 +133,61 @@ func TestRecordWithoutChargeableTokensDoesNothing(t *testing.T) {
 	meter.Record(context.Background(), "user_1", "2026-11-25", -10)
 	if len(ledger.created) != 0 {
 		t.Fatalf("没有超出免费额度的用量不该产生核销: %+v", ledger.created)
+	}
+}
+
+// TestRecordSkipsTheChargeWhenTheBalanceCopyIsExhausted 守住余额不足不重复申请：failed
+// 流水不计入当天已申请量，副本已知为零时再申请只会每轮多一条流水、多一次核销失败。
+func TestRecordSkipsTheChargeWhenTheBalanceCopyIsExhausted(t *testing.T) {
+	caller := &fakeCaller{}
+	ledger := &fakeLedger{balanceKnown: true}
+	meter := newTestMeter(t, ledger, caller)
+	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
+	if len(ledger.created) != 0 {
+		t.Fatalf("余额为零时不该写流水: %+v", ledger.created)
+	}
+	if len(meter.queue) != 0 || len(caller.methods) != 0 {
+		t.Fatalf("余额为零时不该排队核销或调用即刻收: queue=%d methods=%v",
+			len(meter.queue), caller.methods)
+	}
+}
+
+// TestRecordCapsTheChargeAtTheBalanceCopy 守住截断而不是跳过：副本有五积分、应扣二十
+// 积分时先申请五积分，把已有余额先扣掉，差额等余额补上后的下一次结算再算。
+func TestRecordCapsTheChargeAtTheBalanceCopy(t *testing.T) {
+	ledger := &fakeLedger{available: 5, balanceKnown: true}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
+	if len(ledger.created) != 1 {
+		t.Fatalf("应写一条截断后的流水: %+v", ledger.created)
+	}
+	if ledger.created[0].Points != 5 {
+		t.Fatalf("应扣二十积分时只能申请副本里的五积分: %+v", ledger.created[0])
+	}
+	if len(meter.queue) != 1 {
+		t.Fatalf("截断后的流水应排队核销，实际队列 %d", len(meter.queue))
+	}
+}
+
+// TestRecordChargesTheFullAmountWhenTheBalanceCopyIsUnknown 守住副本未知时不截断：
+// 没有行或余额表未就绪时沿用原来的整额申请，由核销结果再去修正副本。
+func TestRecordChargesTheFullAmountWhenTheBalanceCopyIsUnknown(t *testing.T) {
+	ledger := &fakeLedger{}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
+	if len(ledger.created) != 1 || ledger.created[0].Points != 20 {
+		t.Fatalf("副本未知时应整额申请二十积分: %+v", ledger.created)
+	}
+}
+
+// TestRecordChargesTheFullAmountWhenTheBalanceCopyCannotBeRead 守住读取失败按未知处理：
+// 不能因为一次读失败就少记账或跳过申请。
+func TestRecordChargesTheFullAmountWhenTheBalanceCopyCannotBeRead(t *testing.T) {
+	ledger := &fakeLedger{availableErr: errors.New("pg: 读取积分余额副本失败")}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	meter.Record(context.Background(), "user_1", "2026-11-25", 20000)
+	if len(ledger.created) != 1 || ledger.created[0].Points != 20 {
+		t.Fatalf("读取副本失败时应整额申请二十积分: %+v", ledger.created)
 	}
 }
 
