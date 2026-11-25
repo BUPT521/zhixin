@@ -819,7 +819,10 @@ paths:
       summary: 获取即刻收托管购买页的购买链接
       description: |
         价格、档位与发放额度由即刻收小程序配置，服务端只按 sku_id 锁定档位，不传价格。
-        同一账号、同一档位在链接有效期内重试时复用原链接，按原请求号重新获取。
+        客户端每次点击生成一个 client_request_no：同一个键重试复用同一张链接，换一次点击
+        换一个键就一定创新链接，支付成功之后再点不会打开已经付过的页面。同一个键的并发
+        点击在服务端串行化，只落一行。不传键时服务端生成随机键，行为等同每次点击都新链接，
+        不报错，见 ADR-0074。
       requestBody:
         required: true
         content:
@@ -830,6 +833,10 @@ paths:
                 sku_id:
                   type: string
                   description: 取自查商品返回的档位；省略时由用户在购买页选择
+                client_request_no:
+                  type: string
+                  maxLength: 64
+                  description: 客户端每次点击生成的幂等键，建议 UUID；同一个键的重试复用同一张链接
       responses:
         '200':
           description: 购买链接与失效时间

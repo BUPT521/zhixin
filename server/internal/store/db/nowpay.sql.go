@@ -86,6 +86,17 @@ func (q *Queries) ChargedTokens(ctx context.Context, arg ChargedTokensParams) (i
 	return column_1, err
 }
 
+const failPurchaseLink = `-- name: FailPurchaseLink :exec
+UPDATE nowpay_purchase
+SET state = 'failed', updated_at = now()
+WHERE out_request_no = $1
+`
+
+func (q *Queries) FailPurchaseLink(ctx context.Context, outRequestNo string) error {
+	_, err := q.db.Exec(ctx, failPurchaseLink, outRequestNo)
+	return err
+}
+
 const insertCharge = `-- name: InsertCharge :exec
 INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens)
 VALUES ($1, $2, $3::date, $4, $5)
@@ -111,23 +122,30 @@ func (q *Queries) InsertCharge(ctx context.Context, arg InsertChargeParams) erro
 }
 
 const insertPurchaseLink = `-- name: InsertPurchaseLink :exec
-INSERT INTO nowpay_purchase (out_request_no, user_id, sku_id, purchase_url, expires_at)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO nowpay_purchase
+  (out_request_no, client_request_no, user_id, sku_id, state, purchase_url, expires_at)
+VALUES
+  ($1, $2, $3, $4,
+   $5, $6, $7)
 `
 
 type InsertPurchaseLinkParams struct {
-	OutRequestNo string
-	UserID       pgtype.Text
-	SkuID        string
-	PurchaseUrl  string
-	ExpiresAt    pgtype.Timestamptz
+	OutRequestNo    string
+	ClientRequestNo string
+	UserID          pgtype.Text
+	SkuID           string
+	State           pgtype.Text
+	PurchaseUrl     pgtype.Text
+	ExpiresAt       pgtype.Timestamptz
 }
 
 func (q *Queries) InsertPurchaseLink(ctx context.Context, arg InsertPurchaseLinkParams) error {
 	_, err := q.db.Exec(ctx, insertPurchaseLink,
 		arg.OutRequestNo,
+		arg.ClientRequestNo,
 		arg.UserID,
 		arg.SkuID,
+		arg.State,
 		arg.PurchaseUrl,
 		arg.ExpiresAt,
 	)
@@ -135,8 +153,11 @@ func (q *Queries) InsertPurchaseLink(ctx context.Context, arg InsertPurchaseLink
 }
 
 const latestPurchaseLink = `-- name: LatestPurchaseLink :one
-SELECT out_request_no, user_id, sku_id, purchase_url, expires_at, created_at FROM nowpay_purchase
-WHERE user_id = $1 AND expires_at > $2
+SELECT out_request_no, client_request_no, user_id, sku_id, state, purchase_url, expires_at, created_at, updated_at FROM nowpay_purchase
+WHERE user_id = $1
+  AND state = 'ready'
+  AND purchase_url IS NOT NULL
+  AND expires_at > $2
 ORDER BY created_at DESC, out_request_no DESC
 LIMIT 1
 `
@@ -146,18 +167,101 @@ type LatestPurchaseLinkParams struct {
 	Now    pgtype.Timestamptz
 }
 
+// 账号最近一次可用的购买入口：必须是 ready、带链接且未过期，creating 与 failed 不算。
 func (q *Queries) LatestPurchaseLink(ctx context.Context, arg LatestPurchaseLinkParams) (NowpayPurchase, error) {
 	row := q.db.QueryRow(ctx, latestPurchaseLink, arg.UserID, arg.Now)
 	var i NowpayPurchase
 	err := row.Scan(
 		&i.OutRequestNo,
+		&i.ClientRequestNo,
 		&i.UserID,
 		&i.SkuID,
+		&i.State,
 		&i.PurchaseUrl,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const purchaseByClientRequestNo = `-- name: PurchaseByClientRequestNo :one
+SELECT out_request_no, client_request_no, user_id, sku_id, state, purchase_url, expires_at, created_at, updated_at FROM nowpay_purchase
+WHERE user_id = $1 AND client_request_no = $2
+`
+
+type PurchaseByClientRequestNoParams struct {
+	UserID          pgtype.Text
+	ClientRequestNo string
+}
+
+func (q *Queries) PurchaseByClientRequestNo(ctx context.Context, arg PurchaseByClientRequestNoParams) (NowpayPurchase, error) {
+	row := q.db.QueryRow(ctx, purchaseByClientRequestNo, arg.UserID, arg.ClientRequestNo)
+	var i NowpayPurchase
+	err := row.Scan(
+		&i.OutRequestNo,
+		&i.ClientRequestNo,
+		&i.UserID,
+		&i.SkuID,
+		&i.State,
+		&i.PurchaseUrl,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const readyPurchaseLink = `-- name: ReadyPurchaseLink :exec
+UPDATE nowpay_purchase
+SET purchase_url = $1,
+    expires_at = $2,
+    state = 'ready',
+    updated_at = now()
+WHERE out_request_no = $3
+`
+
+type ReadyPurchaseLinkParams struct {
+	PurchaseUrl  pgtype.Text
+	ExpiresAt    pgtype.Timestamptz
+	OutRequestNo string
+}
+
+func (q *Queries) ReadyPurchaseLink(ctx context.Context, arg ReadyPurchaseLinkParams) error {
+	_, err := q.db.Exec(ctx, readyPurchaseLink, arg.PurchaseUrl, arg.ExpiresAt, arg.OutRequestNo)
+	return err
+}
+
+const replacePurchaseLink = `-- name: ReplacePurchaseLink :exec
+UPDATE nowpay_purchase
+SET out_request_no = $1,
+    sku_id = $2,
+    state = 'creating',
+    purchase_url = NULL,
+    expires_at = $3,
+    created_at = now(),
+    updated_at = now()
+WHERE user_id = $4 AND client_request_no = $5
+`
+
+type ReplacePurchaseLinkParams struct {
+	OutRequestNo    string
+	SkuID           string
+	ExpiresAt       pgtype.Timestamptz
+	UserID          pgtype.Text
+	ClientRequestNo string
+}
+
+// 同一个幂等键重新生成入口：换成新的 out_request_no，回到 creating 等 purchase.create。
+func (q *Queries) ReplacePurchaseLink(ctx context.Context, arg ReplacePurchaseLinkParams) error {
+	_, err := q.db.Exec(ctx, replacePurchaseLink,
+		arg.OutRequestNo,
+		arg.SkuID,
+		arg.ExpiresAt,
+		arg.UserID,
+		arg.ClientRequestNo,
+	)
+	return err
 }
 
 const saveBalance = `-- name: SaveBalance :exec

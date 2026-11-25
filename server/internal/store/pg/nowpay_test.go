@@ -582,3 +582,87 @@ func TestPostgresUnreflectedChargesFollowTheSnapshot(t *testing.T) {
 		t.Fatalf("未反映的积分应为 pending 1 + 快照后成功的 2 = 3，得到 %d", got)
 	}
 }
+
+// TestPostgresPurchaseEntriesAreIdempotent 守住购买入口的存储口径：幂等键在账号内
+// 唯一，只有 ready 且带链接、未过期的行才会被“继续上次购买”读到，失败或过期之后
+// 整行替换成新的请求号（ADR-0074）。
+func TestPostgresPurchaseEntriesAreIdempotent(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now()
+	creating := nowpay.Purchase{
+		OutRequestNo: "np_1", ClientRequestNo: "req-1", SKU: "S1",
+		State: nowpay.PurchaseCreating, ExpiresAt: now.Add(15 * time.Minute),
+	}
+	err := st.LockPurchase(ctx, "u1", "req-1", func(ctx context.Context) error {
+		return st.CreatePurchaseLink(ctx, "u1", creating)
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	got, ok, err := st.PurchaseByClientRequestNo(ctx, "u1", "req-1")
+	if err != nil || !ok || got.OutRequestNo != "np_1" || got.State != nowpay.PurchaseCreating || got.URL != "" {
+		t.Fatalf("应按幂等键读回 creating 行: %+v %v %v", got, ok, err)
+	}
+	// 同一键重复插入由唯一索引拒绝。
+	if err := st.CreatePurchaseLink(ctx, "u1", nowpay.Purchase{
+		OutRequestNo: "np_dup", ClientRequestNo: "req-1", SKU: "S1",
+		State: nowpay.PurchaseCreating, ExpiresAt: now.Add(15 * time.Minute),
+	}); err == nil {
+		t.Fatal("同一账号同一幂等键不能插入第二行")
+	}
+	// 创单成功转 ready，之后“继续上次购买”能读到它。
+	if err := st.ReadyPurchaseLink(ctx, "np_1", "alipays://x", now.Add(30*time.Minute)); err != nil {
+		t.Fatalf("ready: %v", err)
+	}
+	latest, ok, err := st.LatestPurchaseLink(ctx, "u1", now)
+	if err != nil || !ok || latest.OutRequestNo != "np_1" || latest.URL != "alipays://x" {
+		t.Fatalf("应读到可用的购买入口: %+v %v %v", latest, ok, err)
+	}
+	// 链接过期之后不再算“可用”。
+	if _, ok, err := st.LatestPurchaseLink(ctx, "u1", now.Add(31*time.Minute)); err != nil || ok {
+		t.Fatalf("过期的入口不应被读到: %v %v", ok, err)
+	}
+	// 失败或过期之后换新请求号替换整行，回到 creating。
+	if err := st.FailPurchaseLink(ctx, "np_1"); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if _, ok, err := st.LatestPurchaseLink(ctx, "u1", now); err != nil || ok {
+		t.Fatalf("failed 的入口不应被读到: %v %v", ok, err)
+	}
+	if err := st.ReplacePurchaseLink(ctx, "u1", nowpay.Purchase{
+		OutRequestNo: "np_2", ClientRequestNo: "req-1", SKU: "S1",
+		ExpiresAt: now.Add(15 * time.Minute),
+	}); err != nil {
+		t.Fatalf("replace: %v", err)
+	}
+	replaced, ok, err := st.PurchaseByClientRequestNo(ctx, "u1", "req-1")
+	if err != nil || !ok || replaced.OutRequestNo != "np_2" || replaced.State != nowpay.PurchaseCreating || replaced.URL != "" {
+		t.Fatalf("替换之后应回到 creating 并换请求号: %+v %v %v", replaced, ok, err)
+	}
+	var count int64
+	if err := st.pool.QueryRow(ctx,
+		`SELECT count(*) FROM nowpay_purchase WHERE user_id = 'u1' AND client_request_no = 'req-1'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("同一幂等键应只有一行，实际 %d 行", count)
+	}
+}
+
+// TestPostgresRefusesToStartWithoutThePurchaseIdempotencyColumns 守住部署顺序：购买
+// 入口缺幂等键的新列时启动直接失败，让自动部署回滚（ADR-0074）。
+func TestPostgresRefusesToStartWithoutThePurchaseIdempotencyColumns(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	enablePaidQuota(t, st)
+	if _, err := st.pool.Exec(ctx, `ALTER TABLE nowpay_purchase DROP COLUMN client_request_no`); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if err := st.CheckNowPaySchema(ctx); err == nil {
+		t.Fatal("缺 client_request_no 列时启动应失败")
+	}
+}

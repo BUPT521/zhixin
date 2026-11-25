@@ -313,17 +313,28 @@ CREATE INDEX nowpay_charge_user_day_idx ON nowpay_charge (user_id, day);
 CREATE INDEX nowpay_charge_unsettled_idx
   ON nowpay_charge (user_id, created_at) WHERE status IN ('pending', 'processing');
 
--- 购买入口请求：同一账号同一档位在链接有效期内重试时复用原链接，不重复创单。
+-- 购买入口请求（ADR-0067、ADR-0074）。一行对应客户端的一次点击：client_request_no
+-- 是客户端生成的幂等键，同一次点击的重试复用它，换一次点击换一个键。state 为
+-- creating 时 purchase_url 为空，purchase.create 成功之后转 ready 并写真实有效期，
+-- 失败或超时转 failed 并保留原 out_request_no 供重试；同一键重新生成入口时替换整行。
+-- 账号删除时解除关联而不删行，留作对账。
 CREATE TABLE nowpay_purchase (
-  out_request_no TEXT PRIMARY KEY,
-  user_id        TEXT REFERENCES app_user(id) ON DELETE SET NULL,
-  sku_id         TEXT NOT NULL DEFAULT '',
-  purchase_url   TEXT NOT NULL,
-  expires_at     TIMESTAMPTZ NOT NULL,
-  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+  out_request_no    TEXT PRIMARY KEY,
+  client_request_no TEXT NOT NULL DEFAULT '',
+  user_id           TEXT REFERENCES app_user(id) ON DELETE SET NULL,
+  sku_id            TEXT NOT NULL DEFAULT '',
+  state             TEXT NOT NULL DEFAULT 'ready'
+                    CHECK (state IN ('creating', 'ready', 'failed')),
+  purchase_url      TEXT,
+  expires_at        TIMESTAMPTZ NOT NULL,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX nowpay_purchase_user_created_idx
   ON nowpay_purchase (user_id, created_at DESC) WHERE user_id IS NOT NULL;
+CREATE UNIQUE INDEX nowpay_purchase_client_request_idx
+  ON nowpay_purchase (user_id, client_request_no)
+  WHERE user_id IS NOT NULL AND client_request_no <> '';
 
 -- 即刻收积分余额的本地副本（ADR-0069、ADR-0073）。额度预留按免费额度之外的这份
 -- 余额放行，请求路径上因此不必调用即刻收：查询余额、购买页刷新与每次核销的结果都

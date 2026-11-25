@@ -20,22 +20,32 @@ var (
 	_ nowpay.BalanceStore  = (*Store)(nil)
 )
 
-// CheckNowPaySchema 确认即刻收的表已经建好。建表不在这条流水线里执行：生产库已有
-// 真实交易，改表用可回滚的增量语句，见 server/运维手册.md。
+// CheckNowPaySchema 确认即刻收的表与购买入口的新列已经建好。建表不在这条流水线里
+// 执行：生产库已有真实交易，改表用可回滚的增量语句，见 server/运维手册.md。
 //
-// 核销与购买入口这两张表是收款的前提，缺表直接退出；余额副本是 2026-11-25 补的
-// 一张纯新增表，缺表时只记日志并停用免费额度之外的放行（ADR-0069），这样已经在
-// 收款的实例可以先部署新版，再按运维手册建表并重启，不会因为建表顺序停服。
+// 核销与购买入口这两张表是收款的前提，缺表或购买入口缺列、缺幂等键索引时直接退出，
+// 让自动部署回滚到上一份可执行文件（ADR-0074）；余额副本是 2026-11-25 补的一张纯
+// 新增表，缺表时只记日志并停用免费额度之外的放行（ADR-0069），这样已经在收款的
+// 实例可以先部署新版，再按运维手册建表并重启，不会因为建表顺序停服。
 func (s *Store) CheckNowPaySchema(ctx context.Context) error {
-	var installed, balance bool
-	err := s.pool.QueryRow(ctx, `SELECT to_regclass('nowpay_charge') IS NOT NULL
-		AND to_regclass('nowpay_purchase') IS NOT NULL,
-		to_regclass('nowpay_balance') IS NOT NULL`).Scan(&installed, &balance)
+	var installed, balance, purchaseColumns, purchaseIndex bool
+	err := s.pool.QueryRow(ctx, `SELECT
+		to_regclass('nowpay_charge') IS NOT NULL AND to_regclass('nowpay_purchase') IS NOT NULL,
+		to_regclass('nowpay_balance') IS NOT NULL,
+		(SELECT count(*) FROM information_schema.columns
+		  WHERE table_name = 'nowpay_purchase'
+		    AND column_name IN ('client_request_no', 'state', 'updated_at')) = 3,
+		to_regclass('nowpay_purchase_client_request_idx') IS NOT NULL`).
+		Scan(&installed, &balance, &purchaseColumns, &purchaseIndex)
 	if err != nil {
 		return err
 	}
 	if !installed {
 		return errors.New("pg: 即刻收收款需要按 schema.sql 建好 nowpay_charge 与 nowpay_purchase")
+	}
+	if !purchaseColumns || !purchaseIndex {
+		return errors.New("pg: nowpay_purchase 缺 client_request_no、state、updated_at 或幂等键索引，" +
+			"按运维手册 4.11 的增量语句补齐")
 	}
 	s.balanceReady.Store(balance)
 	if !balance {
@@ -195,8 +205,8 @@ func (s *Store) SetStatus(ctx context.Context, id, status, note string) error {
 	return s.q.SetChargeStatus(ctx, params)
 }
 
-// LatestPurchase 返回账号最近一次仍在有效期内的购买入口；过期的不再复用，用户重新
-// 点购买时按新的请求号创单。
+// LatestPurchaseLink 返回账号最近一次可用的购买入口：必须是 ready、带链接且没有过期。
+// creating 与 failed 的行不展示，用户重新点购买时按幂等键复用或替换（ADR-0074）。
 func (s *Store) LatestPurchaseLink(ctx context.Context, userID string, now time.Time) (nowpay.Purchase, bool, error) {
 	at, err := pgTime(now)
 	if err != nil {
@@ -209,21 +219,103 @@ func (s *Store) LatestPurchaseLink(ctx context.Context, userID string, now time.
 	if err != nil {
 		return nowpay.Purchase{}, false, err
 	}
-	return nowpay.Purchase{
-		OutRequestNo: row.OutRequestNo, SKU: row.SkuID,
-		URL: row.PurchaseUrl, ExpiresAt: row.ExpiresAt.Time,
-	}, true, nil
+	return purchaseFromRow(row), true, nil
 }
 
-func (s *Store) InsertPurchaseLink(ctx context.Context, userID string, purchase nowpay.Purchase) error {
+// PurchaseByClientRequestNo 按幂等键读一次购买入口。键在账号内唯一，不是全局唯一。
+func (s *Store) PurchaseByClientRequestNo(ctx context.Context, userID, clientRequestNo string) (nowpay.Purchase, bool, error) {
+	row, err := s.q.PurchaseByClientRequestNo(ctx, db.PurchaseByClientRequestNoParams{
+		UserID: text(userID), ClientRequestNo: clientRequestNo,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nowpay.Purchase{}, false, nil
+	}
+	if err != nil {
+		return nowpay.Purchase{}, false, err
+	}
+	return purchaseFromRow(row), true, nil
+}
+
+// CreatePurchaseLink 写入一条 creating 行，purchase_url 为空。同一账号同一幂等键重复
+// 写入由唯一索引拒绝，调用方据此判断并发已经有人先建了入口。
+func (s *Store) CreatePurchaseLink(ctx context.Context, userID string, purchase nowpay.Purchase) error {
 	expires, err := pgTime(purchase.ExpiresAt)
 	if err != nil {
 		return err
 	}
+	url := pgtype.Text{}
+	if purchase.URL != "" {
+		url = pgtype.Text{String: purchase.URL, Valid: true}
+	}
 	return s.q.InsertPurchaseLink(ctx, db.InsertPurchaseLinkParams{
-		OutRequestNo: purchase.OutRequestNo, UserID: text(userID), SkuID: purchase.SKU,
-		PurchaseUrl: purchase.URL, ExpiresAt: expires,
+		OutRequestNo: purchase.OutRequestNo, ClientRequestNo: purchase.ClientRequestNo,
+		UserID: text(userID), SkuID: purchase.SKU,
+		State:       pgtype.Text{String: purchase.State, Valid: purchase.State != ""},
+		PurchaseUrl: url, ExpiresAt: expires,
 	})
+}
+
+// ReplacePurchaseLink 用新的 out_request_no 替换同一个幂等键的行，回到 creating；失败
+// 或超时的入口由此重新创单，旧的请求号不再使用。
+func (s *Store) ReplacePurchaseLink(ctx context.Context, userID string, purchase nowpay.Purchase) error {
+	expires, err := pgTime(purchase.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	return s.q.ReplacePurchaseLink(ctx, db.ReplacePurchaseLinkParams{
+		OutRequestNo: purchase.OutRequestNo, SkuID: purchase.SKU,
+		ExpiresAt: expires, UserID: text(userID), ClientRequestNo: purchase.ClientRequestNo,
+	})
+}
+
+// ReadyPurchaseLink 把 creating 行更新成 ready，写入托管购买页链接与真实有效期。
+func (s *Store) ReadyPurchaseLink(ctx context.Context, outRequestNo, url string, expiresAt time.Time) error {
+	expires, err := pgTime(expiresAt)
+	if err != nil {
+		return err
+	}
+	return s.q.ReadyPurchaseLink(ctx, db.ReadyPurchaseLinkParams{
+		PurchaseUrl: pgtype.Text{String: url, Valid: url != ""},
+		ExpiresAt:   expires, OutRequestNo: outRequestNo,
+	})
+}
+
+// FailPurchaseLink 把 creating 行更新成 failed，保留原 out_request_no 供下一次点击重试。
+func (s *Store) FailPurchaseLink(ctx context.Context, outRequestNo string) error {
+	return s.q.FailPurchaseLink(ctx, outRequestNo)
+}
+
+// LockPurchase 在 (账号, 幂等键) 的会话级 advisory lock 里执行 fn，把同一键的并发点击
+// 串行化。锁在 fn 返回之后释放；fn 里还要调用即时收接口，所以不能改用事务级锁，否则
+// 创单的一次网络往返会占着一个数据库事务。
+func (s *Store) LockPurchase(ctx context.Context, userID, clientRequestNo string, fn func(context.Context) error) error {
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return fmt.Errorf("pg: 获取购买入口连接失败: %w", err)
+	}
+	defer conn.Release()
+	key := "nowpay:purchase:" + userID + ":" + clientRequestNo
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock(hashtext($1))`, key); err != nil {
+		return fmt.Errorf("pg: 锁定购买入口失败: %w", err)
+	}
+	defer func() {
+		// 解锁用独立上下文：请求可能已经取消，锁不能跟着连接一起留下。
+		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if _, err := conn.Exec(unlockCtx, `SELECT pg_advisory_unlock(hashtext($1))`, key); err != nil {
+			s.log.Error("unlock the nowpay purchase entry", "user_id", userID, "error", err)
+		}
+	}()
+	return fn(ctx)
+}
+
+// purchaseFromRow 把购买入口行转成接口类型；user_id 在删号之后为空，这里不返回它。
+func purchaseFromRow(row db.NowpayPurchase) nowpay.Purchase {
+	return nowpay.Purchase{
+		OutRequestNo: row.OutRequestNo, ClientRequestNo: row.ClientRequestNo,
+		SKU: row.SkuID, State: row.State,
+		URL: row.PurchaseUrl.String, ExpiresAt: row.ExpiresAt.Time,
+	}
 }
 
 // text 把非空账号编号写成可空文本；流水与购买入口这两张表在删号之后只解除关联，

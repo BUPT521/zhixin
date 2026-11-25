@@ -89,7 +89,7 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 | 表 | 用途 | 关键列与约束 |
 |---|---|---|
 | `nowpay_charge` | 即刻收的积分核销流水，一笔对话结算之后按差额申请一个积分数；`id` 同时是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试 | `user_id` 外键可空，删号时解除关联而不删行；`day` 是记账自然日，`points` 与 `billed_tokens` 是这次申请的积分与折算前的计费 token 数，`status` 的 check 约束为 `pending`、`processing`、`succeeded`、`failed`；`(user_id, day)` 支撑当天已申请量的汇总，部分索引 `(user_id, created_at) WHERE status IN ('pending','processing')` 支撑补查 |
-| `nowpay_purchase` | 购买入口请求，同一账号同一档位在链接有效期内复用原链接，不重复创单 | `out_request_no` 主键，`user_id` 外键可空，删号时解除关联；`sku_id`、`purchase_url` 与 `expires_at`；`(user_id, created_at DESC) WHERE user_id IS NOT NULL` 支撑取最近一次仍在有效期内的入口 |
+| `nowpay_purchase` | 购买入口请求，一行对应客户端的一次点击，按 `client_request_no` 幂等（[ADR-0074](../docs/adr/0074-购买入口按客户端请求号幂等.md)） | `out_request_no` 主键，`user_id` 外键可空，删号时解除关联；`client_request_no` 是客户端每次点击生成的幂等键，`state` 取 `creating`、`ready`、`failed`，`purchase_url` 在 `creating` 时为空；`(user_id, created_at DESC) WHERE user_id IS NOT NULL` 支撑取最近一次可用的入口，`(user_id, client_request_no) WHERE user_id IS NOT NULL AND client_request_no <> ''` 保证同一键只有一行 |
 | `nowpay_balance` | 积分余额的本地副本，额度预留按它放行免费额度之外的用量，请求路径上不调用即刻收（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)、[ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)） | `user_id` 主键，外键级联删除，因为副本随账号消失没有保留价值；`remaining_points` 不为负，`synced_at` 是余额对应的快照时刻而不是写入时刻，晚到的旧快照不会覆盖新副本；查询余额、刷新余额与核销结果都覆盖同一个值 |
 
 ## 目录
@@ -236,9 +236,9 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 服务端用到五个接口：`charge.query` 查收费能力与档位，`quota.query` 查积分余额，`purchase.create` 取托管购买页链接，`quota.verify` 核销，`quota.refresh` 用原请求号查询核销结果。买断与时长包要用的 `purchase.consult` 没有接，因为商品按积分包配置。即刻收的响应把中文按 GB18030 回，请求里写 `charset=utf-8` 也不改，所以网关先验签再转码，调用方拿到的是 UTF-8；签名覆盖的始终是原始字节。
 
-契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与折算比例，`POST /v1/me/model-quota-purchases` 取购买链接，`GET /v1/me/model-quota-purchases/quota` 只查余额。概览接口并行查商品与余额，商品能力在进程内缓存 60 秒；余额查不到时不回 503，而是照常返回商品与 `balance_unavailable=true`，客户端提示“暂时查不到余额”，见 [ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；通知与查单处理器、Android 侧的 SDK 通道、订单表与钱包表都已删除，`internal/payment` 只保留签名、验签与网关调用。
+契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与折算比例，`POST /v1/me/model-quota-purchases` 取购买链接（请求体带 `client_request_no`，同一个键重试复用同一张链接，换一次点击换新链接，不传键时服务端生成随机键），`GET /v1/me/model-quota-purchases/quota` 只查余额（[ADR-0074](../docs/adr/0074-购买入口按客户端请求号幂等.md)）。概览接口并行查商品与余额，商品能力在进程内缓存 60 秒；余额查不到时不回 503，而是照常返回商品与 `balance_unavailable=true`，客户端提示“暂时查不到余额”，见 [ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；通知与查单处理器、Android 侧的 SDK 通道、订单表与钱包表都已删除，`internal/payment` 只保留签名、验签与网关调用。
 
-`nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，同一账号同一档位在链接有效期内复用；`nowpay_balance` 保存积分余额的本地副本，额度预留按它放行。三张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
+`nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，一行对应客户端的一次点击，按 `client_request_no` 幂等；`nowpay_balance` 保存积分余额的本地副本，额度预留按它放行。三张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
 
 额度预留先看当天免费额度，聊天在免费额度之外再加上余额副本折成的计费 token（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)）。副本由三个地方写入：概览与单独查余额两个接口在 `quota.query` 成功之后写，核销或补查的响应带剩余积分时写，`NOW_PAY_QUOTA_INSUFFICIENT` 时按零写。`quota.query` 的响应带 `as_of_time` 时用它做副本的快照时刻，没有时用查询发起的时刻；核销结果只在 `SUCCEEDED`、`FAILED` 与余额不足时写副本，`PROCESSING` 的剩余积分不覆盖副本，因为还不知道它有没有扣住那笔预占（[ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)）。副本超过一分钟没有同步或者还没有副本时，预留排一次异步查询，这一轮仍按现有副本判断；如果这一轮本来就放行不了，429 的原因写 `syncing`，客户端只提示稍后重试，不引导购买。请求路径上因此不调用即刻收；免费额度以内的请求不读副本，也不触发查询。可用积分还要减去副本没有反映的核销：`pending` 与 `processing` 一律计入，`succeeded` 只在快照之后确认的计入；再减去当天已经发生、还没有记进流水的计费量，同一笔用量不会因为预留与核销的先后被放行两次。
 

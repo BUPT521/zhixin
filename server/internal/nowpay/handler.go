@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,18 +19,39 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
 
-// Purchase 是一次购买入口请求，保存请求号是为了在同一档位上重试时复用原链接。
+// 购买入口的状态。creating 表示已经占住幂等键、正在向即刻收创单，此时 purchase_url
+// 为空；ready 表示链接可以打开；failed 表示这一次创单失败，下一次点击按同一个键重试。
+const (
+	PurchaseCreating = "creating"
+	PurchaseReady    = "ready"
+	PurchaseFailed   = "failed"
+)
+
+// creatingTTL 是 creating 行的占位有效期。创单成功之后换成即刻收给出的真实有效期；
+// 超过它还是 creating，说明上一次创单中断了，下一次点击按同一个键重新创单。
+const creatingTTL = 15 * time.Minute
+
+// Purchase 是一次购买入口请求。ClientRequestNo 是客户端每次点击生成的幂等键，
+// OutRequestNo 是提交给即刻收的创单请求号，State 见上面三个常量。
 type Purchase struct {
-	OutRequestNo string
-	SKU          string
-	URL          string
-	ExpiresAt    time.Time
+	OutRequestNo    string
+	ClientRequestNo string
+	SKU             string
+	URL             string
+	State           string
+	ExpiresAt       time.Time
 }
 
-// PurchaseStore 保存购买入口请求，由 store/pg 实现。
+// PurchaseStore 保存购买入口请求，由 store/pg 实现。同一账号同一幂等键的并发点击由
+// LockPurchase 串行化，因此幂等判断、创单与落库不会交错（ADR-0074）。
 type PurchaseStore interface {
 	LatestPurchaseLink(ctx context.Context, userID string, now time.Time) (Purchase, bool, error)
-	InsertPurchaseLink(ctx context.Context, userID string, purchase Purchase) error
+	PurchaseByClientRequestNo(ctx context.Context, userID, clientRequestNo string) (Purchase, bool, error)
+	CreatePurchaseLink(ctx context.Context, userID string, purchase Purchase) error
+	ReplacePurchaseLink(ctx context.Context, userID string, purchase Purchase) error
+	ReadyPurchaseLink(ctx context.Context, outRequestNo, url string, expiresAt time.Time) error
+	FailPurchaseLink(ctx context.Context, outRequestNo string) error
+	LockPurchase(ctx context.Context, userID, clientRequestNo string, fn func(context.Context) error) error
 }
 
 // BalanceStore 保存积分余额的本地副本，由 store/pg 实现。额度预留按这份副本放行
@@ -205,7 +227,9 @@ func (h *Handler) saveBalance(ctx context.Context, userID string, remaining int6
 }
 
 // Purchase 取一个托管购买页链接。价格与档位由即刻收给出，服务端只按 sku_id 锁定
-// 档位；同一档位在链接有效期内重试时复用原链接，不重复创单。
+// 档位。客户端每次点击生成一个 client_request_no：同一个键重试复用同一张链接，换一次
+// 点击换一个键就一定拿新链接；支付成功之后再点不会拿到已经付过的页面（ADR-0074）。
+// 旧客户端不传键时服务端生成一个随机键，行为等同于每次点击都新链接，不报错。
 func (h *Handler) Purchase(w http.ResponseWriter, r *http.Request) {
 	principal := auth.MustPrincipal(r.Context())
 	if h.client == nil {
@@ -220,10 +244,20 @@ func (h *Handler) Purchase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var input struct {
-		SKUID string `json:"sku_id"`
+		SKUID           string `json:"sku_id"`
+		ClientRequestNo string `json:"client_request_no"`
 	}
 	if !httpx.DecodeJSON(w, r, 1024, &input) {
 		return
+	}
+	clientRequestNo := strings.TrimSpace(input.ClientRequestNo)
+	if len(clientRequestNo) > 64 {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
+			"client_request_no must be at most 64 characters")
+		return
+	}
+	if clientRequestNo == "" {
+		clientRequestNo = newPurchaseID()
 	}
 	capability, err := h.client.Charge(r.Context())
 	if err != nil {
@@ -249,34 +283,96 @@ func (h *Handler) Purchase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	request := Purchase{ClientRequestNo: clientRequestNo, SKU: input.SKUID}
+	var purchase Purchase
 	if h.purchases != nil {
-		existing, ok, err := h.purchases.LatestPurchaseLink(r.Context(), principal.UserID, now)
-		if err != nil {
-			h.unavailable(w, r, "读取购买链接", err)
-			return
-		}
-		if ok && existing.SKU == input.SKUID {
-			httpx.WriteJSON(w, http.StatusOK, linkView(existing))
-			return
-		}
+		err = h.purchases.LockPurchase(r.Context(), principal.UserID, clientRequestNo, func(ctx context.Context) error {
+			resolved, flowErr := h.purchaseLink(ctx, principal.UserID, request, now)
+			purchase = resolved
+			return flowErr
+		})
+	} else {
+		purchase, err = h.purchaseLink(r.Context(), principal.UserID, request, now)
 	}
-	purchase := Purchase{OutRequestNo: newPurchaseID(), SKU: input.SKUID}
-	link, err := h.client.Purchase(r.Context(), PurchaseRequest{
-		OutRequestNo: purchase.OutRequestNo, Buyer: principal.UserID,
-		SKU: input.SKUID, CallbackURL: h.callback,
-	})
 	if err != nil {
 		h.unavailable(w, r, "获取即刻收购买链接", err)
 		return
 	}
-	purchase.URL, purchase.ExpiresAt = link.URL, link.ExpiresAt
+	httpx.WriteJSON(w, http.StatusOK, linkView(purchase))
+}
+
+// purchaseLink 在 (账号, 幂等键) 的锁里决定这次点击复用、重试还是新创一个入口，再
+// 调用一次 purchase.create 取链接。调用方必须已经持有这个键的锁，否则同一键的两次
+// 并发点击会各创一张链接。
+func (h *Handler) purchaseLink(ctx context.Context, userID string, request Purchase, now time.Time) (Purchase, error) {
+	purchase := request
 	if h.purchases != nil {
-		if err := h.purchases.InsertPurchaseLink(r.Context(), principal.UserID, purchase); err != nil {
-			h.unavailable(w, r, "保存购买链接", err)
-			return
+		existing, ok, err := h.purchases.PurchaseByClientRequestNo(ctx, userID, request.ClientRequestNo)
+		if err != nil {
+			return Purchase{}, err
+		}
+		switch {
+		case ok && existing.State == PurchaseReady && existing.URL != "" && existing.ExpiresAt.After(now):
+			// 同一个键已经有一张可用链接：原样返回，不再创单。
+			return existing, nil
+		case ok && existing.State == PurchaseCreating && existing.ExpiresAt.After(now):
+			// 上一次创单停在同一请求号上：按原号重试，即刻收按幂等返回同一张链接。
+			purchase = existing
+		case ok:
+			// 失败、超时或已过期：换一个请求号重新创单，替换这一行。
+			purchase = Purchase{
+				OutRequestNo: newPurchaseID(), ClientRequestNo: request.ClientRequestNo,
+				SKU: request.SKU, State: PurchaseCreating, ExpiresAt: now.Add(creatingTTL),
+			}
+			if err := h.purchases.ReplacePurchaseLink(ctx, userID, purchase); err != nil {
+				h.log.Error("replace nowpay purchase link", "user_id", userID, "error", err)
+			}
+		default:
+			// 这个键还没有入口：先落一条 creating 占位，再创单。
+			purchase = Purchase{
+				OutRequestNo: newPurchaseID(), ClientRequestNo: request.ClientRequestNo,
+				SKU: request.SKU, State: PurchaseCreating, ExpiresAt: now.Add(creatingTTL),
+			}
+			if err := h.purchases.CreatePurchaseLink(ctx, userID, purchase); err != nil {
+				// 插入失败不回 503：链接仍然可以给出，只是这次点击没有落库。
+				h.log.Error("insert nowpay purchase link", "user_id", userID, "error", err)
+			}
+		}
+	} else {
+		purchase = Purchase{
+			OutRequestNo: newPurchaseID(), ClientRequestNo: request.ClientRequestNo,
+			SKU: request.SKU, State: PurchaseCreating, ExpiresAt: now.Add(creatingTTL),
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, linkView(purchase))
+	if purchase.OutRequestNo == "" {
+		purchase.OutRequestNo = newPurchaseID()
+	}
+	link, err := h.client.Purchase(ctx, PurchaseRequest{
+		OutRequestNo: purchase.OutRequestNo, Buyer: userID,
+		SKU: purchase.SKU, CallbackURL: h.callback,
+	})
+	if err != nil {
+		// 创单失败记 failed，下一次点击用同一个键再试；请求号保留在行里。
+		if h.purchases != nil {
+			markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			if markErr := h.purchases.FailPurchaseLink(markCtx, purchase.OutRequestNo); markErr != nil {
+				h.log.Error("mark nowpay purchase link failed",
+					"user_id", userID, "error", markErr)
+			}
+			cancel()
+		}
+		return Purchase{}, err
+	}
+	purchase.URL, purchase.ExpiresAt, purchase.State = link.URL, link.ExpiresAt, PurchaseReady
+	if h.purchases != nil {
+		markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		if markErr := h.purchases.ReadyPurchaseLink(markCtx, purchase.OutRequestNo, link.URL, link.ExpiresAt); markErr != nil {
+			// 链接照常返回；下一次点击读到 creating 会按原请求号重试，不会重复创单。
+			h.log.Error("record the nowpay purchase link", "user_id", userID, "error", markErr)
+		}
+		cancel()
+	}
+	return purchase, nil
 }
 
 // allow 按账号与实例两层限流；超出时回 429 并带上重试秒数。

@@ -181,12 +181,15 @@ type NowpayCharge struct {
 }
 
 type NowpayPurchase struct {
-	OutRequestNo string
-	UserID       pgtype.Text
-	SkuID        string
-	PurchaseUrl  string
-	ExpiresAt    pgtype.Timestamptz
-	CreatedAt    pgtype.Timestamptz
+	OutRequestNo    string
+	ClientRequestNo string
+	UserID          pgtype.Text
+	SkuID           string
+	State           string
+	PurchaseUrl     pgtype.Text
+	ExpiresAt       pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type Session struct {

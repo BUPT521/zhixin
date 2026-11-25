@@ -22,15 +22,51 @@ SET status = COALESCE(sqlc.narg(status), status),
     updated_at = now()
 WHERE id = sqlc.arg(id);
 
+-- name: PurchaseByClientRequestNo :one
+SELECT * FROM nowpay_purchase
+WHERE user_id = sqlc.arg(user_id) AND client_request_no = sqlc.arg(client_request_no);
+
+-- 账号最近一次可用的购买入口：必须是 ready、带链接且未过期，creating 与 failed 不算。
 -- name: LatestPurchaseLink :one
 SELECT * FROM nowpay_purchase
-WHERE user_id = sqlc.arg(user_id) AND expires_at > sqlc.arg(now)
+WHERE user_id = sqlc.arg(user_id)
+  AND state = 'ready'
+  AND purchase_url IS NOT NULL
+  AND expires_at > sqlc.arg(now)
 ORDER BY created_at DESC, out_request_no DESC
 LIMIT 1;
 
 -- name: InsertPurchaseLink :exec
-INSERT INTO nowpay_purchase (out_request_no, user_id, sku_id, purchase_url, expires_at)
-VALUES (sqlc.arg(out_request_no), sqlc.arg(user_id), sqlc.arg(sku_id), sqlc.arg(purchase_url), sqlc.arg(expires_at));
+INSERT INTO nowpay_purchase
+  (out_request_no, client_request_no, user_id, sku_id, state, purchase_url, expires_at)
+VALUES
+  (sqlc.arg(out_request_no), sqlc.arg(client_request_no), sqlc.arg(user_id), sqlc.arg(sku_id),
+   sqlc.narg(state), sqlc.narg(purchase_url), sqlc.arg(expires_at));
+
+-- 同一个幂等键重新生成入口：换成新的 out_request_no，回到 creating 等 purchase.create。
+-- name: ReplacePurchaseLink :exec
+UPDATE nowpay_purchase
+SET out_request_no = sqlc.arg(out_request_no),
+    sku_id = sqlc.arg(sku_id),
+    state = 'creating',
+    purchase_url = NULL,
+    expires_at = sqlc.arg(expires_at),
+    created_at = now(),
+    updated_at = now()
+WHERE user_id = sqlc.arg(user_id) AND client_request_no = sqlc.arg(client_request_no);
+
+-- name: ReadyPurchaseLink :exec
+UPDATE nowpay_purchase
+SET purchase_url = sqlc.arg(purchase_url),
+    expires_at = sqlc.arg(expires_at),
+    state = 'ready',
+    updated_at = now()
+WHERE out_request_no = sqlc.arg(out_request_no);
+
+-- name: FailPurchaseLink :exec
+UPDATE nowpay_purchase
+SET state = 'failed', updated_at = now()
+WHERE out_request_no = sqlc.arg(out_request_no);
 
 -- 余额副本（ADR-0069、ADR-0073）。查询余额与核销结果覆盖同一个值，负数按 0 落库；
 -- synced_at 是这份余额对应的快照时刻，不是写入时刻。只有不比现有副本旧的快照才覆盖，

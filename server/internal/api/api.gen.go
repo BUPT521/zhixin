@@ -1294,6 +1294,9 @@ type PostV1MeIdentitiesIdVerificationConfirmJSONBody struct {
 
 // PostV1MeModelQuotaPurchasesJSONBody defines parameters for PostV1MeModelQuotaPurchases.
 type PostV1MeModelQuotaPurchasesJSONBody struct {
+	// ClientRequestNo 客户端每次点击生成的幂等键，建议 UUID；同一个键的重试复用同一张链接
+	ClientRequestNo *string `json:"client_request_no,omitempty"`
+
 	// SkuId 取自查商品返回的档位；省略时由用户在购买页选择
 	SkuId *string `json:"sku_id,omitempty"`
 }
