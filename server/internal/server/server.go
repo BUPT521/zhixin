@@ -48,6 +48,9 @@ type Stores struct {
 	Usage   llmproxy.UsageStore
 	// Purchases 保存即刻收的购买入口与积分核销流水；只有 PostgreSQL 装配时提供。
 	Purchases nowpay.PurchaseStore
+	// Balances 保存积分余额的本地副本，额度预留按它放行免费额度之外的用量；只有
+	// PostgreSQL 装配时提供，为空时预留只看免费额度（ADR-0069）。
+	Balances nowpay.BalanceStore
 	// NowPay 是即刻收的调用入口；没有配置商品时保持为空，购买接口只返回空余额。
 	NowPay *nowpay.Client
 	// Catalog 保存管理后台配置的模型来源与路由（ADR-0029）。
@@ -113,7 +116,7 @@ func newPurchaseHandler(cfg config.Config, st Stores, log *slog.Logger) *nowpay.
 			log.Error("ZHIXIN_NOWPAY_PRODUCT_ID is set but no nowpay client is wired: purchases only return an empty balance")
 		}
 	}
-	return nowpay.NewHandler(st.NowPay, st.Purchases, callback, log, cfg.RateLimitKeys, tokensPerPoint)
+	return nowpay.NewHandler(st.NowPay, st.Purchases, st.Balances, callback, log, cfg.RateLimitKeys, tokensPerPoint)
 }
 
 // DeleteAccountData 把各存储的账号清理合成一次操作：auth.Service 在删除账号行

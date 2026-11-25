@@ -124,12 +124,15 @@ type VerifyRequest struct {
 	Reason       string
 }
 
-// Consume 是核销或核销查询的结果。Status 之外的字段只在 SUCCEEDED 时可用，
-// PROCESSING 时缺失的值保持零值而不补猜。
+// Consume 是核销或核销查询的结果。Consumed 只在 SUCCEEDED 时可用，Remaining 是否
+// 存在由 RemainingKnown 给出，PROCESSING 时可能没有；缺失的值保持零值而不补猜。
 type Consume struct {
-	Status    string
-	Consumed  int64
-	Remaining int64
+	Status   string
+	Consumed int64
+	// Remaining 是这次核销之后的剩余积分，RemainingKnown 为真时才有意义：响应里
+	// 不带这个字段时零值不能被当成“余额为零”，否则会把还在余额内的账号挡住。
+	Remaining      int64
+	RemainingKnown bool
 }
 
 // Confirmed 报告这次核销是否已经确认扣减。
@@ -309,6 +312,7 @@ func (c *Client) consume(ctx context.Context, method string, biz map[string]any)
 	}
 	if result.Remaining != nil {
 		consume.Remaining = *result.Remaining
+		consume.RemainingKnown = true
 	}
 	switch consume.Status {
 	case ConsumeSucceeded, ConsumeFailed, ConsumeProcessing:

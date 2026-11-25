@@ -84,12 +84,13 @@ go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate
 |---|---|---|
 | `api_key` | 模型代理的接入密钥，给用户自己的脚本或第三方工具调用 `/v1/llm` 下的模型接口，不参与登录，也不持有学习数据；与访问令牌共用 Bearer 头，靠 `zx_` 前缀区分 | `user_id` 外键级联删除，`key_hash` 唯一且只存整个密钥的 SHA-256，`prefix` 是前 11 位用于展示，`revoked_at` 记录撤销并保留这一行，撤销超过 30 天的行由每日清理删除，`last_used_at` 按十分钟粒度更新；没有有效期列，每账号最多 20 把有效密钥，删号时随外键级联删除 |
 
-增加即刻收的 `nowpay_charge` 与 `nowpay_purchase` 两张表后，服务端共 27 张表，购买数据的归属与用途见[即刻收收款](#即刻收收款)。
+增加即刻收的 `nowpay_charge`、`nowpay_purchase` 与 `nowpay_balance` 三张表后，服务端共 28 张表，购买数据与余额副本的归属和用途见[即刻收收款](#即刻收收款)。
 
 | 表 | 用途 | 关键列与约束 |
 |---|---|---|
 | `nowpay_charge` | 即刻收的积分核销流水，一笔对话结算之后按差额申请一个积分数；`id` 同时是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试 | `user_id` 外键可空，删号时解除关联而不删行；`day` 是记账自然日，`points` 与 `billed_tokens` 是这次申请的积分与折算前的计费 token 数，`status` 的 check 约束为 `pending`、`processing`、`succeeded`、`failed`；`(user_id, day)` 支撑当天已申请量的汇总，部分索引 `(user_id, created_at) WHERE status IN ('pending','processing')` 支撑补查 |
 | `nowpay_purchase` | 购买入口请求，同一账号同一档位在链接有效期内复用原链接，不重复创单 | `out_request_no` 主键，`user_id` 外键可空，删号时解除关联；`sku_id`、`purchase_url` 与 `expires_at`；`(user_id, created_at DESC) WHERE user_id IS NOT NULL` 支撑取最近一次仍在有效期内的入口 |
+| `nowpay_balance` | 积分余额的本地副本，额度预留按它放行免费额度之外的用量，请求路径上不调用即刻收（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)） | `user_id` 主键，外键级联删除，因为副本随账号消失没有保留价值；`remaining_points` 不为负，`synced_at` 是最后一次写入的时间；查询余额、刷新余额与核销结果都覆盖同一个值 |
 
 ## 目录
 
@@ -237,7 +238,9 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与折算比例，`POST /v1/me/model-quota-purchases` 取购买链接，`GET /v1/me/model-quota-purchases/quota` 只查余额。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；通知与查单处理器、Android 侧的 SDK 通道、订单表与钱包表都已删除，`internal/payment` 只保留签名、验签与网关调用。
 
-`nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，同一账号同一档位在链接有效期内复用。两张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
+`nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，同一账号同一档位在链接有效期内复用；`nowpay_balance` 保存积分余额的本地副本，额度预留按它放行。三张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
+
+额度预留先看当天免费额度，聊天在免费额度之外再加上余额副本折成的计费 token（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)）。副本由三个地方写入：概览与单独查余额两个接口在 `quota.query` 成功之后写，核销或补查的响应带剩余积分时写，`NOW_PAY_QUOTA_INSUFFICIENT` 时按零写。副本超过十分钟没有同步或者还没有副本时，预留排一次异步查询，这一轮按现有副本判断，因此请求路径上不调用即刻收；免费额度以内的请求不读副本，也不触发查询。可用积分还要减去副本同步之后才写入的核销流水，以及当天已经发生、还没有记进流水的计费量，同一笔用量不会因为预留与核销的先后被放行两次。
 
 核销在交付之后。每轮对话结算提交之后，服务端按当天用量算出应当由积分承担的计费 token 数（先减免费额度，超出部分才折成积分），按“一个积分等于 `ZHIXIN_TOKENS_PER_POINT` 个计费 token”向上取整，差额写一条 `pending` 流水并排进核销队列。`SUCCEEDED` 记成功；`FAILED` 与 `NOW_PAY_QUOTA_INSUFFICIENT` 记失败，下一次结算重新算差额；`PROCESSING`、超时与网关错误保持原状态，下一轮对话开工前用 `quota.refresh` 补查。核销不提供撤销与返还，交付失败时只能由下一次结算的差额或人工处理。
 
@@ -250,7 +253,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 | `ZHIXIN_NOWPAY_PRODUCT_ID` | 「即刻收」小程序里的商品 ID；为空表示不卖积分包 |
 | `ZHIXIN_NOWPAY_CALLBACK_URL` | 可选，购买页返回后的跳转地址，必须是 HTTPS；它不是到账通知 |
 
-配置了商品 ID 时启动会检查 `nowpay_charge` 与 `nowpay_purchase` 两张表是否存在，缺表直接退出。在独立实例上先用增量语句建表，再改 `api.env` 并重启，核对 `/readyz` 返回 200。核对购买通道时用已验证邮箱的账号在真机上买一笔最小档位：`GET /v1/me/model-quota-purchases` 的 `balance_points` 增加，客户端回到前台后余额跟着刷新；再发一次对话，`nowpay_charge` 出现一条 `succeeded` 的流水，`quota.query` 的剩余积分按 `Usage.Billed` 折算后减少；同一轮重复发请求不会多扣，`PROCESSING` 时补查用的是同一行的 `id`。
+配置了商品 ID 时启动会检查 `nowpay_charge`、`nowpay_purchase` 与 `nowpay_balance` 三张表是否存在，缺表直接退出。在独立实例上先用增量语句建表，再改 `api.env` 并重启，核对 `/readyz` 返回 200。核对购买通道时用已验证邮箱的账号在真机上买一笔最小档位：`GET /v1/me/model-quota-purchases` 的 `balance_points` 增加，客户端回到前台后余额跟着刷新，`nowpay_balance` 出现这个账号的一行；再发一次对话，`nowpay_charge` 出现一条 `succeeded` 的流水，`quota.query` 的剩余积分按 `Usage.Billed` 折算后减少；同一轮重复发请求不会多扣，`PROCESSING` 时补查用的是同一行的 `id`。核对付费放行时把当天的免费额度用完（或在后台把账号额度调小）再发一次对话：请求应正常回答而不是回 429，`llm_usage` 的当天用量会超过免费额度，结算之后出现核销流水，`nowpay_balance` 的 `remaining_points` 随之减少。删掉这个账号的副本行再发一次对话，第一次回 429 且日志里有一次余额查询，第二次正常回答。
 
 
 ## 管理后台

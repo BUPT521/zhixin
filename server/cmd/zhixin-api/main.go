@@ -107,10 +107,11 @@ func run(log *slog.Logger) error {
 				return objects.Ping(ctx)
 			},
 		}
-		// 即刻收的购买入口、流水与调用入口在整体装配之后补上：这里的赋值必须在
-		// stores 赋值之后，否则会被上面那份字面量覆盖掉。
+		// 即刻收的购买入口、流水、余额副本与调用入口在整体装配之后补上：这里的
+		// 赋值必须在 stores 赋值之后，否则会被上面那份字面量覆盖掉。
 		if cfg.NowPay != nil {
 			stores.Purchases = pgStore
+			stores.Balances = pgStore
 			stores.NowPay = nowpayClient
 		}
 	}

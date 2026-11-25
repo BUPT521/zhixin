@@ -32,8 +32,24 @@ func (f *fakePurchases) InsertPurchaseLink(_ context.Context, _ string, purchase
 	return nil
 }
 
+type fakeBalances struct {
+	saved map[string]int64
+}
+
+func (f *fakeBalances) SaveBalance(_ context.Context, userID string, remaining int64) error {
+	if f.saved == nil {
+		f.saved = map[string]int64{}
+	}
+	f.saved[userID] = remaining
+	return nil
+}
+
 func newTestHandler(client *Client, purchases *fakePurchases) *Handler {
-	handler := NewHandler(client, purchases, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 1000)
+	return newTestHandlerWith(client, purchases, &fakeBalances{})
+}
+
+func newTestHandlerWith(client *Client, purchases *fakePurchases, balances *fakeBalances) *Handler {
+	handler := NewHandler(client, purchases, balances, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 1000)
 	handler.limit, handler.global = ratelimit.Disabled(), ratelimit.Disabled()
 	return handler
 }
@@ -71,7 +87,8 @@ func TestOverviewWithoutProductReturnsTheDefaultRatio(t *testing.T) {
 }
 
 func TestOverviewReturnsTheConfiguredTokensPerPoint(t *testing.T) {
-	handler := NewHandler(nil, &fakePurchases{}, "", slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 500)
+	handler := NewHandler(nil, &fakePurchases{}, &fakeBalances{}, "",
+		slog.New(slog.NewTextHandler(io.Discard, nil)), 8, 500)
 	handler.limit, handler.global = ratelimit.Disabled(), ratelimit.Disabled()
 	response := httptest.NewRecorder()
 	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
@@ -88,7 +105,8 @@ func TestOverviewReportsProductStatusAndPointsBalance(t *testing.T) {
 		methodQuota: `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
 	}}
 	purchases := &fakePurchases{}
-	handler := newTestHandler(newTestClient(t, caller), purchases)
+	balances := &fakeBalances{}
+	handler := newTestHandlerWith(newTestClient(t, caller), purchases, balances)
 	response := httptest.NewRecorder()
 	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
 	if response.Code != http.StatusOK {
@@ -103,6 +121,10 @@ func TestOverviewReportsProductStatusAndPointsBalance(t *testing.T) {
 	}
 	if view.BalancePoints != 55 {
 		t.Fatalf("余额应返回: %+v", view)
+	}
+	// 查到的余额也要落进本地副本，额度预留按它放行（ADR-0069）。
+	if balances.saved["user_1"] != 55 {
+		t.Fatalf("概览查到的余额应写进副本: %+v", balances.saved)
 	}
 }
 
@@ -188,11 +210,15 @@ func TestBalanceEndpointReturnsTheCurrentPoints(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodQuota: `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
 	}}
-	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
+	balances := &fakeBalances{}
+	handler := newTestHandlerWith(newTestClient(t, caller), &fakePurchases{}, balances)
 	response := httptest.NewRecorder()
 	handler.Balance(response, request(http.MethodGet, "/v1/me/model-quota-purchases/quota", ""))
 	balance := decode[api.QuotaBalance](t, response)
 	if response.Code != http.StatusOK || balance.Remaining != 55 || balance.Total != 100 || balance.Used != 40 {
 		t.Fatalf("余额应原样返回: %d %+v", response.Code, balance)
+	}
+	if balances.saved["user_1"] != 55 {
+		t.Fatalf("刷新余额时应更新副本: %+v", balances.saved)
 	}
 }

@@ -31,6 +31,42 @@ func (q *Queries) AppliedChargePoints(ctx context.Context, arg AppliedChargePoin
 	return column_1, err
 }
 
+const balanceForReserve = `-- name: BalanceForReserve :one
+SELECT remaining_points, synced_at FROM nowpay_balance WHERE user_id = $1
+`
+
+type BalanceForReserveRow struct {
+	RemainingPoints int64
+	SyncedAt        pgtype.Timestamptz
+}
+
+// 预留要用的余额副本；没有行表示这个账号还没有同步过余额。
+func (q *Queries) BalanceForReserve(ctx context.Context, userID string) (BalanceForReserveRow, error) {
+	row := q.db.QueryRow(ctx, balanceForReserve, userID)
+	var i BalanceForReserveRow
+	err := row.Scan(&i.RemainingPoints, &i.SyncedAt)
+	return i, err
+}
+
+const chargedTokens = `-- name: ChargedTokens :one
+SELECT COALESCE(MAX(billed_tokens), 0)::bigint FROM nowpay_charge
+WHERE user_id = $1 AND day = $2::date AND status <> 'failed'
+`
+
+type ChargedTokensParams struct {
+	UserID pgtype.Text
+	Day    pgtype.Date
+}
+
+// 当天已经折算成积分的累计计费量：流水里的 billed_tokens 是当时的当天累计量，
+// 取最大值就是最后一次申请时的累计量。failed 的流水没有扣减，不计入。
+func (q *Queries) ChargedTokens(ctx context.Context, arg ChargedTokensParams) (int64, error) {
+	row := q.db.QueryRow(ctx, chargedTokens, arg.UserID, arg.Day)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const insertCharge = `-- name: InsertCharge :exec
 INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens)
 VALUES ($1, $2, $3::date, $4, $5)
@@ -105,6 +141,25 @@ func (q *Queries) LatestPurchaseLink(ctx context.Context, arg LatestPurchaseLink
 	return i, err
 }
 
+const saveBalance = `-- name: SaveBalance :exec
+INSERT INTO nowpay_balance (user_id, remaining_points, synced_at)
+VALUES ($1, GREATEST($2::bigint, 0), now())
+ON CONFLICT (user_id) DO UPDATE
+SET remaining_points = GREATEST($2::bigint, 0),
+    synced_at = now()
+`
+
+type SaveBalanceParams struct {
+	UserID          string
+	RemainingPoints int64
+}
+
+// 余额副本（ADR-0069）。查询余额与核销结果覆盖同一个值，负数按 0 落库。
+func (q *Queries) SaveBalance(ctx context.Context, arg SaveBalanceParams) error {
+	_, err := q.db.Exec(ctx, saveBalance, arg.UserID, arg.RemainingPoints)
+	return err
+}
+
 const setChargeStatus = `-- name: SetChargeStatus :exec
 UPDATE nowpay_charge
 SET status = COALESCE($1, status),
@@ -122,6 +177,27 @@ type SetChargeStatusParams struct {
 func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams) error {
 	_, err := q.db.Exec(ctx, setChargeStatus, arg.Status, arg.Note, arg.ID)
 	return err
+}
+
+const unreflectedChargePoints = `-- name: UnreflectedChargePoints :one
+SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
+WHERE user_id = $1
+  AND status <> 'failed'
+  AND created_at >= $2
+`
+
+type UnreflectedChargePointsParams struct {
+	UserID   pgtype.Text
+	SyncedAt pgtype.Timestamptz
+}
+
+// 副本同步之后才写入的核销流水合计的积分。副本已经反映它们之前的扣减，这部分
+// 还没有反映；failed 表示确认没有扣减，不计入。
+func (q *Queries) UnreflectedChargePoints(ctx context.Context, arg UnreflectedChargePointsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, unreflectedChargePoints, arg.UserID, arg.SyncedAt)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const unsettledCharges = `-- name: UnsettledCharges :many

@@ -23,6 +23,9 @@ func (s *Store) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyT
 // Reserve 在一个事务里完成“比较上限、写入预留”。同一天的预留用事务级 advisory
 // lock 排成队，因为实例预算是当天所有账号的合计，行锁管不住并发插入的新行；账
 // 号额度与实例预算因此在同一个临界区里检查并扣减，不会各自按旧值通过。
+//
+// 账号额度分两段：当天免费额度先算，聊天在免费额度之外再加上即刻收余额折成的
+// token（ADR-0069），嵌入只有免费额度。余额取本地副本，这一段不调用即刻收。
 func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, want int64) (int64, error) {
 	if want <= 0 {
 		return 0, llmproxy.ErrQuotaExceeded
@@ -55,10 +58,18 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if err != nil {
 		return 0, err
 	}
-	free := max(0, limit-used)
 	reserved := want
 	if limited {
-		reserved = min(reserved, free)
+		allowed := max(0, limit-used)
+		// 免费额度不够这一次预留时才算余额：额度内的请求不读副本，也不触发查询。
+		if allowed < want && kind == llmproxy.KindChat && s.nowpay != nil {
+			paid, err := s.paidTokens(ctx, q, userID, date, used, limit)
+			if err != nil {
+				return 0, err
+			}
+			allowed += paid
+		}
+		reserved = min(reserved, allowed)
 	}
 	if s.instanceDailyTokens > 0 {
 		instanceUsed, err := q.InstanceTokens(ctx, date)

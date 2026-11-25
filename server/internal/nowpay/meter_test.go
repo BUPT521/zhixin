@@ -17,6 +17,7 @@ type fakeLedger struct {
 	created   []Charge
 	unsettled []Charge
 	statuses  []statusChange
+	balances  map[string]int64
 }
 
 func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required int64) (Charge, bool, error) {
@@ -27,6 +28,14 @@ func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required in
 	f.applied = required
 	f.created = append(f.created, charge)
 	return charge, true, nil
+}
+
+func (f *fakeLedger) SaveBalance(_ context.Context, userID string, remaining int64) error {
+	if f.balances == nil {
+		f.balances = map[string]int64{}
+	}
+	f.balances[userID] = remaining
+	return nil
 }
 
 func (f *fakeLedger) Unsettled(context.Context, string, int) ([]Charge, error) {
@@ -128,6 +137,10 @@ func TestRunMarksSucceededOnlyOnConfirmedConsume(t *testing.T) {
 	if got := ledger.last(); got.status != StatusSucceeded {
 		t.Fatalf("SUCCEEDED 应落成功: %+v", got)
 	}
+	// 响应里的剩余积分是余额副本的下一个值，额度预留按它放行（ADR-0069）。
+	if ledger.balances["user_1"] != 97 {
+		t.Fatalf("核销成功应把剩余积分写进副本: %+v", ledger.balances)
+	}
 }
 
 func TestProcessingIsQueriedWithTheSameRequestNo(t *testing.T) {
@@ -135,12 +148,16 @@ func TestProcessingIsQueriedWithTheSameRequestNo(t *testing.T) {
 		methodVerify:  `{"code":"10000","consume_status":"PROCESSING","quota_unit":"POINT"}`,
 		methodRefresh: `{"code":"10000","consume_status":"SUCCEEDED","consumed":3,"remaining":97}`,
 	}}
-	ledger := &fakeLedger{}
+	ledger := &fakeLedger{balances: map[string]int64{"user_1": 50}}
 	meter := newTestMeter(t, ledger, caller)
 	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
 	meter.run(context.Background(), job{charge: charge, verify: true})
 	if got := ledger.last(); got.status != StatusProcessing {
 		t.Fatalf("PROCESSING 应记为处理中: %+v", got)
+	}
+	// PROCESSING 的响应通常不带剩余积分，零值不能被当成“余额为零”覆盖副本。
+	if ledger.balances["user_1"] != 50 {
+		t.Fatalf("没有剩余积分的响应不能改动副本: %+v", ledger.balances)
 	}
 	meter.run(context.Background(), job{charge: charge})
 	if caller.methods[1] != methodRefresh {
@@ -151,6 +168,9 @@ func TestProcessingIsQueriedWithTheSameRequestNo(t *testing.T) {
 	}
 	if got := ledger.last(); got.status != StatusSucceeded {
 		t.Fatalf("补查确认后应落成功: %+v", got)
+	}
+	if ledger.balances["user_1"] != 97 {
+		t.Fatalf("补查确认后应把剩余积分写进副本: %+v", ledger.balances)
 	}
 }
 
@@ -173,12 +193,63 @@ func TestInsufficientPointsIsMarkedFailedForTheNextSettlement(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodVerify: `{"code":"40004","sub_code":"NOW_PAY_QUOTA_INSUFFICIENT","sub_msg":"额度不足"}`,
 	}}
-	ledger := &fakeLedger{}
+	ledger := &fakeLedger{balances: map[string]int64{"user_1": 40}}
 	meter := newTestMeter(t, ledger, caller)
 	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
 	meter.run(context.Background(), job{charge: charge, verify: true})
 	if got := ledger.last(); got.status != StatusFailed {
 		t.Fatalf("余额不足应记失败，让下次结算重算差额: %+v", got)
+	}
+	// 副本比实际高才会走到这里，按零覆盖之后下一次预留不再按旧值放行。
+	if ledger.balances["user_1"] != 0 {
+		t.Fatalf("余额不足应把副本清零: %+v", ledger.balances)
+	}
+}
+
+func TestRefreshBalanceQueriesTheGatewayAndSavesTheCopy(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodQuota: `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
+	}}
+	ledger := &fakeLedger{}
+	meter := newTestMeter(t, ledger, caller)
+	meter.RefreshBalance(context.Background(), "user_1")
+	if len(meter.queue) != 1 {
+		t.Fatalf("应排一次余额查询，实际 %d", len(meter.queue))
+	}
+	next := <-meter.queue
+	if !next.balance || next.userID != "user_1" {
+		t.Fatalf("队列里应是一次余额查询: %+v", next)
+	}
+	meter.run(context.Background(), next)
+	if caller.methods[0] != methodQuota {
+		t.Fatalf("余额查询应走 quota.query，实际 %s", caller.methods[0])
+	}
+	if ledger.balances["user_1"] != 55 {
+		t.Fatalf("查到的余额应写进副本: %+v", ledger.balances)
+	}
+}
+
+func TestRefreshBalanceKeepsTheOldCopyWhenTheGatewayFails(t *testing.T) {
+	caller := &fakeCaller{err: ErrGatewayForTest}
+	ledger := &fakeLedger{balances: map[string]int64{"user_1": 30}}
+	meter := newTestMeter(t, ledger, caller)
+	meter.run(context.Background(), job{balance: true, userID: "user_1"})
+	// 查询失败不能当成零余额，否则还在余额内的账号会被挡在免费额度之外。
+	if ledger.balances["user_1"] != 30 {
+		t.Fatalf("查询失败应保留旧副本: %+v", ledger.balances)
+	}
+}
+
+func TestRefreshBalanceCoalescesRepeatedRequests(t *testing.T) {
+	ledger := &fakeLedger{}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	// 额度用完之后的每个请求都会发现副本过期，同一账号一分钟内只排一次查询，
+	// 不把核销队列占住。
+	meter.RefreshBalance(context.Background(), "user_1")
+	meter.RefreshBalance(context.Background(), "user_1")
+	meter.RefreshBalance(context.Background(), "user_2")
+	if len(meter.queue) != 2 {
+		t.Fatalf("同一账号的重复查询应合并，实际队列 %d", len(meter.queue))
 	}
 }
 

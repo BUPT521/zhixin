@@ -161,6 +161,12 @@ type LlmUsage struct {
 	CachedTokens int64
 }
 
+type NowpayBalance struct {
+	UserID          string
+	RemainingPoints int64
+	SyncedAt        pgtype.Timestamptz
+}
+
 type NowpayCharge struct {
 	ID           string
 	UserID       pgtype.Text

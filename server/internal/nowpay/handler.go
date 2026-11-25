@@ -29,11 +29,18 @@ type PurchaseStore interface {
 	InsertPurchaseLink(ctx context.Context, userID string, purchase Purchase) error
 }
 
+// BalanceStore 保存积分余额的本地副本，由 store/pg 实现。额度预留按这份副本放行
+// 免费额度之外的用量，所以每次查到余额都要写回（ADR-0069）。
+type BalanceStore interface {
+	SaveBalance(ctx context.Context, userID string, remaining int64) error
+}
+
 // Handler 提供查商品与余额、取购买链接、单独查余额三个接口。客户端只负责打开链接
 // 和刷新余额，能不能买、扣了多少都由服务端按即刻收的结果判断。
 type Handler struct {
 	client    *Client
 	purchases PurchaseStore
+	balances  BalanceStore
 	callback  string
 	log       *slog.Logger
 	limit     *ratelimit.Limiter
@@ -45,7 +52,8 @@ type Handler struct {
 }
 
 // NewHandler 装配三个接口。client 为空表示没有配置即刻收商品，接口只返回空余额。
-func NewHandler(client *Client, purchases PurchaseStore, callback string, log *slog.Logger, rateKeys int, tokensPerPoint int64) *Handler {
+func NewHandler(client *Client, purchases PurchaseStore, balances BalanceStore, callback string,
+	log *slog.Logger, rateKeys int, tokensPerPoint int64) *Handler {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -53,7 +61,7 @@ func NewHandler(client *Client, purchases PurchaseStore, callback string, log *s
 		tokensPerPoint = 1000
 	}
 	return &Handler{
-		client: client, purchases: purchases, callback: callback, log: log,
+		client: client, purchases: purchases, balances: balances, callback: callback, log: log,
 		limit:          ratelimit.New(0.5, 6, 15*time.Minute, rateKeys),
 		global:         ratelimit.NewGlobal(ratelimit.Limit{PerSecond: 12, Burst: 24}),
 		tokensPerPoint: tokensPerPoint,
@@ -84,6 +92,7 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	}
 	view.Product = productView(capability)
 	view.BalancePoints = balance.Remaining
+	h.saveBalance(r.Context(), principal.UserID, balance.Remaining)
 	if h.purchases != nil {
 		existing, ok, err := h.purchases.LatestPurchaseLink(r.Context(), principal.UserID, time.Now())
 		if err != nil {
@@ -110,9 +119,21 @@ func (h *Handler) Balance(w http.ResponseWriter, r *http.Request) {
 		h.unavailable(w, r, "查询即刻收积分余额", err)
 		return
 	}
+	h.saveBalance(r.Context(), principal.UserID, balance.Remaining)
 	httpx.WriteJSON(w, http.StatusOK, api.QuotaBalance{
 		Remaining: balance.Remaining, Total: balance.Total, Used: balance.Used,
 	})
+}
+
+// saveBalance 把查到的余额写进本地副本，额度预留据此放行免费额度之外的用量。写
+// 失败不影响这次查询的结果，下一次查询或核销会再写一遍。
+func (h *Handler) saveBalance(ctx context.Context, userID string, remaining int64) {
+	if h.balances == nil {
+		return
+	}
+	if err := h.balances.SaveBalance(ctx, userID, remaining); err != nil {
+		h.log.Error("save nowpay balance", "user_id", userID, "error", err)
+	}
 }
 
 // Purchase 取一个托管购买页链接。价格与档位由即刻收给出，服务端只按 sku_id 锁定

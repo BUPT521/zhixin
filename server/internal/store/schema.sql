@@ -323,6 +323,16 @@ CREATE TABLE nowpay_purchase (
 CREATE INDEX nowpay_purchase_user_created_idx
   ON nowpay_purchase (user_id, created_at DESC) WHERE user_id IS NOT NULL;
 
+-- 即刻收积分余额的本地副本（ADR-0069）。额度预留按免费额度之外的这份余额放行，
+-- 请求路径上因此不必调用即刻收：查询余额、购买页刷新与每次核销的结果都覆盖
+-- remaining_points 与 synced_at。它是缓存而不是账本，账号删除时一并删除；真正
+-- 的余额在支付宝一侧，这里只用于判断能不能放行。
+CREATE TABLE nowpay_balance (
+  user_id          TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
+  remaining_points BIGINT NOT NULL CHECK (remaining_points >= 0),
+  synced_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- 附件索引：字节在对象存储的 attachments/<user_id>/<sha256>，这张表只记“这个
 -- 账号有这份内容、占多少字节”。账号总量配额按它求和；同一账号相同内容只有一行，
 -- 重复上传因此不重复计入。主键的前缀 (user_id) 已能支持按账号求和，不再为回填与

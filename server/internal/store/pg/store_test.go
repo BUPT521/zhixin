@@ -24,7 +24,7 @@ import (
 
 // dropSchemaTables 是重建测试库之前要删掉的表，与 schema.sql 的表一一对应。
 // 漏一张会让残留的旧表挡住下一次建表，testSchemaTables 在无数据库时也会核对。
-const dropSchemaTables = `DROP TABLE IF EXISTS nowpay_charge, nowpay_purchase, embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, session_refresh_used, api_key, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_commit_seen, sync_ref, sync_device, sync_state, auth_code, user_identity, session, app_user CASCADE`
+const dropSchemaTables = `DROP TABLE IF EXISTS nowpay_balance, nowpay_charge, nowpay_purchase, embedding_cache_generation, llm_instance_usage, embedding_cache, llm_route_usage, llm_route, llm_model, llm_provider, attachment, session_refresh_used, api_key, llm_quota, install_active, user_active, feedback, llm_usage, backup, sync_commit, sync_commit_seen, sync_ref, sync_device, sync_state, auth_code, user_identity, session, app_user CASCADE`
 
 // newTestStore 连一个真实的 PostgreSQL 并整份建表。
 //
@@ -59,7 +59,7 @@ func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
 	return st
 }
 
-// TestDropListCoversSchema 核对删表清单与 schema.sql 的表一一对应（27 张）。清单
+// TestDropListCoversSchema 核对删表清单与 schema.sql 的表一一对应（28 张）。清单
 // 多一张是无害的，少一张会让重建后的库里留下旧表，下一次建表在 CI 上失败；这条
 // 用例不需要数据库，改动 schema.sql 时立刻能发现两边漂移。
 func TestDropListCoversSchema(t *testing.T) {
@@ -81,8 +81,8 @@ func TestDropListCoversSchema(t *testing.T) {
 	for _, name := range strings.Split(listed, ",") {
 		got = append(got, strings.TrimSpace(name))
 	}
-	if len(want) != 27 {
-		t.Fatalf("schema.sql 应有 27 张表，实际 %d: %v", len(want), want)
+	if len(want) != 28 {
+		t.Fatalf("schema.sql 应有 28 张表，实际 %d: %v", len(want), want)
 	}
 	if len(got) != len(want) {
 		t.Fatalf("删表清单 %d 张，schema.sql %d 张: %v", len(got), len(want), got)
