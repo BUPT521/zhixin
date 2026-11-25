@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -47,6 +48,10 @@ type Store struct {
 	// nowpay 是即刻收的核销执行器；为空表示没有配置商品，结算之后不产生积分核销。
 	// 装配由 server.Build 在构造处理器时注入，见 SetNowPay。
 	nowpay nowpay.Recorder
+	// balanceReady 表示 nowpay_balance 已经建好，额度预留可以按余额副本放行。
+	// 缺表时服务照常启动，只是免费额度之外不能再用积分（ADR-0069）；启动时由
+	// CheckNowPaySchema 设置，运行期间只读。
+	balanceReady atomic.Bool
 }
 
 var (

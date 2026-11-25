@@ -46,6 +46,14 @@ func (f *fakeRecorder) RefreshBalance(_ context.Context, userID string) {
 
 func (f *fakeRecorder) TokensPerPoint() int64 { return f.perPoint }
 
+// enablePaidQuota 像启动时那样确认即刻收的表都在，打开免费额度之外的放行。
+func enablePaidQuota(t *testing.T, st *Store) {
+	t.Helper()
+	if err := st.CheckNowPaySchema(context.Background()); err != nil {
+		t.Fatalf("check nowpay schema: %v", err)
+	}
+}
+
 // TestPostgresReserveAllowsPointsBeyondTheFreeAllowance 守住付费用户能不能用：免费
 // 额度用完之前不读余额，用完之后按本地副本放行，副本缺失时这次仍回 429 并排一次
 // 异步查询（ADR-0069）。
@@ -58,6 +66,7 @@ func TestPostgresReserveAllowsPointsBeyondTheFreeAllowance(t *testing.T) {
 	const day = "2026-11-25"
 	// 一个积分一千个计费 token，聊天与嵌入的免费额度各 100 个 token。
 	recorder := &fakeRecorder{perPoint: 1000}
+	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
 	st.SetQuotaLimits(100, 100, 0)
 
@@ -100,6 +109,7 @@ func TestPostgresReserveCountsChargesAndUnbilledTokens(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	const day = "2026-11-25"
+	enablePaidQuota(t, st)
 	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	st.SetQuotaLimits(100, 0, 0)
 
@@ -133,6 +143,7 @@ func TestPostgresReserveRefreshesAStaleBalanceCopy(t *testing.T) {
 	}
 	const day = "2026-11-25"
 	recorder := &fakeRecorder{perPoint: 1000}
+	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
 	st.SetQuotaLimits(100, 0, 0)
 	if err := st.SaveBalance(ctx, "u1", 2); err != nil {
@@ -158,6 +169,7 @@ func TestPostgresSaveBalanceClampsNegative(t *testing.T) {
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
+	enablePaidQuota(t, st)
 	if err := st.SaveBalance(ctx, "u1", -3); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -167,5 +179,37 @@ func TestPostgresSaveBalanceClampsNegative(t *testing.T) {
 	}
 	if row.RemainingPoints != 0 {
 		t.Fatalf("副本不应是负数，得到 %d", row.RemainingPoints)
+	}
+}
+
+// TestPostgresStartsWithoutTheBalanceTable 守住建表顺序：余额副本是纯新增表，还没
+// 建好时服务照常启动，免费额度之外的放行停用，读写副本都静默跳过（ADR-0069）。
+func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	if _, err := st.pool.Exec(ctx, `DROP TABLE nowpay_balance`); err != nil {
+		t.Fatalf("drop nowpay_balance: %v", err)
+	}
+	if err := st.CheckNowPaySchema(ctx); err != nil {
+		t.Fatalf("缺余额副本时启动不应失败: %v", err)
+	}
+	const day = "2026-11-25"
+	recorder := &fakeRecorder{perPoint: 1000}
+	st.SetNowPay(recorder)
+	st.SetQuotaLimits(100, 0, 0)
+	if err := st.SaveBalance(ctx, "u1", 5); err != nil {
+		t.Fatalf("缺表时写副本应跳过而不是报错: %v", err)
+	}
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil || got != 100 {
+		t.Fatalf("免费额度内的预留不受影响，得到 %d %v", got, err)
+	}
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 50); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+		t.Fatalf("缺副本表时免费额度之外仍应拒绝，得到 %v", err)
+	}
+	if len(recorder.refreshed) != 0 {
+		t.Fatalf("缺表时不应排余额查询: %+v", recorder.refreshed)
 	}
 }

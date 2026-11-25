@@ -253,7 +253,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 | `ZHIXIN_NOWPAY_PRODUCT_ID` | 「即刻收」小程序里的商品 ID；为空表示不卖积分包 |
 | `ZHIXIN_NOWPAY_CALLBACK_URL` | 可选，购买页返回后的跳转地址，必须是 HTTPS；它不是到账通知 |
 
-配置了商品 ID 时启动会检查 `nowpay_charge`、`nowpay_purchase` 与 `nowpay_balance` 三张表是否存在，缺表直接退出。在独立实例上先用增量语句建表，再改 `api.env` 并重启，核对 `/readyz` 返回 200。核对购买通道时用已验证邮箱的账号在真机上买一笔最小档位：`GET /v1/me/model-quota-purchases` 的 `balance_points` 增加，客户端回到前台后余额跟着刷新，`nowpay_balance` 出现这个账号的一行；再发一次对话，`nowpay_charge` 出现一条 `succeeded` 的流水，`quota.query` 的剩余积分按 `Usage.Billed` 折算后减少；同一轮重复发请求不会多扣，`PROCESSING` 时补查用的是同一行的 `id`。核对付费放行时把当天的免费额度用完（或在后台把账号额度调小）再发一次对话：请求应正常回答而不是回 429，`llm_usage` 的当天用量会超过免费额度，结算之后出现核销流水，`nowpay_balance` 的 `remaining_points` 随之减少。删掉这个账号的副本行再发一次对话，第一次回 429 且日志里有一次余额查询，第二次正常回答。
+配置了商品 ID 时启动会检查这三张表：`nowpay_charge` 与 `nowpay_purchase` 缺表直接退出，`nowpay_balance` 缺表只记一条错误日志并停用免费额度之外的放行，服务照常启动（[ADR-0069](../docs/adr/0069-积分余额的本地副本与预留放行.md)）。这张副本表是纯新增，已经在收款的实例可以先部署新版，再按运维手册建表并重启，放行随之生效，不必为了建表顺序停服。在独立实例上先用增量语句建表，再改 `api.env` 并重启，核对 `/readyz` 返回 200。核对购买通道时用已验证邮箱的账号在真机上买一笔最小档位：`GET /v1/me/model-quota-purchases` 的 `balance_points` 增加，客户端回到前台后余额跟着刷新，`nowpay_balance` 出现这个账号的一行；再发一次对话，`nowpay_charge` 出现一条 `succeeded` 的流水，`quota.query` 的剩余积分按 `Usage.Billed` 折算后减少；同一轮重复发请求不会多扣，`PROCESSING` 时补查用的是同一行的 `id`。核对付费放行时把当天的免费额度用完（或在后台把账号额度调小）再发一次对话：请求应正常回答而不是回 429，`llm_usage` 的当天用量会超过免费额度，结算之后出现核销流水，`nowpay_balance` 的 `remaining_points` 随之减少。删掉这个账号的副本行再发一次对话，第一次回 429 且日志里有一次余额查询，第二次正常回答。
 
 
 ## 管理后台

@@ -22,24 +22,34 @@ var (
 
 // CheckNowPaySchema 确认即刻收的表已经建好。建表不在这条流水线里执行：生产库已有
 // 真实交易，改表用可回滚的增量语句，见 server/运维手册.md。
+//
+// 核销与购买入口这两张表是收款的前提，缺表直接退出；余额副本是 2026-11-25 补的
+// 一张纯新增表，缺表时只记日志并停用免费额度之外的放行（ADR-0069），这样已经在
+// 收款的实例可以先部署新版，再按运维手册建表并重启，不会因为建表顺序停服。
 func (s *Store) CheckNowPaySchema(ctx context.Context) error {
-	var installed bool
+	var installed, balance bool
 	err := s.pool.QueryRow(ctx, `SELECT to_regclass('nowpay_charge') IS NOT NULL
-		AND to_regclass('nowpay_purchase') IS NOT NULL
-		AND to_regclass('nowpay_balance') IS NOT NULL`).Scan(&installed)
+		AND to_regclass('nowpay_purchase') IS NOT NULL,
+		to_regclass('nowpay_balance') IS NOT NULL`).Scan(&installed, &balance)
 	if err != nil {
 		return err
 	}
 	if !installed {
-		return errors.New("pg: 即刻收收款需要按 schema.sql 建好 nowpay_charge、nowpay_purchase 与 nowpay_balance")
+		return errors.New("pg: 即刻收收款需要按 schema.sql 建好 nowpay_charge 与 nowpay_purchase")
+	}
+	s.balanceReady.Store(balance)
+	if !balance {
+		s.log.Error("nowpay_balance is missing: chat stays limited to the free allowance until the table is created and the service restarts",
+			"table", "nowpay_balance")
 	}
 	return nil
 }
 
 // SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本（ADR-0069）。副本只用于判断
 // 能不能放行，真正的余额在支付宝一侧；账号已经删除时外键拒绝写入，按错误返回。
+// 副本表还没建好时不做任何事，等建表并重启之后才写。
 func (s *Store) SaveBalance(ctx context.Context, userID string, remaining int64) error {
-	if userID == "" {
+	if userID == "" || !s.balanceReady.Load() {
 		return nil
 	}
 	return s.q.SaveBalance(ctx, db.SaveBalanceParams{UserID: userID, RemainingPoints: remaining})
@@ -189,8 +199,12 @@ func chargeableTokens(used, limit int64) int64 {
 //
 // 可用积分是副本减去副本同步之后才写入的核销流水，副本已经反映那之前的扣减；再减
 // 去当天已经发生、还没有记进流水的计费量，同一笔用量不会因为预留与核销的先后被
-// 放行两次。
+// 放行两次。副本表还没建好时一律按零，与副本缺失同样处理。
 func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, used, limit int64) (int64, error) {
+	// 副本表还没建好时只放行免费额度，不去查一张不存在的表。
+	if !s.balanceReady.Load() {
+		return 0, nil
+	}
 	balance, err := q.BalanceForReserve(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.nowpay.RefreshBalance(ctx, userID)
