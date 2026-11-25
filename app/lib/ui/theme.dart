@@ -36,6 +36,7 @@ const _NeutralPalette _lightNeutral = _NeutralPalette(
   border: Color(0xFFE6E6E8),
   inputBorder: Color(0xFFC9C9CE),
   raised: Color(0xFFF4F4F5),
+  selectedSurface: Color(0xFFFFFFFF),
   error: Color(0xFFBA1A1A),
   onError: Color(0xFFFFFFFF),
 );
@@ -50,6 +51,7 @@ const _NeutralPalette _darkNeutral = _NeutralPalette(
   border: Color(0xFF2A2A2E),
   inputBorder: Color(0xFF45454B),
   raised: Color(0xFF1E1E21),
+  selectedSurface: Color(0xFF2F2F2F),
   error: Color(0xFFFFB4AB),
   onError: Color(0xFF690005),
 );
@@ -239,6 +241,7 @@ class ZhixinColors {
     required this.onSecondaryContainer,
     required this.surface,
     required this.surfaceContainerHigh,
+    required this.surfaceSelected,
     required this.card,
     required this.attention,
     required this.attentionContainer,
@@ -291,6 +294,11 @@ class ZhixinColors {
 
   /// 比页面底色高一档的中性表面，例如标签底、分段条与骨架块。
   final Color surfaceContainerHigh;
+
+  /// 分段控件选中项的底色；深浅两套都比分段条亮一档，切换时不会出现一块更暗的
+  /// 底压在轨道上。
+  final Color surfaceSelected;
+
   final Color card;
 }
 
@@ -580,6 +588,53 @@ forui.FButtonStyles _buttonStyles(
     ),
   );
 
+  // 空心按钮与文字按钮按下时只压出一层中性表面：Forui 默认取次要按钮的浅底，
+  // 深色外观下那是一块暗蓝，按一下像闪了一下黑。选中态与按下态用同一档底色，
+  // 悬停与键盘聚焦也不另画颜色。
+  forui.FButtonSizeStyles outlineSizes() => forui.FButtonSizeStyles.inherit(
+    typography: typography,
+    style: style,
+    touch: true,
+    decoration: (radius) => .from(
+      ShapeDecoration(
+        shape: RoundedSuperellipseBorder(
+          side: BorderSide(color: colors.border, width: style.borderWidth),
+          borderRadius: radius,
+        ),
+        color: colors.card,
+      ),
+      variants: {
+        [.hovered, .pressed]: .shapeDelta(color: colors.muted),
+        [.disabled]: .shapeDelta(color: colors.disable(colors.card)),
+        [.selected]: .shapeDelta(color: colors.muted),
+        [.selected.and(.disabled)]: .shapeDelta(
+          color: colors.disable(colors.muted),
+        ),
+      },
+    ),
+    foregroundColor: colors.secondaryForeground,
+    disabledForegroundColor: colors.disable(colors.secondaryForeground),
+  );
+
+  forui.FButtonSizeStyles ghostSizes() => forui.FButtonSizeStyles.inherit(
+    typography: typography,
+    style: style,
+    touch: true,
+    decoration: (radius) => .from(
+      ShapeDecoration(shape: RoundedSuperellipseBorder(borderRadius: radius)),
+      variants: {
+        [.hovered, .pressed]: .shapeDelta(color: colors.muted),
+        [.disabled]: const .shapeDelta(),
+        [.selected]: .shapeDelta(color: colors.muted),
+        [.selected.and(.disabled)]: .shapeDelta(
+          color: colors.disable(colors.muted),
+        ),
+      },
+    ),
+    foregroundColor: colors.secondaryForeground,
+    disabledForegroundColor: colors.disable(colors.secondaryForeground),
+  );
+
   return forui.FButtonStyles(
     forui.FVariants(
       sizes(base.primary),
@@ -587,8 +642,11 @@ forui.FButtonStyles _buttonStyles(
         [forui.FButtonVariant.primary]: sizes(base.primary),
         [forui.FButtonVariant.secondary]: sizes(base.secondary),
         [forui.FButtonVariant.destructive]: sizes(base.destructive),
-        [forui.FButtonVariant.outline]: sizes(base.outline),
-        [forui.FButtonVariant.ghost]: sizes(base.ghost, color: colors.primary),
+        [forui.FButtonVariant.outline]: sizes(outlineSizes()),
+        [forui.FButtonVariant.ghost]: sizes(
+          ghostSizes(),
+          color: colors.primary,
+        ),
       },
     ),
   );
@@ -736,16 +794,19 @@ forui.FTileStyles _tileStyles(
   );
 }
 
-/// Forui 开关：开启时轨道取主色，关闭时取次要按钮那一档底色，圆钮取页面
-/// 底色；两边的文字沿用 Forui 的标签样式。
+/// Forui 开关：开启时轨道取主色，关闭时取容器描边那一档，圆钮取页面底色；
+/// 两边的文字沿用 Forui 的标签样式。
+///
+/// 关闭态的轨道不取页面底色：浅色下页面与卡片都是纯白，轨道会与卡片并成
+/// 一片，只看得到一个悬空的圆钮；改用描边色之后深浅两套外观都能看出轨道。
 forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
   final base = forui.FSwitchStyle.inherit(colors: colors, style: style);
   return base.copyWith(
     trackColor: forui.FVariants(
-      colors.background,
+      colors.border,
       variants: {
         [forui.FSwitchVariant.selected]: colors.primary,
-        [forui.FSwitchVariant.disabled]: colors.disable(colors.background),
+        [forui.FSwitchVariant.disabled]: colors.disable(colors.border),
         [forui.FSwitchVariant.selected.and(forui.FSwitchVariant.disabled)]:
             colors.disable(colors.primary),
       },
@@ -994,6 +1055,7 @@ ZhixinColors _colors(_Palette palette) => ZhixinColors(
   onSecondaryContainer: palette.onBrandContainer,
   surface: palette.paper,
   surfaceContainerHigh: palette.raised,
+  surfaceSelected: palette.selectedSurface,
   card: palette.card,
   attention: palette.attention,
   attentionContainer: palette.attentionLight,
@@ -1193,6 +1255,7 @@ class _NeutralPalette {
     required this.border,
     required this.inputBorder,
     required this.raised,
+    required this.selectedSurface,
     required this.error,
     required this.onError,
   });
@@ -1222,6 +1285,9 @@ class _NeutralPalette {
 
   /// 比页面底色高一档的表面，例如搜索栏与分段条。
   final Color raised;
+
+  /// 分段控件选中项的底色；浅色下是纯白，深色下比 [raised] 再亮一档。
+  final Color selectedSurface;
 
   /// 错误与危险操作的颜色。
   final Color error;
@@ -1282,6 +1348,7 @@ class _Palette {
   Color get border => neutral.border;
   Color get inputBorder => neutral.inputBorder;
   Color get raised => neutral.raised;
+  Color get selectedSurface => neutral.selectedSurface;
   Color get error => neutral.error;
   Color get onError => neutral.onError;
 }

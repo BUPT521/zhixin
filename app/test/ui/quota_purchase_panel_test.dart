@@ -151,6 +151,11 @@ void main() {
   });
 
   Future<void> pumpPanel(WidgetTester tester) async {
+    // 按手机宽度排版：档位名称、价格、积分与购买按钮要在同一行里放得下。
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
         theme: zhixinTheme,
@@ -179,8 +184,7 @@ void main() {
     await tester.pump();
   }
 
-  Finder purchaseButton([int points = 100]) =>
-      find.widgetWithText(forui.FButton, '购买 $points 分');
+  Finder purchaseButton() => find.widgetWithText(forui.FButton, '购买');
 
   /// 等 forui 点击动画的计时器走完，测试结束时不留下未完成的 Timer。
   Future<void> settle(WidgetTester tester) =>

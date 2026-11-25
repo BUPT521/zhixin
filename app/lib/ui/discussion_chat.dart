@@ -36,6 +36,7 @@ import 'voice_input_button.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
+import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_menu.dart';
 import 'zhixin_sheet.dart';
@@ -737,13 +738,9 @@ class DiscussionChatState extends State<DiscussionChat> {
       _settleReply([
         result.userMessage,
         result.assistantMessage,
-      ], answerNoticeText(result.outcome));
+      ], _visibleAnswerNotice(result.outcome));
       // 消息已经写进库，缓存里的取图副本可以删了；发送失败时保留，用户可以再发一次。
       await deleteTemporaryCaptures(picks);
-      if (!result.fromModel &&
-          result.notices.contains(Notice.modelNotConfigured)) {
-        _showModelGuide();
-      }
     } catch (error, stack) {
       if (!sent && scope != null && paths.isNotEmpty) {
         try {
@@ -1126,15 +1123,21 @@ class DiscussionChatState extends State<DiscussionChat> {
     }
   }
 
-  /// 模型还不能用时的提示条：给出登录入口，登录之后卡片上会有重新回答的按钮。
-  void _showModelGuide() {
-    if (!mounted) return;
-    showModelSetupGuide(
-      context,
-      title: '登录后重新回答',
-      content: '模型调用需要登录知新服务；现在使用的是本地规则回答，登录之后可以重新回答这个问题。',
-      onConfigure: _openModelAccount,
-    );
+  /// 回答卡片已经写着“本地规则”并在下面给出重新回答与模型设置入口，停止、
+  /// 截断与生成中断也已经写在卡片标题上；这几种情况不再重复一条错误样式的
+  /// 长说明，否则同一件事在屏幕上出现三遍。
+  String? _visibleAnswerNotice(AnswerOutcome outcome) {
+    const covered = {
+      Notice.modelNotConfigured,
+      Notice.modelConfigReadFailed,
+      Notice.userStopped,
+      Notice.answerTruncated,
+      Notice.generationInterrupted,
+    };
+    if (outcome.notices.isNotEmpty && outcome.notices.every(covered.contains)) {
+      return null;
+    }
+    return answerNoticeText(outcome);
   }
 
   Future<void> _openModelAccount() async {
@@ -1187,7 +1190,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         for (final message in _draftMessages)
           if (message.id != result.assistantMessage.id) message,
         result.assistantMessage,
-      ], answerNoticeText(result.outcome));
+      ], _visibleAnswerNotice(result.outcome));
     } on LlmException catch (error) {
       final next = switch (error.failure) {
         LlmFailure.notConfigured => '登录知新服务之后再试',
@@ -1304,105 +1307,58 @@ class DiscussionChatState extends State<DiscussionChat> {
         final record = _record;
         // 首读时顶栏与输入区照常显示，只有消息区先放骨架，读完原位换成消息。
         final firstLoad = loading && _firstLoad;
-        return Column(
-          children: [
-            if (record != null) _recordBar(theme, record),
-            if (_searchOpen)
-              DiscussionSearchBar(
-                controller: _searchInput,
-                focusNode: _searchFocus,
-                query: _searchInput.text,
-                matchCount: _searchHits.length,
-                matchIndex: _searchIndex,
-                loading: _searchLoading,
-                failure: _searchFailure,
-                onSubmitted: _runSearch,
-                onPrevious: () => _stepSearch(-1),
-                onNext: () => _stepSearch(1),
-                onRetry: _retrySearch,
-                onClose: _closeSearch,
+        return DetailScaffold(
+          header: _header(record),
+          child: Column(
+            children: [
+              if (record != null) _recordBar(theme, record),
+              if (_searchOpen)
+                DiscussionSearchBar(
+                  controller: _searchInput,
+                  focusNode: _searchFocus,
+                  query: _searchInput.text,
+                  matchCount: _searchHits.length,
+                  matchIndex: _searchIndex,
+                  loading: _searchLoading,
+                  failure: _searchFailure,
+                  onSubmitted: _runSearch,
+                  onPrevious: () => _stepSearch(-1),
+                  onNext: () => _stepSearch(1),
+                  onRetry: _retrySearch,
+                  onClose: _closeSearch,
+                ),
+              Expanded(
+                child: firstLoad
+                    ? ListSkeleton(
+                        rows: 3,
+                        padding: EdgeInsets.all(theme.space.page),
+                      )
+                    : BuddyTimeline(adapter: _timelineAdapter),
               ),
-            Expanded(
-              child: firstLoad
-                  ? ListSkeleton(
-                      rows: 3,
-                      padding: EdgeInsets.all(theme.space.page),
-                    )
-                  : BuddyTimeline(adapter: _timelineAdapter),
-            ),
-            _composer(),
-          ],
+              _composer(),
+            ],
+          ),
         );
       },
     );
   }
 
-  Widget _recordBar(ZhixinTheme theme, ConversationRecord record) {
-    final goal = record.goalId == null
-        ? null
-        : _goals.where((item) => item.id == record.goalId).firstOrNull;
-    final material = record.hasMaterial;
-    // 低频操作收进行尾菜单，第一行只留目标、材料与唯一的主动作“开始作答”。
-    final menuItems = <ZhixinMenuItem>[
-      if (material)
-        ZhixinMenuItem(label: '查看原文', onSelected: () => _showSource(record)),
-      if (material)
-        ZhixinMenuItem(
-          label: '系统学习',
-          enabled: !_sending,
-          onSelected: _startStudyPlan,
-        ),
-      if (record.open)
-        ZhixinMenuItem(label: '结束讨论', enabled: !_sending, onSelected: _end),
-    ];
-    return Container(
-      width: double.infinity,
-      padding: theme.space.pageInsets(
-        top: theme.space.xs,
-        bottom: theme.space.sm,
-      ),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: theme.colors.outlineVariant)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Wrap(
-              spacing: theme.space.tight,
-              runSpacing: theme.space.xs,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [
-                ZhixinChip(
-                  icon: FLucideIcons.flag,
-                  label: goal?.title ?? '选择目标',
-                  onPressed: _sending ? null : _chooseGoal,
-                ),
-                ZhixinChip(
-                  icon: FLucideIcons.bookOpen,
-                  label: material ? record.materialLabel : '选择材料',
-                  onPressed: _sending ? null : _chooseMaterial,
-                ),
-                if (_messages.isNotEmpty)
-                  // 查找与目标、材料同在一行，窄屏时随其他标签一起换行。
-                  ZhixinChip(
-                    key: const ValueKey('discussion-search-open'),
-                    icon: FLucideIcons.search,
-                    label: '查找',
-                    onPressed: _searchOpen ? null : _openSearch,
-                  ),
-                if (!record.open)
-                  const StatusTag(
-                    '已结束',
-                    tone: TagTone.muted,
-                    icon: FLucideIcons.circleCheck,
-                  ),
-              ],
-            ),
-          ),
-          if (_messages.isNotEmpty) ...[
-            SizedBox(width: theme.space.sm),
-            forui.FButton(
+  /// 讨论页的标题栏：标题之外只放当前最该做的一件事。
+  ///
+  /// “开始作答”原来挤在状态行里，和“选择目标”“选择材料”“查找”三个标签一起
+  /// 换行；现在它留在标题栏，状态行只剩几个标签和一个低频菜单，窄屏上标签
+  /// 换到第二行，不再把“查找”挤出屏幕。
+  Widget _header(ConversationRecord? record) {
+    return ZhixinHeader(
+      title: Text(widget.startNew ? '新讨论' : '继续讨论'),
+      showBack: true,
+      actions: [
+        if (_messages.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: forui.FButton(
               variant: forui.FButtonVariant.secondary,
+              size: forui.FButtonSizeVariant.sm,
               mainAxisSize: MainAxisSize.min,
               onPress: _sending || _answering ? null : _startAnswering,
               prefix: _answering
@@ -1410,10 +1366,88 @@ class DiscussionChatState extends State<DiscussionChat> {
                       size: forui.FCircularProgressSizeVariant.sm,
                     )
                   : const Icon(FLucideIcons.notebookPen),
-              child: Text(record.hasAttempts ? '继续作答' : '开始作答'),
+              child: Text(record?.hasAttempts == true ? '继续作答' : '开始作答'),
             ),
+          ),
+      ],
+    );
+  }
+
+  /// 低频操作收进行尾菜单：查看原文、系统学习与结束讨论。
+  List<ZhixinMenuItem> _discussionMenuItems(ConversationRecord record) => [
+    if (record.hasMaterial)
+      ZhixinMenuItem(label: '查看原文', onSelected: () => _showSource(record)),
+    if (record.hasMaterial)
+      ZhixinMenuItem(
+        label: '系统学习',
+        enabled: !_sending,
+        onSelected: _startStudyPlan,
+      ),
+    if (record.open)
+      ZhixinMenuItem(label: '结束讨论', enabled: !_sending, onSelected: _end),
+  ];
+
+  /// 状态行只放目标、材料、查找、结束状态与低频菜单；一行放不下时换行。
+  ///
+  /// 主动作已经在标题栏里，这一行不再和按钮抢宽度；窄屏上标签换到第二行，
+  /// 不会把“查找”挤出屏幕，也不需要横向滑动才找得到。
+  Widget _recordBar(ZhixinTheme theme, ConversationRecord record) {
+    final goal = record.goalId == null
+        ? null
+        : _goals.where((item) => item.id == record.goalId).firstOrNull;
+    final material = record.hasMaterial;
+    final chips = <Widget>[
+      ZhixinChip(
+        icon: FLucideIcons.flag,
+        label: goal?.title ?? '选择目标',
+        onPressed: _sending ? null : _chooseGoal,
+      ),
+      ZhixinChip(
+        icon: FLucideIcons.bookOpen,
+        label: material ? record.materialLabel : '选择材料',
+        onPressed: _sending ? null : _chooseMaterial,
+      ),
+      if (_messages.isNotEmpty)
+        ZhixinChip(
+          key: const ValueKey('discussion-search-open'),
+          icon: FLucideIcons.search,
+          label: '查找',
+          onPressed: _searchOpen ? null : _openSearch,
+        ),
+      if (!record.open)
+        const StatusTag(
+          '已结束',
+          tone: TagTone.muted,
+          icon: FLucideIcons.circleCheck,
+        ),
+    ];
+    final menuItems = _discussionMenuItems(record);
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.only(
+        left: theme.space.page,
+        right: theme.space.page,
+        top: theme.space.xs,
+        bottom: theme.space.sm,
+      ),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: theme.colors.outlineVariant)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Wrap(
+              spacing: theme.space.tight,
+              runSpacing: theme.space.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: chips,
+            ),
+          ),
+          if (menuItems.isNotEmpty) ...[
+            SizedBox(width: theme.space.sm),
+            moreMenu(items: menuItems, label: '更多讨论操作'),
           ],
-          if (menuItems.isNotEmpty) moreMenu(items: menuItems, label: '更多讨论操作'),
         ],
       ),
     );

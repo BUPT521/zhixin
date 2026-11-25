@@ -31,6 +31,7 @@ const _darkInk = Color(0xFFECECEE);
 const _darkMuted = Color(0xFF9D9DA5);
 const _darkCard = Color(0xFF131315);
 const _darkRaised = Color(0xFF1E1E21);
+const _darkSelected = Color(0xFF2F2F2F);
 const _darkCode = Color(0xFF0B0B0D);
 const _darkBorder = Color(0xFF2A2A2E);
 const _darkInputBorder = Color(0xFF45454B);
@@ -177,8 +178,20 @@ void main() {
       dark.card,
       light.surfaceContainerHigh,
       dark.surfaceContainerHigh,
+      light.surfaceSelected,
+      dark.surfaceSelected,
     ]) {
       expect(_neutral(color), isTrue, reason: '$color 不该带色相');
+    }
+    expect(light.surfaceSelected, _lightPaper);
+    expect(dark.surfaceSelected, _darkSelected);
+    // 分段的选中底色在深浅两套里都比轨道亮一档：深色下不会出现一块比轨道
+    // 更暗的底，切换时看起来像闪了一下黑。
+    for (final colors in [light, dark]) {
+      expect(
+        colors.surfaceSelected.computeLuminance(),
+        greaterThan(colors.surfaceContainerHigh.computeLuminance()),
+      );
     }
     // 主色与提醒色的浅底只带各自一族的色相，不与底色混出别的颜色。
     for (final color in [
@@ -242,6 +255,21 @@ void main() {
       ]) {
         expect(_neutral(state, tolerance: 16), isTrue, reason: '$state 不该带色相');
       }
+    }
+  });
+
+  test('开关关闭时的轨道取描边色，压在卡片上能看出边界', () {
+    for (final (theme, label) in [
+      (zhixinForuiTheme, '浅色'),
+      (zhixinDarkForuiTheme, '深色'),
+    ]) {
+      final off = theme.switchStyle.trackColor.resolve({});
+      expect(off, theme.colors.border, reason: '$label 的关闭轨道取描边色');
+      expect(
+        _contrast(off, theme.colors.card),
+        greaterThanOrEqualTo(1.2),
+        reason: '$label 的关闭轨道压在卡片上要能看出边界',
+      );
     }
   });
 

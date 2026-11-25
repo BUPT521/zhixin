@@ -509,7 +509,8 @@ class _SettingsPageState extends State<SettingsPage> {
       title: '清空全部记录',
       content: const Text(
         '将删除目标、题目、作答、日程、记忆、讨论记录、图片和保存的版本，'
-        '以及本机语义索引，且无法撤销。模型配置、外观与人格设置会保留。确定清空？',
+        '以及本机语义索引，且无法撤销。模型配置与外观会保留，人格、截止时间'
+        '等设置回到默认。确定清空？',
       ),
       confirmLabel: '清空',
       destructive: true,
@@ -572,14 +573,34 @@ class _SettingsPageState extends State<SettingsPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            Row(
+              children: [
+                Expanded(child: Text('模型配置', style: theme.text.titleSmall)),
+                StatusTag(
+                  _config == null ? '默认模型' : '已自定义',
+                  tone: _config == null ? TagTone.muted : TagTone.accent,
+                ),
+              ],
+            ),
+            SizedBox(height: theme.space.sm),
             Text(
               signedIn
-                  ? '当前模型为 ${_config?.model ?? LlmConfig.defaultModel}，请求发往 ${AccountService.responsesEndpoint(_account!.serverBaseUrl)}。'
+                  ? '当前模型为 ${_config?.model ?? LlmConfig.defaultModel}；请求发往知新服务。'
                   : '登录后可以通过当前知新服务调用模型。',
               style: theme.text.bodySmall.copyWith(
                 color: theme.colors.onSurfaceVariant,
               ),
             ),
+            if (signedIn)
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.xs),
+                child: Text(
+                  AccountService.responsesEndpoint(_account!.serverBaseUrl),
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
             if (!signedIn) ...[
               SizedBox(height: context.zhixin.space.sm),
               Align(
@@ -666,53 +687,11 @@ class _SettingsPageState extends State<SettingsPage> {
       children: [
         if (_loadFailure != null)
           InlineNotice(message: _loadFailure!, onRetry: _retry),
-        forui.FTile(
-          prefix: const LeadingIcon(FLucideIcons.network),
-          title: const Text('语义索引'),
-          subtitle: Text(_embeddingSubtitle),
-          suffix: const Icon(FLucideIcons.chevronRight),
-          onPress: _busy ? null : _openEmbedding,
+        const SectionHeading(
+          title: '学习',
+          subtitle: '每天的截止时间与拍照方式影响记录与拍题。',
+          first: true,
         ),
-        const SectionHeading(title: '开发者'),
-        forui.FCard(
-          child: Padding(
-            padding: EdgeInsets.all(theme.space.lg),
-            child: forui.FSwitch(
-              label: const Text('开发者模式'),
-              description: const Text('调整知新服务地址和模型配置，管理知新 API Key。'),
-              value: _developerMode ?? false,
-              onChange: _busy || _developerMode == null
-                  ? null
-                  : _setDeveloperMode,
-            ),
-          ),
-        ),
-        if (_developerMode == true) ...[
-          forui.FTile(
-            prefix: const LeadingIcon(FLucideIcons.network),
-            title: const Text('知新服务地址'),
-            subtitle: Text(_account?.serverLabel ?? ''),
-            suffix: const Icon(FLucideIcons.chevronRight),
-            onPress: _busy ? null : _editServerAddress,
-          ),
-          forui.FTile(
-            prefix: const LeadingIcon(FLucideIcons.keyRound),
-            title: const Text('知新 API Key'),
-            subtitle: Text(signedIn ? '申请、查看和撤销模型代理密钥' : '登录账号后管理模型代理密钥'),
-            suffix: const Icon(FLucideIcons.chevronRight),
-            onPress: _busy
-                ? null
-                : signedIn
-                ? () => openModelApiKeys(context)
-                : _openAccount,
-          ),
-          SizedBox(height: theme.space.md),
-          const SectionHeading(title: '模型配置'),
-          _modelConfiguration(signedIn: signedIn),
-          ?_resultFor(_Area.model),
-        ],
-        ?_resultFor(_Area.developer),
-        const SectionHeading(title: '学习', subtitle: '每天的截止时间与拍照方式影响记录与拍题。'),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
@@ -791,139 +770,189 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         ?_resultFor(_Area.learning),
-        const SectionHeading(title: '外观'),
+        const SectionHeading(title: '外观', subtitle: '深浅色与主题色立即生效，只保存在本机。'),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
-            child: ZhixinSelect<ThemeMode>(
-              value: _themeMode,
-              label: '深浅色',
-              description: '默认跟随系统，也可以固定为浅色或深色；选择立即生效。',
-              options: const {
-                ThemeMode.system: '跟随系统',
-                ThemeMode.light: '浅色',
-                ThemeMode.dark: '深色',
-              },
-              onChange: (value) async {
-                if (value == null) return;
-                try {
-                  await AppScope.of(context).themeMode.select(value);
-                } catch (error, stack) {
-                  if (!mounted || !context.mounted) return;
-                  _report(
-                    _Area.appearance,
-                    describeFailure(
-                      context,
-                      error,
-                      stack,
-                      action: '保存外观',
-                      kind: 'settings_theme',
-                      kept: '当前外观没有改动',
-                      next: '可以再选一次',
-                    ),
-                    failed: true,
-                  );
-                  return;
-                }
-                if (!mounted) return;
-                setState(() => _themeMode = value);
-              },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ZhixinSelect<ThemeMode>(
+                  value: _themeMode,
+                  label: '深浅色',
+                  description: '默认跟随系统，也可以固定为浅色或深色；选择立即生效。',
+                  options: const {
+                    ThemeMode.system: '跟随系统',
+                    ThemeMode.light: '浅色',
+                    ThemeMode.dark: '深色',
+                  },
+                  onChange: (value) async {
+                    if (value == null) return;
+                    try {
+                      await AppScope.of(context).themeMode.select(value);
+                    } catch (error, stack) {
+                      if (!mounted || !context.mounted) return;
+                      _report(
+                        _Area.appearance,
+                        describeFailure(
+                          context,
+                          error,
+                          stack,
+                          action: '保存外观',
+                          kind: 'settings_theme',
+                          kept: '当前外观没有改动',
+                          next: '可以再选一次',
+                        ),
+                        failed: true,
+                      );
+                      return;
+                    }
+                    if (!mounted) return;
+                    setState(() => _themeMode = value);
+                  },
+                ),
+                const _CardDivider(),
+                _AccentPicker(
+                  selected: AppScope.of(context).themeAccent.value,
+                  onSelected: (accent) async {
+                    try {
+                      await AppScope.of(context).themeAccent.select(accent);
+                    } catch (error, stack) {
+                      if (!mounted || !context.mounted) return;
+                      _report(
+                        _Area.appearance,
+                        describeFailure(
+                          context,
+                          error,
+                          stack,
+                          action: '保存主题色',
+                          kind: 'settings_accent',
+                          kept: '当前主题色没有改动',
+                          next: '可以再选一次',
+                        ),
+                        failed: true,
+                      );
+                    }
+                  },
+                ),
+              ],
             ),
           ),
-        ),
-        SizedBox(height: theme.space.md),
-        _AccentPicker(
-          selected: AppScope.of(context).themeAccent.value,
-          onSelected: (accent) async {
-            try {
-              await AppScope.of(context).themeAccent.select(accent);
-            } catch (error, stack) {
-              if (!mounted || !context.mounted) return;
-              _report(
-                _Area.appearance,
-                describeFailure(
-                  context,
-                  error,
-                  stack,
-                  action: '保存主题色',
-                  kind: 'settings_accent',
-                  kept: '当前主题色没有改动',
-                  next: '可以再选一次',
-                ),
-                failed: true,
-              );
-            }
-          },
         ),
         ?_resultFor(_Area.appearance),
-        const SectionHeading(title: '诊断'),
+        const SectionHeading(
+          title: '模型与索引',
+          subtitle: '语义索引、服务地址与聊天模型；开发者模式默认关闭。',
+        ),
+        forui.FTile(
+          prefix: const LeadingIcon(FLucideIcons.network),
+          title: const Text('语义索引'),
+          subtitle: Text(_embeddingSubtitle),
+          suffix: const Icon(FLucideIcons.chevronRight),
+          onPress: _busy ? null : _openEmbedding,
+        ),
+        SizedBox(height: theme.space.sm),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
             child: forui.FSwitch(
-              label: const Text('发送崩溃报告'),
-              description: const Text(
-                '报告包含错误类型、错误分类与应用代码位置。启动时按此设置决定是否连接'
-                '诊断服务，本机诊断记录单独保存。',
-              ),
-              value: _reportCrashes,
-              onChange: (value) async {
-                final previous = _reportCrashes;
-                setState(() => _reportCrashes = value);
-                CrashLog.reportEnabled = value;
-                try {
-                  await DiagnosticsStore(
-                    AppScope.of(context).devicePaths.filesDir,
-                  ).write(value);
-                } catch (_) {
-                  if (!context.mounted) return;
-                  setState(() => _reportCrashes = previous);
-                  CrashLog.reportEnabled = previous;
-                  _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
-                }
-              },
+              label: const Text('开发者模式'),
+              description: const Text('调整服务地址、模型配置与 API Key。'),
+              value: _developerMode ?? false,
+              onChange: _busy || _developerMode == null
+                  ? null
+                  : _setDeveloperMode,
             ),
           ),
         ),
-        const SectionHeading(title: '使用统计'),
+        ?_resultFor(_Area.developer),
+        if (_developerMode == true) ...[
+          SizedBox(height: theme.space.sm),
+          forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.network),
+            title: const Text('知新服务地址'),
+            subtitle: Text(_account?.serverLabel ?? ''),
+            suffix: const Icon(FLucideIcons.chevronRight),
+            onPress: _busy ? null : _editServerAddress,
+          ),
+          SizedBox(height: theme.space.sm),
+          forui.FTile(
+            prefix: const LeadingIcon(FLucideIcons.keyRound),
+            title: const Text('知新 API Key'),
+            subtitle: Text(signedIn ? '申请、查看和撤销模型代理密钥' : '登录账号后管理模型代理密钥'),
+            suffix: const Icon(FLucideIcons.chevronRight),
+            onPress: _busy
+                ? null
+                : signedIn
+                ? () => openModelApiKeys(context)
+                : _openAccount,
+          ),
+          SizedBox(height: theme.space.md),
+          _modelConfiguration(signedIn: signedIn),
+          ?_resultFor(_Area.model),
+        ],
+        const SectionHeading(title: '诊断与隐私'),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
-            child: forui.FSwitch(
-              label: const Text('匿名使用统计'),
-              description: const Text(
-                '不登录时每天最多上报一次随机安装标识、应用版本与平台，不含学习内容，'
-                '也不与账号关联；登录之后由服务端按请求日期统计。关闭之后不再上报，'
-                '已经上报的记录保留。',
-              ),
-              value: _reportUsage,
-              onChange: (value) async {
-                final previous = _reportUsage;
-                setState(() => _reportUsage = value);
-                try {
-                  await AppScope.of(context).accountServices.activeReport
-                      .setEnabled(value);
-                } catch (_) {
-                  if (!context.mounted) return;
-                  setState(() => _reportUsage = previous);
-                  _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
-                }
-              },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                forui.FSwitch(
+                  label: const Text('发送崩溃报告'),
+                  description: const Text(
+                    '错误类型、分类与代码位置；不含学习内容。关闭之后立即停止上报，'
+                    '本机诊断记录仍单独保存。',
+                  ),
+                  value: _reportCrashes,
+                  onChange: (value) async {
+                    final previous = _reportCrashes;
+                    setState(() => _reportCrashes = value);
+                    CrashLog.reportEnabled = value;
+                    try {
+                      await DiagnosticsStore(
+                        AppScope.of(context).devicePaths.filesDir,
+                      ).write(value);
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      setState(() => _reportCrashes = previous);
+                      CrashLog.reportEnabled = previous;
+                      _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
+                    }
+                  },
+                ),
+                const _CardDivider(),
+                forui.FSwitch(
+                  label: const Text('匿名使用统计'),
+                  description: const Text(
+                    '每天最多一次安装标识、应用版本与平台，不含学习内容，也不与账号关联；'
+                    '登录之后由服务端按请求日期统计。关闭之后不再上报。',
+                  ),
+                  value: _reportUsage,
+                  onChange: (value) async {
+                    final previous = _reportUsage;
+                    setState(() => _reportUsage = value);
+                    try {
+                      await AppScope.of(context).accountServices.activeReport
+                          .setEnabled(value);
+                    } catch (_) {
+                      if (!context.mounted) return;
+                      setState(() => _reportUsage = previous);
+                      _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
+                    }
+                  },
+                ),
+              ],
             ),
           ),
         ),
         ?_resultFor(_Area.diagnostics),
-        const SectionHeading(
-          title: '更新',
-          subtitle: '读取发布清单，核对安装包地址、哈希与签名；通过之后才提示。',
-        ),
+        const SectionHeading(title: '更新', subtitle: '有新版本时提示一次，不在应用内安装。'),
         forui.FTile(
           prefix: const LeadingIcon(FLucideIcons.refreshCw),
           title: const Text('检查更新'),
           subtitle: Text(
-            _checkingUpdates
-                ? '正在读取发布清单…'
-                : '当前版本 $appVersionLabel；会自动下载安装包核对哈希与签名，不在应用内安装。',
+            _checkingUpdates ? '正在读取发布清单…' : '当前版本 $appVersionLabel；下载后核对安装包。',
           ),
           suffix: _checkingUpdates
               ? const forui.FCircularProgress(size: .sm)
@@ -931,25 +960,16 @@ class _SettingsPageState extends State<SettingsPage> {
           onPress: _busy || _checkingUpdates ? null : _checkUpdates,
         ),
         ?_resultFor(_Area.updates),
-        const SectionHeading(title: '危险操作', subtitle: '清空全部记录后无法撤销。'),
+        const SectionHeading(title: '危险操作', subtitle: '清空之后无法撤销。'),
         forui.FTile(
           variant: forui.FItemVariant.destructive,
           prefix: const LeadingIcon(FLucideIcons.trash2, tone: TagTone.muted),
           title: const Text('清空全部记录'),
-          subtitle: const Text(
-            '删除目标、题目、作答、日程、记忆、讨论记录、图片、保存的版本与语义索引；'
-            '模型配置、外观与人格设置保留。',
-          ),
+          subtitle: const Text('删除本机学习记录、图片与语义索引；保留账号、模型配置与外观。'),
           suffix: const Icon(FLucideIcons.trash2),
           onPress: _busy ? null : _resetAll,
         ),
         ?_resultFor(_Area.danger),
-        SizedBox(height: theme.space.md),
-        Text(
-          '知新是开源学习搭子，学习数据默认保存在本机；模型调用只用知新服务，登录账号之后'
-          '由项目组自建服务端提供云端备份、增量同步与模型代理。',
-          style: theme.text.bodySmall,
-        ),
       ],
     );
   }
@@ -973,27 +993,48 @@ class _AccentPicker extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('主题色', style: theme.text.bodyMedium),
+        Text(
+          '主题色',
+          style: theme.text.labelLarge.copyWith(color: theme.colors.onSurface),
+        ),
         SizedBox(height: theme.space.xs),
         Text(
-          '默认蓝色；只换按钮、链接、选中态与强调卡片的颜色，页面与卡片始终是纯白或纯黑。',
+          '只换按钮、链接、选中态与强调卡片的颜色，页面与卡片保持纯白或纯黑。',
           style: theme.text.bodySmall.copyWith(
             color: theme.colors.onSurfaceVariant,
           ),
         ),
         SizedBox(height: theme.space.md),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             for (final accent in ZhixinAccent.values)
-              _AccentSwatch(
-                accent: accent,
-                selected: accent == selected,
-                onPressed: () => onSelected(accent),
+              Expanded(
+                child: _AccentSwatch(
+                  accent: accent,
+                  selected: accent == selected,
+                  onPressed: () => onSelected(accent),
+                ),
               ),
           ],
         ),
       ],
+    );
+  }
+}
+
+/// 同一张卡片里两组设置之间的分隔线：左右与卡片内容对齐，上下留一档间距。
+class _CardDivider extends StatelessWidget {
+  const _CardDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: theme.space.md),
+      child: SizedBox(
+        height: 1,
+        child: ColoredBox(color: theme.colors.outlineVariant),
+      ),
     );
   }
 }
@@ -1021,8 +1062,7 @@ class _AccentSwatch extends StatelessWidget {
         onTap: onPressed,
         behavior: HitTestBehavior.opaque,
         child: SizedBox(
-          width: 48,
-          height: 48,
+          height: 44,
           child: Center(
             child: Container(
               width: _AccentPicker._swatchSize,

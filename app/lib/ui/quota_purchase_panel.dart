@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:forui/forui.dart' as forui;
+import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -491,116 +492,207 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
             '约 ${groupDigits(quotaPoints(daily, ratio))} 积分。';
       }
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        if (_loadFailed)
-          InlineNotice(
-            message: _loadError ?? '暂时无法读取购买信息，请稍后重试。',
-            onRetry: _busy ? null : _load,
-          ),
-        Padding(
-          padding: EdgeInsets.only(top: theme.space.sm),
-          child: forui.FCard(
-            child: Padding(
-              padding: EdgeInsets.all(theme.space.lg),
-              child: Column(
+    // 一张卡片从余额说到档位：余额与刷新在上，档位各占一行、价格与积分只写一次，
+    // 购买按钮落在自己那一行；说明与重试留在这张卡片的下方，不再和档位按钮挤在
+    // 同一个 Wrap 里。
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.sm),
+      child: forui.FCard(
+        child: Padding(
+          padding: EdgeInsets.all(theme.space.lg),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_loadFailed)
+                InlineNotice(
+                  message: _loadError ?? '暂时无法读取购买信息，请稍后重试。',
+                  onRetry: _busy ? null : _load,
+                ),
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (purchases.balanceUnavailable)
-                    const Text('暂时查不到余额，稍后再试。')
-                  else
-                    Text('可用积分 ${groupDigits(purchases.balancePoints)} 分'),
-                  if (legend != null)
-                    Text(
-                      legend,
-                      style: theme.text.bodySmall.copyWith(
-                        color: theme.colors.onSurfaceVariant,
-                      ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('购买积分', style: theme.text.titleSmall),
+                        SizedBox(height: theme.space.xs),
+                        Text(
+                          purchases.balanceUnavailable
+                              ? '暂时查不到余额，稍后再试。'
+                              : '可用积分 ${groupDigits(purchases.balancePoints)} 分',
+                          style: theme.text.titleMedium,
+                        ),
+                      ],
                     ),
-                  Text(
-                    '积分跨日保留；每轮结束先扣当天免费额度，再扣积分。',
+                  ),
+                  SizedBox(width: theme.space.sm),
+                  forui.FButton(
+                    variant: forui.FButtonVariant.ghost,
+                    size: forui.FButtonSizeVariant.sm,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: enabled ? () => _refreshBalance() : null,
+                    prefix: const Icon(FLucideIcons.refreshCw),
+                    child: const Text('刷新余额'),
+                  ),
+                ],
+              ),
+              if (legend != null)
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.xs),
+                  child: Text(
+                    legend,
                     style: theme.text.bodySmall.copyWith(
                       color: theme.colors.onSurfaceVariant,
                     ),
                   ),
-                  if (product != null && !product.purchasable)
-                    Text(_statusText(product.capabilityStatus)),
-                  for (final option in options)
-                    Padding(
-                      padding: EdgeInsets.only(top: theme.space.xs),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '${option.displayName} · ¥${option.price} · '
-                            '${groupDigits(option.quotaAmount)} 分',
-                          ),
-                          if (ratio != null)
-                            Text(
-                              _conversion(option.quotaAmount * ratio, daily),
-                              style: theme.text.bodySmall.copyWith(
-                                color: theme.colors.onSurfaceVariant,
-                              ),
-                            ),
-                        ],
-                      ),
-                    ),
-                  if (latest != null)
-                    Padding(
-                      padding: EdgeInsets.only(top: theme.space.xs),
-                      child: forui.FButton(
-                        mainAxisSize: MainAxisSize.min,
-                        variant: forui.FButtonVariant.outline,
-                        onPress: enabled ? _openLatest : null,
-                        child: const Text('继续上次购买'),
-                      ),
-                    ),
-                  if (_notice case final notice?) Text(notice),
-                  if (_busy) const Text('正在与支付宝核对…'),
-                  Padding(
+                ),
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.xs),
+                child: Text(
+                  '积分跨日保留；每轮结束先扣当天免费额度，再扣积分。',
+                  style: theme.text.bodySmall.copyWith(
+                    color: theme.colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              if (product != null && !product.purchasable)
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.xs),
+                  child: Text(_statusText(product.capabilityStatus)),
+                ),
+              if (options.isNotEmpty) ...[
+                const _Rule(),
+                for (final option in options)
+                  _optionRow(
+                    option,
+                    enabled: enabled,
+                    ratio: ratio,
+                    daily: daily,
+                  ),
+              ],
+              if (latest != null)
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Padding(
                     padding: EdgeInsets.only(top: theme.space.sm),
-                    child: Wrap(
-                      spacing: theme.space.sm,
-                      runSpacing: theme.space.sm,
-                      children: [
-                        for (final option in options)
-                          forui.FButton(
-                            mainAxisSize: MainAxisSize.min,
-                            onPress: enabled ? () => _buy(option) : null,
-                            child: Text(
-                              '购买 ${groupDigits(option.quotaAmount)} 分',
-                            ),
-                          ),
-                        forui.FButton(
-                          mainAxisSize: MainAxisSize.min,
-                          variant: forui.FButtonVariant.outline,
-                          onPress: enabled ? () => _refreshBalance() : null,
-                          child: const Text('刷新余额'),
-                        ),
-                        if (retry != null)
-                          forui.FButton(
-                            mainAxisSize: MainAxisSize.min,
-                            variant: forui.FButtonVariant.outline,
-                            onPress: enabled ? retry : null,
-                            child: const Text('重试'),
-                          ),
-                        if (_failedOpenLink != null)
-                          forui.FButton(
-                            mainAxisSize: MainAxisSize.min,
-                            variant: forui.FButtonVariant.outline,
-                            onPress: _busy ? null : _copyLink,
-                            child: const Text('复制链接'),
-                          ),
-                      ],
+                    child: forui.FButton(
+                      variant: forui.FButtonVariant.outline,
+                      size: forui.FButtonSizeVariant.sm,
+                      mainAxisSize: MainAxisSize.min,
+                      onPress: enabled ? _openLatest : null,
+                      child: const Text('继续上次购买'),
                     ),
                   ),
-                ],
-              ),
-            ),
+                ),
+              if (_notice case final notice?)
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.sm),
+                  child: Text(notice, style: theme.text.bodySmall),
+                ),
+              if (_busy)
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.sm),
+                  child: Row(
+                    children: [
+                      const forui.FCircularProgress(size: .xs),
+                      SizedBox(width: theme.space.sm),
+                      Text('正在与支付宝核对…', style: theme.text.bodySmall),
+                    ],
+                  ),
+                ),
+              if (retry != null || _failedOpenLink != null)
+                Padding(
+                  padding: EdgeInsets.only(top: theme.space.xs),
+                  child: Wrap(
+                    spacing: theme.space.sm,
+                    runSpacing: theme.space.sm,
+                    children: [
+                      if (retry != null)
+                        forui.FButton(
+                          variant: forui.FButtonVariant.ghost,
+                          size: forui.FButtonSizeVariant.sm,
+                          mainAxisSize: MainAxisSize.min,
+                          onPress: enabled ? retry : null,
+                          child: const Text('重试'),
+                        ),
+                      if (_failedOpenLink != null)
+                        forui.FButton(
+                          variant: forui.FButtonVariant.ghost,
+                          size: forui.FButtonSizeVariant.sm,
+                          mainAxisSize: MainAxisSize.min,
+                          onPress: _busy ? null : _copyLink,
+                          child: const Text('复制链接'),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
           ),
         ),
-      ],
+      ),
+    );
+  }
+
+  /// 一个档位一行：名称与价格在同一行，发放积分与换算在下面，右侧是这一档的
+  /// 购买按钮。价格、积分与按钮不再各列一遍。
+  Widget _optionRow(
+    QuotaPurchaseOption option, {
+    required bool enabled,
+    required int? ratio,
+    required int? daily,
+  }) {
+    final theme = context.zhixin;
+    final conversion = ratio == null
+        ? null
+        : _conversion(option.quotaAmount * ratio, daily);
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.sm),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        option.displayName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.text.titleSmall,
+                      ),
+                    ),
+                    SizedBox(width: theme.space.sm),
+                    Text('¥${option.price}', style: theme.text.titleSmall),
+                  ],
+                ),
+                SizedBox(height: theme.space.xs),
+                Text(
+                  '${groupDigits(option.quotaAmount)} 分',
+                  style: theme.text.bodyMedium,
+                ),
+                if (conversion != null)
+                  Text(
+                    conversion,
+                    style: theme.text.bodySmall.copyWith(
+                      color: theme.colors.onSurfaceVariant,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          SizedBox(width: theme.space.md),
+          forui.FButton(
+            mainAxisSize: MainAxisSize.min,
+            semanticsLabel: '购买 ${option.displayName}',
+            onPress: enabled ? () => _buy(option) : null,
+            child: const Text('购买'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -621,4 +713,21 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     'TERMINATED' => '商品已归档，已有积分仍可使用。',
     _ => '暂时不能购买。',
   };
+}
+
+/// 购买卡片里的分隔线：与卡片内容同宽，上下各留一档。
+class _Rule extends StatelessWidget {
+  const _Rule();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: theme.space.sm),
+      child: SizedBox(
+        height: 1,
+        child: ColoredBox(color: theme.colors.outlineVariant),
+      ),
+    );
+  }
 }

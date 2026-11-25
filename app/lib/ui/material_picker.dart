@@ -83,17 +83,11 @@ Future<MaterialSelection?> showMaterialPicker(
   }
   final page = await showZhixinSheet<MaterialPage>(
     context: context,
+    title: '《${material.title}》的哪一页',
     builder: (context) => ListView(
       shrinkWrap: true,
-      padding: EdgeInsets.fromLTRB(
-        context.zhixin.space.lg,
-        0,
-        context.zhixin.space.lg,
-        context.zhixin.space.lg,
-      ),
+      padding: EdgeInsets.zero,
       children: [
-        Text('《${material.title}》的哪一页', style: context.zhixin.text.titleMedium),
-        SizedBox(height: context.zhixin.space.gap),
         for (var index = 0; index < pages.length; index++) ...[
           if (index > 0) SizedBox(height: context.zhixin.space.sm),
           forui.FTile(

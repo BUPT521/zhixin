@@ -1,11 +1,12 @@
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/widgets.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'discussion_chat.dart';
-import 'workspace_widgets.dart';
-import 'zhixin_header.dart';
 
 /// 从“记录”打开的讨论：同一条记录，可以继续发消息。
+///
+/// 标题栏、状态行与输入区都由 [DiscussionChat] 自己排出：标题栏里的“开始作答”
+/// 与更多操作要读当前消息与记录，放在页面外面够不着这些状态。
 class DiscussionPage extends StatelessWidget {
   const DiscussionPage({
     super.key,
@@ -28,18 +29,12 @@ class DiscussionPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DetailScaffold(
-      header: ZhixinHeader(
-        title: Text(startNew ? '新讨论' : '继续讨论'),
-        showBack: true,
-      ),
-      child: DiscussionChat(
-        conversationId: conversationId,
-        startNew: startNew,
-        initialText: initialText,
-        initialImages: initialImages,
-        onSubmitted: onSubmitted,
-      ),
+    return DiscussionChat(
+      conversationId: conversationId,
+      startNew: startNew,
+      initialText: initialText,
+      initialImages: initialImages,
+      onSubmitted: onSubmitted,
     );
   }
 }

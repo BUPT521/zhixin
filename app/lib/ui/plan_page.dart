@@ -494,11 +494,7 @@ class _PlanPageState extends State<PlanPage> {
                 // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
                 if (_error != null)
                   Padding(
-                    padding: EdgeInsets.only(
-                      left: theme.space.page,
-                      right: theme.space.page,
-                      bottom: theme.space.sm,
-                    ),
+                    padding: EdgeInsets.only(bottom: theme.space.sm),
                     child: InlineNotice(message: _error!, onRetry: _reload),
                   ),
                 Expanded(
@@ -534,14 +530,31 @@ class _PlanPageState extends State<PlanPage> {
 
   /// 页签固定在列表上方：原来它随列表滚走，看到日程中段时想切到事项要先滚回顶部。
   /// 外层的页面边距由 [_loadedWeek] 给出，这里只管上下的间隔，整条与输入框等宽。
+  ///
+  /// 四项与记录页的页签用同一种写法：图标加短标签，等分整条。第四项显示“AI”，
+  /// 读屏读“AI 的改动”，这样四个中文标签在常见手机宽度下都排得下，不必退回
+  /// 横向滚动、也不会一项宽一项窄。
   Widget _tabBar(ZhixinTheme theme) => Padding(
     padding: EdgeInsets.only(top: theme.space.xs, bottom: theme.space.sm),
     child: ZhixinSegmented<int>(
       segments: const [
-        ZhixinSegment(value: 0, label: planTabSchedule),
-        ZhixinSegment(value: 1, label: planTabItems),
-        ZhixinSegment(value: 2, label: planTabGoals),
-        ZhixinSegment(value: 3, label: aiChanges),
+        ZhixinSegment(
+          value: 0,
+          label: planTabSchedule,
+          icon: FLucideIcons.calendarDays,
+        ),
+        ZhixinSegment(
+          value: 1,
+          label: planTabItems,
+          icon: FLucideIcons.listChecks,
+        ),
+        ZhixinSegment(value: 2, label: planTabGoals, icon: FLucideIcons.flag),
+        ZhixinSegment(
+          value: 3,
+          label: 'AI',
+          icon: FLucideIcons.sparkles,
+          semanticsLabel: aiChanges,
+        ),
       ],
       selected: _tab,
       onChanged: (tab) => setState(() {

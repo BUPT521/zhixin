@@ -1,6 +1,7 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart' as forui;
+import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/zhixin_segmented.dart';
@@ -213,19 +214,102 @@ void main() {
     expect(tester.getRect(track.first), before);
     expect(tester.getRect(thumb.first), thumbBefore);
     expect(
-      tester
-          .widget<AnimatedSwitcher>(
-            find.descendant(
-              of: find.byType(ZhixinSegmented<String>),
-              matching: find.byType(AnimatedSwitcher),
-            ),
-          )
-          .layoutBuilder,
-      isNotNull,
+      find.descendant(
+        of: find.byType(ZhixinSegmented<String>),
+        matching: find.byType(AnimatedAlign),
+      ),
+      findsOneWidget,
     );
     await gesture.up();
     await tester.pumpAndSettle();
     expect(tester.getRect(track.first), before);
+  });
+
+  testWidgets('安排页四个页签在手机宽度下等分整行，选中底色只落在当前项', (tester) async {
+    var selected = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: zhixinTheme,
+        home: forui.FTheme(
+          data: zhixinForuiTheme,
+          child: Scaffold(
+            body: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: SizedBox(
+                width: 342,
+                child: StatefulBuilder(
+                  builder: (context, setState) => ZhixinSegmented<int>(
+                    segments: const [
+                      ZhixinSegment(
+                        value: 0,
+                        label: '日程',
+                        icon: FLucideIcons.calendarDays,
+                      ),
+                      ZhixinSegment(
+                        value: 1,
+                        label: '事项',
+                        icon: FLucideIcons.listChecks,
+                      ),
+                      ZhixinSegment(
+                        value: 2,
+                        label: '目标',
+                        icon: FLucideIcons.flag,
+                      ),
+                      ZhixinSegment(
+                        value: 3,
+                        label: 'AI',
+                        icon: FLucideIcons.sparkles,
+                        semanticsLabel: 'AI 的改动',
+                      ),
+                    ],
+                    selected: selected,
+                    onChanged: (value) => setState(() => selected = value),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 四个页签等分整行，不退回横向滚动；每一段的宽度相同。
+    expect(find.byType(SingleChildScrollView), findsNothing);
+    final labels = ['日程', '事项', '目标', 'AI 的改动'];
+    final widths = [
+      for (final label in labels)
+        tester.getSize(find.bySemanticsLabel(label)).width,
+    ];
+    expect(widths.toSet().length, 1, reason: '四个页签应当等宽：$widths');
+
+    // 选中底色是一块，中心与当前项的中心对齐；切换之后跟着新的一项。
+    final thumb = find.byWidgetPredicate(
+      (widget) =>
+          widget is DecoratedBox &&
+          widget.decoration is ShapeDecoration &&
+          (widget.decoration as ShapeDecoration).color ==
+              const Color(0xFFFFFFFF),
+    );
+    expect(thumb, findsOneWidget);
+    expect(
+      tester.getCenter(thumb).dx,
+      closeTo(tester.getCenter(find.bySemanticsLabel('日程')).dx, 0.5),
+    );
+
+    await tester.tap(find.bySemanticsLabel('目标'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getCenter(thumb).dx,
+      closeTo(tester.getCenter(find.bySemanticsLabel('目标')).dx, 0.5),
+    );
+    await tester.tap(find.bySemanticsLabel('AI 的改动'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getCenter(thumb).dx,
+      closeTo(tester.getCenter(find.bySemanticsLabel('AI 的改动')).dx, 0.5),
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('下拉框与输入框、按钮同高，标签与说明另占高度', (tester) async {

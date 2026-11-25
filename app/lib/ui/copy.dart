@@ -14,7 +14,8 @@ const buddyName = '搭子';
 /// 安排页的板块名：模型写入的变更。
 ///
 /// 02 文档把它写作「AI 的改动」，这里的“AI”指写入者而不是角色，所以与
-/// [buddyName] 分开保留；页签与板块标题共用这一份，不再一处写“AI 改动”。
+/// [buddyName] 分开保留；板块标题用这一份完整写法，安排页的页签为了四项等分
+/// 只显示“AI”，读屏仍读这一份，见 `plan_page.dart`。
 /// 用户在记忆页手动改的记忆不算模型写入，由 `plan_service.dart` 的动作名单排除。
 const aiChanges = 'AI 的改动';
 
@@ -80,7 +81,7 @@ const emptyChangesDescription = '$buddyName执行过的变更会出现在这里�
 /// “我的”页的插件与人格入口，以及这两页的标题。
 const pluginsPageTitle = '插件';
 const personaPageTitle = '人格';
-const pluginsEntrySubtitle = '启停随应用编译的能力与人格插件。';
+const pluginsEntrySubtitle = '启停随应用编译的插件。';
 const personaEntrySubtitle = '选择搭子的语气、称呼与讲解风格。';
 
 /// 人格页的顺序与边界说明；设置页与人格页共用同一句。
