@@ -798,10 +798,12 @@ paths:
       tags: [payment]
       summary: 即刻收商品收费能力、聊天积分余额与遗留余额
       description: |
-        需要登录令牌。服务端按商品查询收费能力（alipay.aipay.nowpaydirect.charge.query），
-        再按账号查询积分余额（alipay.aipay.nowpaydirect.quota.query）。服务未配置商品或
-        账号未验证登录方式时省略 product，余额照常返回；只有 capability_status 是 ENABLED
-        才表示允许新增购买。
+        需要登录令牌。服务端并行查询商品收费能力（alipay.aipay.nowpaydirect.charge.query）
+        与账号积分余额（alipay.aipay.nowpaydirect.quota.query）；商品能力在进程内缓存 60 秒。
+        服务未配置商品或账号未验证登录方式时省略 product，余额照常返回；只有
+        capability_status 是 ENABLED 才表示允许新增购买。余额查不到、或商品的额度单位不是
+        POINT 时仍返回 200，商品照常给出，余额省略并置 `balance_unavailable=true`。
+        503 只表示商品收费能力查询失败，见 ADR-0073。
       responses:
         '200':
           description: 购买概况
@@ -1375,7 +1377,12 @@ components:
         balance_points:
           type: integer
           format: int64
-          description: 即刻收一侧的剩余积分；未配置商品时为 0
+          description: 即刻收一侧的剩余积分；未配置商品时或余额暂时查不到时为 0
+        balance_unavailable:
+          type: boolean
+          description: |
+            余额暂时查不到或商品的积分单位不是 POINT 时为 true，此时 balance_points 不可用；
+            商品信息照常返回，客户端提示“暂时查不到余额”，见 ADR-0073。
         latest_purchase: { $ref: '#/components/schemas/QuotaPurchaseLink' }
     QuotaPurchaseProduct:
       type: object

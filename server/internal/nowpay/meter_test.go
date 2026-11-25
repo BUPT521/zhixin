@@ -250,6 +250,38 @@ func TestProcessingDoesNotOverwriteTheCopy(t *testing.T) {
 	}
 }
 
+// TestNonPointChargeIsNotBookedAsPoints 守住核销结果的单位校验：响应不是按积分时
+// 不按积分记账、不覆盖副本，记失败等下一次结算重算（ADR-0073）。
+func TestNonPointChargeIsNotBookedAsPoints(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","remaining":10,"quota_unit":"COUNT"}`,
+	}}
+	ledger := &fakeLedger{balances: map[string]int64{"user_1": 50}}
+	meter := newTestMeter(t, ledger, caller)
+	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
+	meter.run(context.Background(), job{charge: charge, verify: true})
+	if got := ledger.last(); got.status != StatusFailed {
+		t.Fatalf("单位不是积分时应记失败: %+v", got)
+	}
+	if ledger.balances["user_1"] != 50 {
+		t.Fatalf("单位不是积分时不该覆盖副本: %+v", ledger.balances)
+	}
+}
+
+// TestRefreshSkipsANonPointProduct 守住后台刷新也校验单位：不是按积分卖的商品，余额
+// 不能写进按积分放行的副本（ADR-0073）。
+func TestRefreshSkipsANonPointProduct(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodQuota: `{"code":"10000","quota_unit":"COUNT","total":10,"used":3,"remaining":7}`,
+	}}
+	ledger := &fakeLedger{balances: map[string]int64{"user_1": 50}}
+	meter := newTestMeter(t, ledger, caller)
+	meter.run(context.Background(), job{balance: true, userID: "user_1"})
+	if ledger.balances["user_1"] != 50 {
+		t.Fatalf("单位不是积分时不该覆盖副本: %+v", ledger.balances)
+	}
+}
+
 func TestProcessingIsQueriedWithTheSameRequestNo(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodVerify:  `{"code":"10000","consume_status":"PROCESSING","quota_unit":"POINT"}`,

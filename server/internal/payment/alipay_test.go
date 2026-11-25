@@ -8,11 +8,13 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +119,26 @@ func TestCallRejectsAnUnverifiedReply(t *testing.T) {
 	if _, err := g.Call(t.Context(), "alipay.aipay.nowpaydirect.charge.query",
 		map[string]any{"out_product_id": "np_1"}); err == nil {
 		t.Fatal("签名不是支付宝的响应必须失败")
+	}
+}
+
+// TestCallKeepsTheGatewayErrorReason 守住网关错误的可排查性：对外仍按 ErrGateway
+// 判断，日志里能看出是超时、HTTP 状态、解析还是验签哪一步失败（ADR-0073 相关）。
+func TestCallKeepsTheGatewayErrorReason(t *testing.T) {
+	g, _ := testGateway(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+	g.endpoint = server.URL
+
+	_, err := g.Call(t.Context(), "alipay.aipay.nowpaydirect.charge.query",
+		map[string]any{"out_product_id": "np_1"})
+	if !errors.Is(err, ErrGateway) {
+		t.Fatalf("仍应按 ErrGateway 判断: %v", err)
+	}
+	if !strings.Contains(err.Error(), "HTTP 502") {
+		t.Fatalf("错误文本应带出失败步骤，得到 %q", err.Error())
 	}
 }
 

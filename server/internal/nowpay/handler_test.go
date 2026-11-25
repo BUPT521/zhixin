@@ -131,7 +131,9 @@ func TestOverviewReportsProductStatusAndPointsBalance(t *testing.T) {
 	}
 }
 
-func TestOverviewFailsLoudlyWhenTheBalanceCannotBeRead(t *testing.T) {
+// TestOverviewReportsABalanceThatCannotBeRead 守住概览页的容错：余额查询失败时不再
+// 整页 503，商品信息照常返回，只把余额标成暂时不可用（ADR-0073）。
+func TestOverviewReportsABalanceThatCannotBeRead(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodCharge: `{"code":"10000","capability_status":"ENABLED","billing_mode":"QUANTITY","quota_unit":"POINT","charging_options":[]}`,
 		methodQuota:  `{"code":"20000","sub_code":"isp.unknow-error","sub_msg":"系统繁忙"}`,
@@ -139,8 +141,84 @@ func TestOverviewFailsLoudlyWhenTheBalanceCannotBeRead(t *testing.T) {
 	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
 	response := httptest.NewRecorder()
 	handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
-	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("余额查询失败不能按 0 余额返回，得到 %d", response.Code)
+	if response.Code != http.StatusOK {
+		t.Fatalf("余额查不到时应返回 200 并标记不可用，得到 %d", response.Code)
+	}
+	view := decode[api.QuotaPurchaseOverview](t, response)
+	if view.Product == nil || view.Product.CapabilityStatus != api.ENABLED {
+		t.Fatalf("商品信息应照常返回: %+v", view.Product)
+	}
+	if view.BalanceUnavailable == nil || !*view.BalanceUnavailable {
+		t.Fatalf("余额查不到时应标记 balance_unavailable: %+v", view)
+	}
+}
+
+// TestOverviewQueriesProductAndBalanceInParallel 守住概览的两次网关调用并行：串行时
+// 用户要等两次往返，余额查询变慢会把商品信息一起拖住。
+func TestOverviewQueriesProductAndBalanceInParallel(t *testing.T) {
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	caller := &fakeCaller{
+		started: started,
+		release: release,
+		replies: map[string]string{
+			methodCharge: `{"code":"10000","capability_status":"ENABLED","billing_mode":"QUANTITY","quota_unit":"POINT","charging_options":[]}`,
+			methodQuota:  `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
+		},
+	}
+	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
+		close(done)
+	}()
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case method := <-started:
+			seen[method] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("两次查询没有并行发出，只看到 %v", seen)
+		}
+	}
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("概览没有返回")
+	}
+	if !seen[methodCharge] || !seen[methodQuota] {
+		t.Fatalf("应同时查商品与余额: %v", seen)
+	}
+}
+
+// TestOverviewCachesTheProductCapability 守住六十秒缓存：同一实例上反复打开概览时，
+// 商品能力不必每次都查，余额仍然每次实时查。
+func TestOverviewCachesTheProductCapability(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodCharge: `{"code":"10000","capability_status":"ENABLED","billing_mode":"QUANTITY","quota_unit":"POINT","charging_options":[]}`,
+		methodQuota:  `{"code":"10000","quota_unit":"POINT","total":100,"used":40,"remaining":55}`,
+	}}
+	handler := newTestHandler(newTestClient(t, caller), &fakePurchases{})
+	for i := 0; i < 2; i++ {
+		response := httptest.NewRecorder()
+		handler.Overview(response, request(http.MethodGet, "/v1/me/model-quota-purchases", ""))
+		if response.Code != http.StatusOK {
+			t.Fatalf("概览应返回 200，得到 %d", response.Code)
+		}
+	}
+	var charges, quotes int
+	for _, method := range caller.calls() {
+		switch method {
+		case methodCharge:
+			charges++
+		case methodQuota:
+			quotes++
+		}
+	}
+	if charges != 1 || quotes != 2 {
+		t.Fatalf("商品能力应缓存、余额应每次查，实际 charge=%d quota=%d", charges, quotes)
 	}
 }
 
@@ -164,6 +242,29 @@ func TestPurchaseRejectsProductsThatAreNotOnSale(t *testing.T) {
 	handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", `{"sku_id":"S1"}`))
 	if response.Code != http.StatusConflict {
 		t.Fatalf("商品待审核时不能创单，得到 %d", response.Code)
+	}
+}
+
+// TestPurchaseRejectsProductsThatAreNotSoldInPoints 守住商品单位校验：只有按积分卖
+// 的数量包能接进额度放行，其它收费模式明确失败，不创单（ADR-0073）。
+func TestPurchaseRejectsProductsThatAreNotSoldInPoints(t *testing.T) {
+	for name, capability := range map[string]string{
+		"计次包": `{"code":"10000","capability_status":"ENABLED","billing_mode":"QUANTITY","quota_unit":"COUNT","charging_options":[{"sku_id":"S1","display_name":"十次","price":"6.00","quota_amount":10}]}`,
+		"买断包": `{"code":"10000","capability_status":"ENABLED","billing_mode":"ONE_TIME","quota_unit":"POINT","charging_options":[{"sku_id":"S1","display_name":"100 积分","price":"6.00","quota_amount":100}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			caller := &fakeCaller{replies: map[string]string{methodCharge: capability}}
+			purchases := &fakePurchases{}
+			handler := newTestHandler(newTestClient(t, caller), purchases)
+			response := httptest.NewRecorder()
+			handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", `{"sku_id":"S1"}`))
+			if response.Code != http.StatusConflict {
+				t.Fatalf("单位不是积分时不能创单，得到 %d", response.Code)
+			}
+			if len(purchases.created) != 0 {
+				t.Fatalf("单位不是积分时不该创单: %+v", purchases.created)
+			}
+		})
 	}
 }
 
@@ -223,5 +324,23 @@ func TestBalanceEndpointReturnsTheCurrentPoints(t *testing.T) {
 	}
 	if balances.saved["user_1"] != 55 {
 		t.Fatalf("刷新余额时应更新副本: %+v", balances.saved)
+	}
+}
+
+// TestBalanceEndpointRejectsANonPointProduct 守住余额接口的单位校验：商品的额度单位
+// 不是 POINT 时明确失败，不把数字按积分写进放行用的副本（ADR-0073）。
+func TestBalanceEndpointRejectsANonPointProduct(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodQuota: `{"code":"10000","quota_unit":"COUNT","total":10,"used":3,"remaining":7}`,
+	}}
+	balances := &fakeBalances{}
+	handler := newTestHandlerWith(newTestClient(t, caller), &fakePurchases{}, balances)
+	response := httptest.NewRecorder()
+	handler.Balance(response, request(http.MethodGet, "/v1/me/model-quota-purchases/quota", ""))
+	if response.Code != http.StatusConflict {
+		t.Fatalf("单位不是积分时应回 409，得到 %d", response.Code)
+	}
+	if len(balances.saved) != 0 {
+		t.Fatalf("单位不是积分时不该写副本: %+v", balances.saved)
 	}
 }

@@ -85,6 +85,14 @@ func run(log *slog.Logger) error {
 			}
 			pgStore.SetNowPay(meter)
 			nowpayClient = client
+			// 启动时查一次商品收费能力：配置错、商品未审核或应用凭证不匹配会在日志里
+			// 先出现，购买接口的第一次请求不必承担这次排查；失败只记日志，不阻塞启动。
+			probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if _, err := client.Charge(probeCtx); err != nil {
+				log.Error("查询即刻收商品失败，购买入口会在请求时再试",
+					"product_id", cfg.NowPay.ProductID, "error", err)
+			}
+			probeCancel()
 		}
 		log.Info("using PostgreSQL stores")
 		// 附件索引与配额写在 attachment 表里，BlobStore 负责索引与字节两件事；

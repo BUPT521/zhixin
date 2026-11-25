@@ -5,9 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"log/slog"
+
+	"golang.org/x/sync/errgroup"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
@@ -50,7 +53,17 @@ type Handler struct {
 	// tokensPerPoint 是一个积分覆盖的计费 token 数，概览接口原样返回，供客户端把
 	// 积分换算成 token；比例只有配置一处来源，由 config.Load 校验为正数。
 	tokensPerPoint int64
+
+	// capability 是商品收费能力的进程内缓存：概览页每次打开都查一次商品没有意义，
+	// 六十秒内复用上一次的结果；购买入口直接查实时状态，不读这份缓存。
+	capMu        sync.Mutex
+	capability   Capability
+	capabilityAt time.Time
 }
+
+// capabilityTTL 是商品收费能力的缓存时间。审核与下架不会在几十秒内反复变化，缓存
+// 让概览页少一次网关调用，同时保留一分钟内感知变化的窗口。
+const capabilityTTL = time.Minute
 
 // NewHandler 装配三个接口。client 为空表示没有配置即刻收商品，接口只返回空余额。
 // tokensPerPoint 由调用方传入已经校验过的配置值，这里不再设默认值，避免配置与
@@ -69,7 +82,8 @@ func NewHandler(client *Client, purchases PurchaseStore, balances BalanceStore, 
 }
 
 // Overview 返回商品收费能力、积分余额与遗留余额。商品查询成功就带上状态，客户端
-// 按 capability_status 决定是否显示购买入口；余额查询失败不按零处理。
+// 按 capability_status 决定是否显示购买入口；商品查询与余额查询并行，余额失败不再
+// 让整页 503，而是返回商品信息并标记 balance_unavailable，客户端提示暂时查不到余额。
 func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	principal := auth.MustPrincipal(r.Context())
 	view := api.QuotaPurchaseOverview{TokensPerPoint: h.tokensPerPoint}
@@ -80,19 +94,44 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 	if !h.allow(w, r, principal.UserID) {
 		return
 	}
-	capability, err := h.client.Charge(r.Context())
-	if err != nil {
-		h.unavailable(w, r, "查询即刻收商品", err)
-		return
-	}
-	balance, err := h.client.Balance(r.Context(), principal.UserID)
-	if err != nil {
-		h.unavailable(w, r, "查询即刻收积分余额", err)
+	var (
+		capability Capability
+		balance    Balance
+		capErr     error
+		balanceErr error
+	)
+	group, ctx := errgroup.WithContext(r.Context())
+	group.Go(func() error {
+		capability, capErr = h.chargeCapability(ctx)
+		return nil
+	})
+	group.Go(func() error {
+		balance, balanceErr = h.client.Balance(ctx, principal.UserID)
+		return nil
+	})
+	_ = group.Wait()
+	if capErr != nil {
+		h.unavailable(w, r, "查询即刻收商品", capErr)
 		return
 	}
 	view.Product = productView(capability)
-	view.BalancePoints = balance.Remaining
-	h.saveBalance(r.Context(), principal.UserID, balance.Remaining, balance.AsOf)
+	switch {
+	case balanceErr != nil:
+		h.log.Error("query the nowpay balance for the overview",
+			"user_id", principal.UserID, "error", balanceErr)
+		unavailable := true
+		view.BalanceUnavailable = &unavailable
+	case balance.Unit != UnitPoints:
+		// 商品的积分单位不是 POINT 时不能按积分展示与放行，也不写副本；商品信息
+		// 照常返回，让客户端看到“暂时查不到余额”而不是整页失败（ADR-0073）。
+		h.log.Error("the nowpay product is not sold in points",
+			"user_id", principal.UserID, "quota_unit", balance.Unit)
+		unavailable := true
+		view.BalanceUnavailable = &unavailable
+	default:
+		view.BalancePoints = balance.Remaining
+		h.saveBalance(r.Context(), principal.UserID, balance.Remaining, balance.AsOf)
+	}
 	if h.purchases != nil {
 		existing, ok, err := h.purchases.LatestPurchaseLink(r.Context(), principal.UserID, time.Now())
 		if err != nil {
@@ -102,6 +141,27 @@ func (h *Handler) Overview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
+// chargeCapability 返回商品收费能力，六十秒内复用上一次的结果。缓存只给概览页用：
+// 购买入口要按当前状态决定能不能创单，直接查实时状态。
+func (h *Handler) chargeCapability(ctx context.Context) (Capability, error) {
+	h.capMu.Lock()
+	if !h.capabilityAt.IsZero() && time.Since(h.capabilityAt) < capabilityTTL {
+		cached := h.capability
+		h.capMu.Unlock()
+		return cached, nil
+	}
+	h.capMu.Unlock()
+	capability, err := h.client.Charge(ctx)
+	if err != nil {
+		return Capability{}, err
+	}
+	h.capMu.Lock()
+	h.capability = capability
+	h.capabilityAt = time.Now()
+	h.capMu.Unlock()
+	return capability, nil
 }
 
 // Balance 只查积分余额，供购买页返回之后刷新使用。
@@ -117,6 +177,14 @@ func (h *Handler) Balance(w http.ResponseWriter, r *http.Request) {
 	balance, err := h.client.Balance(r.Context(), principal.UserID)
 	if err != nil {
 		h.unavailable(w, r, "查询即刻收积分余额", err)
+		return
+	}
+	if balance.Unit != UnitPoints {
+		// 商品不是按积分卖时，余额数字不能按积分展示，也不写进放行用的副本。
+		h.log.Error("the nowpay product is not sold in points",
+			"user_id", principal.UserID, "quota_unit", balance.Unit)
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict,
+			"the product is not sold in points")
 		return
 	}
 	h.saveBalance(r.Context(), principal.UserID, balance.Remaining, balance.AsOf)
@@ -165,6 +233,15 @@ func (h *Handler) Purchase(w http.ResponseWriter, r *http.Request) {
 	if !capability.Purchasable() {
 		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict,
 			"the product is not open for new purchases ("+capability.Status+")")
+		return
+	}
+	if capability.BillingMode != BillingQuantity || capability.QuotaUnit != UnitPoints {
+		// 只有按积分的数量包能接进额度放行；其它收费模式的档位金额不是积分，
+		// 创单之后无法按积分抵扣，这里直接拒绝。
+		h.log.Error("the nowpay product is not a point package",
+			"billing_mode", capability.BillingMode, "quota_unit", capability.QuotaUnit)
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict,
+			"the product is not sold in points")
 		return
 	}
 	if input.SKUID != "" && !hasOption(capability.Options, input.SKUID) {

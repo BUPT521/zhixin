@@ -140,6 +140,8 @@ type Consume struct {
 	// AsOf 是响应给出这份剩余积分的时刻，没有携带时为零值，调用方按发起查询的时刻
 	// 处理（ADR-0073）。
 	AsOf time.Time
+	// Unit 是响应里的额度单位；只有 POINT 才能按积分写副本与核销，见 ADR-0073。
+	Unit string
 }
 
 // Confirmed 报告这次核销是否已经确认扣减。
@@ -318,11 +320,12 @@ func (c *Client) consume(ctx context.Context, method string, biz map[string]any)
 		Consumed    *int64 `json:"consumed"`
 		Remaining   *int64 `json:"remaining"`
 		AsOfTime    string `json:"as_of_time"`
+		QuotaUnit   string `json:"quota_unit"`
 	}
 	if err := c.do(ctx, method, biz, &result); err != nil {
 		return Consume{}, err
 	}
-	consume := Consume{Status: result.ConsumeStat}
+	consume := Consume{Status: result.ConsumeStat, Unit: result.QuotaUnit}
 	if result.Consumed != nil {
 		consume.Consumed = *result.Consumed
 	}

@@ -232,11 +232,11 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 
 ## 即刻收收款
 
-聊天额度按支付宝「即刻收」直连模式的积分包卖出，见 [ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md)。商品、收费模式、档位与价格都在「即刻收」小程序里配置，审核发布之后把商品详情页的 `out_product_id` 填进配置；应用不能自己定价，也不能生成商品 ID。三档的名称、价格与发放积分见 [00 第 7 章](../docs/00-产品定义.md#7-边界) 与 [ADR-0068](../docs/adr/0068-聊天积分包的档位与价格.md)，应用不保存价格，改档位只改小程序。概览接口与额度接口都返回一个积分覆盖的计费 token 数（`tokens_per_point`，取自 `ZHIXIN_TOKENS_PER_POINT`），客户端据此把积分换算成 token 与天数，也把当天用量换算成积分展示。网关、RSA2 签名与公共参数沿用支付宝开放平台的同一套应用凭证，`internal/payment` 的签名与验签是唯一实现，`internal/nowpay` 只按接口名提交 `biz_content`。
+聊天额度按支付宝「即刻收」直连模式的积分包卖出，见 [ADR-0067](../docs/adr/0067-聊天额度改走即刻收积分包.md)。商品、收费模式、档位与价格都在「即刻收」小程序里配置，审核发布之后把商品详情页的 `out_product_id` 填进配置；应用不能自己定价，也不能生成商品 ID。商品必须配置成 `billing_mode=QUANTITY` 且 `quota_unit=POINT` 的积分包，购买与核销只接受这种商品：单位不匹配时购买回 409，余额接口回 409，核销结果不按积分记账、也不写副本，日志写明实际的单位。三档的名称、价格与发放积分见 [00 第 7 章](../docs/00-产品定义.md#7-边界) 与 [ADR-0068](../docs/adr/0068-聊天积分包的档位与价格.md)，应用不保存价格，改档位只改小程序。概览接口与额度接口都返回一个积分覆盖的计费 token 数（`tokens_per_point`，取自 `ZHIXIN_TOKENS_PER_POINT`），客户端据此把积分换算成 token 与天数，也把当天用量换算成积分展示。网关、RSA2 签名与公共参数沿用支付宝开放平台的同一套应用凭证，`internal/payment` 的签名与验签是唯一实现，`internal/nowpay` 只按接口名提交 `biz_content`；网关错误沿 `ErrGateway` 包装出具体步骤（超时、连接、HTTP 状态、解析或验签），日志能看出卡在哪一步。
 
 服务端用到五个接口：`charge.query` 查收费能力与档位，`quota.query` 查积分余额，`purchase.create` 取托管购买页链接，`quota.verify` 核销，`quota.refresh` 用原请求号查询核销结果。买断与时长包要用的 `purchase.consult` 没有接，因为商品按积分包配置。即刻收的响应把中文按 GB18030 回，请求里写 `charset=utf-8` 也不改，所以网关先验签再转码，调用方拿到的是 UTF-8；签名覆盖的始终是原始字节。
 
-契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与折算比例，`POST /v1/me/model-quota-purchases` 取购买链接，`GET /v1/me/model-quota-purchases/quota` 只查余额。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；通知与查单处理器、Android 侧的 SDK 通道、订单表与钱包表都已删除，`internal/payment` 只保留签名、验签与网关调用。
+契约里只有三条接口：`GET /v1/me/model-quota-purchases` 返回商品状态、积分余额与折算比例，`POST /v1/me/model-quota-purchases` 取购买链接，`GET /v1/me/model-quota-purchases/quota` 只查余额。概览接口并行查商品与余额，商品能力在进程内缓存 60 秒；余额查不到时不回 503，而是照常返回商品与 `balance_unavailable=true`，客户端提示“暂时查不到余额”，见 [ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)。支付宝的异步通知不再接收，`POST /v1/payments/alipay/notify` 已从契约删除；通知与查单处理器、Android 侧的 SDK 通道、订单表与钱包表都已删除，`internal/payment` 只保留签名、验签与网关调用。
 
 `nowpay_charge` 保存积分核销流水，`id` 就是提交给即刻收的 `out_request_no`，结果未知时只能用它查询或重试；`nowpay_purchase` 保存购买入口请求，同一账号同一档位在链接有效期内复用；`nowpay_balance` 保存积分余额的本地副本，额度预留按它放行。三张表的 DDL 见 [schema.sql](internal/store/schema.sql)。
 

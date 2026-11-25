@@ -953,9 +953,13 @@ type QuotaPurchaseOption struct {
 
 // QuotaPurchaseOverview defines model for QuotaPurchaseOverview.
 type QuotaPurchaseOverview struct {
-	// BalancePoints 即刻收一侧的剩余积分；未配置商品时为 0
-	BalancePoints  int64              `json:"balance_points"`
-	LatestPurchase *QuotaPurchaseLink `json:"latest_purchase,omitempty"`
+	// BalancePoints 即刻收一侧的剩余积分；未配置商品时或余额暂时查不到时为 0
+	BalancePoints int64 `json:"balance_points"`
+
+	// BalanceUnavailable 余额暂时查不到或商品的积分单位不是 POINT 时为 true，此时 balance_points 不可用；
+	// 商品信息照常返回，客户端提示“暂时查不到余额”，见 ADR-0073。
+	BalanceUnavailable *bool              `json:"balance_unavailable,omitempty"`
+	LatestPurchase     *QuotaPurchaseLink `json:"latest_purchase,omitempty"`
 
 	// Product 即刻收商品；服务未配置商品或账号未验证登录方式时整体省略，是否允许购买看 capability_status
 	Product *QuotaPurchaseProduct `json:"product,omitempty"`

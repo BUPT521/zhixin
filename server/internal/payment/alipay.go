@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -88,27 +89,35 @@ func (g *Gateway) call(ctx context.Context, method string, biz map[string]any, n
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, g.endpoint, strings.NewReader(body))
 	if err != nil {
-		return nil, ErrGateway
+		return nil, fmt.Errorf("%w: 构造 %s 请求失败: %v", ErrGateway, method, err)
 	}
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	response, err := g.client.Do(request)
 	if err != nil {
-		return nil, ErrGateway
+		// 超时、连接中断与 DNS 失败都落在这里；原因随错误带出，日志能看出卡在哪一步，
+		// 调用方仍按 ErrGateway 判断，对外只说网关暂时不可用。
+		return nil, fmt.Errorf("%w: 调用 %s 超时或连接失败: %v", ErrGateway, method, err)
 	}
 	defer response.Body.Close()
 	const maxResponse = 64 << 10
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
-	if err != nil || len(raw) > maxResponse || response.StatusCode != http.StatusOK {
-		return nil, ErrGateway
+	if err != nil {
+		return nil, fmt.Errorf("%w: 读取 %s 响应失败: %v", ErrGateway, method, err)
+	}
+	if len(raw) > maxResponse {
+		return nil, fmt.Errorf("%w: %s 响应超过 %d 字节", ErrGateway, method, maxResponse)
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%w: %s 返回 HTTP %d", ErrGateway, method, response.StatusCode)
 	}
 	var envelope map[string]json.RawMessage
 	if json.Unmarshal(raw, &envelope) != nil {
-		return nil, ErrGateway
+		return nil, fmt.Errorf("%w: 解析 %s 响应失败", ErrGateway, method)
 	}
 	result, ok := envelope[strings.ReplaceAll(method, ".", "_")+"_response"]
 	var signature string
 	if !ok || json.Unmarshal(envelope["sign"], &signature) != nil || !g.verify(result, signature) {
-		return nil, ErrGateway
+		return nil, fmt.Errorf("%w: %s 响应验签失败或缺少业务对象", ErrGateway, method)
 	}
 	// 即刻收的响应把中文按 GB18030 回，请求里写 charset=utf-8 也不改。签名覆盖的是
 	// 原始字节，所以先验签再转码；转码失败就按原样返回，让调用方看到错误而不是乱码。

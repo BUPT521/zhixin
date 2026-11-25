@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // fakeCaller 记录每次调用的 method 与 biz，并返回预先写好的业务对象。
 type fakeCaller struct {
+	mu      sync.Mutex
 	methods []string
 	biz     []map[string]any
 	replies map[string]string
@@ -18,11 +20,23 @@ type fakeCaller struct {
 	// blockQuota 非空时 quota.query 阻塞到它被关闭，用来验证余额刷新不占核销的时间
 	// 预算。
 	blockQuota chan struct{}
+	// started 与 release 非空时，每次调用先往 started 发一个 method，再等 release
+	// 关闭，用来验证概览的两次查询是并行的。
+	started chan string
+	release chan struct{}
 }
 
 func (f *fakeCaller) Call(_ context.Context, method string, biz map[string]any) ([]byte, error) {
+	f.mu.Lock()
 	f.methods = append(f.methods, method)
 	f.biz = append(f.biz, biz)
+	f.mu.Unlock()
+	if f.started != nil {
+		f.started <- method
+	}
+	if f.release != nil {
+		<-f.release
+	}
 	if method == methodQuota && f.blockQuota != nil {
 		<-f.blockQuota
 	}
@@ -30,6 +44,13 @@ func (f *fakeCaller) Call(_ context.Context, method string, biz map[string]any) 
 		return nil, f.err
 	}
 	return []byte(f.replies[method]), nil
+}
+
+// calls 返回已经发生的调用方法，供并发用例在同步之后读取。
+func (f *fakeCaller) calls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.methods...)
 }
 
 func newTestClient(t *testing.T, caller Caller) *Client {

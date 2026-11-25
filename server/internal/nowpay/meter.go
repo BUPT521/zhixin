@@ -288,6 +288,12 @@ func (m *Meter) refresh(ctx context.Context, userID string) {
 		m.log.Warn("refresh the nowpay balance", "user_id", userID, "error", err)
 		return
 	}
+	if balance.Unit != UnitPoints {
+		// 不是按积分卖的商品，余额数字不能写进按积分放行的副本。
+		m.log.Error("the nowpay product is not sold in points",
+			"user_id", userID, "quota_unit", balance.Unit)
+		return
+	}
 	m.saveBalance(ctx, userID, balance.Remaining, balance.AsOf)
 }
 
@@ -310,6 +316,14 @@ func (m *Meter) saveBalance(ctx context.Context, userID string, points int64, as
 func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err error, asOf time.Time) {
 	if !consume.AsOf.IsZero() {
 		asOf = consume.AsOf
+	}
+	if err == nil && consume.Unit != "" && consume.Unit != UnitPoints {
+		// 商品的额度单位不是 POINT 时，扣减不能按积分记，也不写副本；记失败让下一次
+		// 结算重新算，单位恢复之后还能补上。
+		m.log.Error("the nowpay response is not in points",
+			"charge_id", charge.ID, "quota_unit", consume.Unit)
+		m.setStatus(ctx, charge, StatusFailed, "积分单位不是 POINT")
+		return
 	}
 	switch {
 	case err == nil && consume.Confirmed():
