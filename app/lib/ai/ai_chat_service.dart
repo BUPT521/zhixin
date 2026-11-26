@@ -155,8 +155,18 @@ class AiChatService implements BuddyAi {
     }
     final client = _client(current);
     final tools = BuddyTurnTools(context);
-    final system = buildBuddySystemPrompt(context);
-    final messages = _messages(history, text, images, inputMessageId);
+    // 稳定前缀进 instructions，本轮的时间、检索、记忆与题目随最后一条用户消息
+    // 一起发：同一讨论的 history 与 instructions 因此能和上一轮逐字相同，上游
+    // 按前缀复用时只需要重新处理这一轮新增的内容（ADR-0061）。
+    final prompt = buildBuddyPrompt(context);
+    final system = prompt.instructions;
+    final messages = _messages(
+      history,
+      text,
+      images,
+      inputMessageId,
+      prompt.turn,
+    );
     try {
       final turn = await AgentLoop(client).run(
         system: system,
@@ -206,6 +216,7 @@ class AiChatService implements BuddyAi {
     String text,
     List<LlmImage> images,
     String? inputMessageId,
+    String turn,
   ) => [
     for (final message in selectBuddyHistory([
       for (final message in history)
@@ -215,10 +226,17 @@ class AiChatService implements BuddyAi {
     LlmMessage(
       id: inputMessageId ?? 'turn:user',
       role: 'user',
-      content: text.trim().isEmpty ? '[我发了一张图片]' : text.trim(),
+      content: _turnContent(turn, text),
       images: uniqueById(images, (image) => image.id).toList(growable: false),
     ),
   ];
+
+  /// 本轮上下文与用户原话合成这一轮的用户消息。上下文放在前面，问题留在最后，
+  /// 模型读到的顺序与之前把整段放进 instructions 时相同，只是它不再属于稳定前缀。
+  String _turnContent(String turn, String text) {
+    final body = text.trim().isEmpty ? '[我发了一张图片]' : text.trim();
+    return turn.isEmpty ? body : '$turn\n\n$body';
+  }
 
   /// 讨论历史里的工具交换来自更早一轮，那一轮的工具结果带着代码写的文字；
   /// 按代码重新执行不了时改发保存时的原文。
