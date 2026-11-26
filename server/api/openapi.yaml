@@ -907,7 +907,12 @@ paths:
         `store` 放行但不按客户端取值转发：服务端在转发前一律写成 `false`，因为
         Responses 接口在缺少该字段时默认让上游保存响应。
         `max_output_tokens` 取 16 到 32768，省略时补 4096，与客户端的上限一致，
-        超出范围回 400 `invalid_request`。额度预留与结算取流里
+        超出范围回 400 `invalid_request`。
+        用接入密钥调用时按放宽的口径处理（见 ADR-0082）：
+        不认识的字段删掉再转发，`max_output_tokens` 超出范围时截到 16 与 32768 的
+        边界、写不成数字时退回 4096，第三方工具不会因为一个用不上的参数整次失败；
+        用访问令牌调用仍按上面的字段与上限严格校验，未知字段与越界上限照旧回 400。
+        额度预留与结算取流里
         `response.completed` 的 `usage`（`input_tokens`、`output_tokens`），非流式
         取响应体的 `usage`，缺少用量时保留预留值。错误分类为
         `model_not_allowed`（400）、`contact_unverified`（403）、

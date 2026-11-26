@@ -297,6 +297,63 @@ func TestHandlerResponsesDropsClientHints(t *testing.T) {
 	}
 }
 
+// TestHandlerResponsesLenientForAPIKeys 断言“内部严、外部松”：用接入密钥调用
+// 时，不认识的字段删掉、超出范围的输出上限截到 32768，整次请求照常转发；同一个
+// 请求换成访问令牌仍然按 ADR-0052 的字段与上限回 400。
+func TestHandlerResponsesLenientForAPIKeys(t *testing.T) {
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody = nil
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_1","object":"response","status":"completed","output":[]}`)
+	}))
+	defer upstream.Close()
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "up", upstream.URL, "sk-server")
+		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
+	})
+	tokens, err := env.authSvc.Register(context.Background(), "lenient@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.quota.SetDailyLimit(tokens.UserID, 1<<30)
+	principal, err := env.authSvc.Authenticate(context.Background(), tokens.AccessToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, apiKey, err := env.authSvc.CreateAPIKey(context.Background(), principal, "脚本")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := map[string]any{
+		"model":             "deepseek-flash",
+		"input":             []any{},
+		"some_future_field": map[string]any{"x": 1},
+		"max_output_tokens": 1000000,
+	}
+	// 访问令牌：未知字段直接拒绝，超出范围的上限也拒绝。
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tokens.AccessToken, body, nil); code != http.StatusBadRequest {
+		t.Fatalf("访问令牌带未知字段应回 400，得到 %d", code)
+	}
+	strict := map[string]any{"model": "deepseek-flash", "input": []any{}, "max_output_tokens": 1000000}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tokens.AccessToken, strict, nil); code != http.StatusBadRequest {
+		t.Fatalf("访问令牌的上限超出范围应回 400，得到 %d", code)
+	}
+	// 接入密钥：未知字段删掉，上限截到边界，转发照常进行。
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", apiKey, body, nil); code != http.StatusOK {
+		t.Fatalf("接入密钥应放行，得到 %d", code)
+	}
+	if _, present := gotBody["some_future_field"]; present {
+		t.Fatalf("未知字段不该转发给来源：%+v", gotBody)
+	}
+	if gotBody["max_output_tokens"] != float64(maxOutputTokens) {
+		t.Fatalf("上限应截到 %d，得到 %v", maxOutputTokens, gotBody["max_output_tokens"])
+	}
+}
+
 func TestHandlerQuotaOverride(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

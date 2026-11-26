@@ -504,7 +504,13 @@ type RequestOptions struct {
 // 请求体、响应体与流里的用量都不记录。本轮预算与讨论标识随 opts 传入，前者
 // 约束整段回答、空闲等待与首字等待，后者让同一讨论的追问落到同一条来源。
 func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOptions) {
-	userID := auth.MustPrincipal(r.Context()).UserID
+	principal := auth.MustPrincipal(r.Context())
+	userID := principal.UserID
+	// 用接入密钥调用的是用户自己的脚本与第三方工具，请求形状不受我们控制，
+	// 按放宽的口径处理：不认识的字段删掉、超出范围的上限截断，不让整次请求
+	// 因为一个用不上的参数失败。知新客户端用访问令牌，仍按 ADR-0052 的字段与
+	// 上限严格校验（ADR-0063 的密钥就是给这些工具用的）。
+	lenient := principal.KeyID != ""
 	done, ok := p.beginRequest(w, r, userID, false)
 	if !ok {
 		return
@@ -519,7 +525,7 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 	if model == nil {
 		return
 	}
-	if !allowFields(w, r, fields, chatFields, clientHintFields) {
+	if !allowFields(w, r, fields, lenient, chatFields, clientHintFields) {
 		return
 	}
 	stripClientHints(fields)
@@ -542,7 +548,7 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 			return
 		}
 	}
-	output, err := responsesOutputLimit(fields)
+	output, err := responsesOutputLimit(fields, lenient)
 	if err != nil {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
@@ -752,16 +758,34 @@ func (p *Proxy) responseTimeout(deadline time.Time) time.Duration {
 // responsesOutputLimit 检查输出上限；没给时补上 defaultOutputTokens，用量估算
 // 要把它算进预留。上限与客户端的 buddyMaxOutputTokens 相同，一端改动要同时改
 // 另一端，否则客户端请求会被 400 拒绝（ADR-0053）。
-func responsesOutputLimit(fields map[string]json.RawMessage) (int64, error) {
+//
+// 放宽的口径（接入密钥的调用）把超出范围的值截到边界、写不成数字时退回默认值，
+// 再把最终值写回请求体：DSH 一类客户端会按模型上下文上限填一个很大的数，而
+// 服务端的 32768 是发出去的答案的上限，拒绝整次请求不如截断之后照常回答。
+func responsesOutputLimit(fields map[string]json.RawMessage, lenient bool) (int64, error) {
+	raw, ok := fields["max_output_tokens"]
+	if !ok {
+		fields["max_output_tokens"] = json.RawMessage(strconv.FormatInt(defaultOutputTokens, 10))
+		return defaultOutputTokens, nil
+	}
 	var output int64
-	if raw, ok := fields["max_output_tokens"]; ok {
-		if json.Unmarshal(raw, &output) != nil || output < minOutputTokens || output > maxOutputTokens {
+	if err := json.Unmarshal(raw, &output); err != nil {
+		if !lenient {
 			return 0, fmt.Errorf("max_output_tokens must be between %d and %d", minOutputTokens, maxOutputTokens)
 		}
-	} else {
 		output = defaultOutputTokens
-		fields["max_output_tokens"] = json.RawMessage(strconv.FormatInt(defaultOutputTokens, 10))
 	}
+	if output < minOutputTokens || output > maxOutputTokens {
+		if !lenient {
+			return 0, fmt.Errorf("max_output_tokens must be between %d and %d", minOutputTokens, maxOutputTokens)
+		}
+		if output < minOutputTokens {
+			output = minOutputTokens
+		} else {
+			output = maxOutputTokens
+		}
+	}
+	fields["max_output_tokens"] = json.RawMessage(strconv.FormatInt(output, 10))
 	return output, nil
 }
 
@@ -855,7 +879,7 @@ func functionToolsOnly(raw json.RawMessage) bool {
 	return true
 }
 
-func allowFields(w http.ResponseWriter, r *http.Request, fields map[string]json.RawMessage, allowed ...map[string]bool) bool {
+func allowFields(w http.ResponseWriter, r *http.Request, fields map[string]json.RawMessage, lenient bool, allowed ...map[string]bool) bool {
 	for name := range fields {
 		ok := false
 		for _, set := range allowed {
@@ -864,10 +888,16 @@ func allowFields(w http.ResponseWriter, r *http.Request, fields map[string]json.
 				break
 			}
 		}
-		if !ok {
-			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "unsupported model request field")
-			return false
+		if ok {
+			continue
 		}
+		if lenient {
+			// 第三方工具会带上服务端还没实现的字段；删掉再转发，比整次拒绝有用。
+			delete(fields, name)
+			continue
+		}
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "unsupported model request field")
+		return false
 	}
 	return true
 }

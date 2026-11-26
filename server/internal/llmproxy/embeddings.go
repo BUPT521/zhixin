@@ -40,7 +40,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request, params api.Po
 	}
 	defer done()
 	fields, ok := p.readBody(w, r)
-	if !ok || !allowFields(w, r, fields, embeddingFields) {
+	if !ok || !allowFields(w, r, fields, false, embeddingFields) {
 		return
 	}
 	inputs, err := parseInputs(fields["input"])
