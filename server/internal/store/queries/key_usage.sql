@@ -32,4 +32,7 @@ SELECT
 FROM llm_usage u
 LEFT JOIN api_key k ON k.id = u.api_key_id
 WHERE u.day BETWEEN sqlc.arg(from_day)::date AND sqlc.arg(to_day)::date
+  AND (sqlc.arg(user_id)::text = '' OR u.user_id = sqlc.arg(user_id)::text)
+  AND (u.tokens <> 0 OR u.reserved_tokens <> 0 OR u.input_tokens <> 0
+       OR u.cached_tokens <> 0 OR u.attempts <> 0 OR u.failures <> 0)
 ORDER BY u.day, u.user_id, u.api_key_id, u.kind;

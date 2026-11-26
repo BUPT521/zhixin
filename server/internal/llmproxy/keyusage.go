@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
+	openapi_types "github.com/oapi-codegen/runtime/types"
+
 	"github.com/BUPT521/zhixin/server/internal/api"
+	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
@@ -66,7 +70,7 @@ type KeyUsage struct {
 // KeyUsageStore 是管理后台对账用到的可选能力。它不放进 Quota：额度接口的语义是
 // 判定与扣减，读历史用量是另一件事，缺少实现时后台只关掉这一个视图。
 type KeyUsageStore interface {
-	KeyUsage(ctx context.Context, from, to string) ([]KeyUsage, error)
+	KeyUsage(ctx context.Context, from, to, userID string) ([]KeyUsage, error)
 }
 
 // KeyUsage 汇总区间内按密钥分开记的用量。参数与 /admin/v1/usage 相同：days 含
@@ -78,6 +82,11 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "days: 1 to 30")
 		return
 	}
+	userID := strings.TrimSpace(deref(params.UserId, ""))
+	if params.UserId != nil && (userID == "" || len(userID) > 128) {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "user_id: 1 to 128 bytes")
+		return
+	}
 	store, ok := a.proxy.quota.(KeyUsageStore)
 	if !ok {
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "key usage storage is not configured")
@@ -86,7 +95,7 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 	today := a.proxy.dayTime()
 	first := today.AddDate(0, 0, 1-days)
 	const dateFormat = "2006-01-02"
-	rows, err := store.KeyUsage(r.Context(), first.Format(dateFormat), today.Format(dateFormat))
+	rows, err := store.KeyUsage(r.Context(), first.Format(dateFormat), today.Format(dateFormat), userID)
 	if err != nil {
 		httpx.WriteInternal(w, r, a.proxy.log, fmt.Errorf("read key usage: %w", err))
 		return
@@ -114,7 +123,7 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 		// 名字与撤销状态来自同一条 api_key 行；已清理的密钥没有名字，保留空字符串
 		// 让页面显示“已清理”，不要拿密钥编号冒充名字。行是否还在单独记在
 		// key_present 上：名字为空的在用密钥同样不带名字，只看名字分不出两者。
-		if row.Name != "" {
+		if row.KeyPresent {
 			agg.name, agg.prefix = row.Name, row.Prefix
 		}
 		agg.present = agg.present || row.KeyPresent
@@ -135,6 +144,8 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 
 	out := api.AdminKeyUsageReport{
 		Timezone:       today.Location().String(),
+		FromDay:        openapi_types.Date{Time: first},
+		ToDay:          openapi_types.Date{Time: today},
 		TokensPerPoint: a.proxy.cfg.TokensPerPoint,
 		Keys:           make([]api.AdminKeyUsage, 0, len(byKey)),
 	}
@@ -164,52 +175,53 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// KeyUsage 在内存实现里从已结算、在途预留与尝试计数三张表拼出对账视图。缓存命中
-// 的原始输入只在最近一次结算里留了一份（Split），这里不拿它冒充累计值，
-// InputTokens 与 CachedTokens 保持 0；本地联调看到的趋势与总量仍然与额度判定一致。
-// 只有尝试记录、token 与预留都是 0 的行也返回：那正是一次失败的调用，过滤掉它
-// 之后一把一直在失败的密钥在后台看起来与没有用过的一样（ADR-0083）。
-func (m *MemoryQuota) KeyUsage(_ context.Context, from, to string) ([]KeyUsage, error) {
+// SetKeyLookup connects the development quota store to its in-memory account store.
+func (m *MemoryQuota) SetKeyLookup(keysByUser func(context.Context, string) ([]auth.APIKey, error)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	type rowKey struct{ userID, day, kind, keyID string }
-	rows := make(map[rowKey]*KeyUsage)
-	get := func(k [4]string) *KeyUsage {
-		id := rowKey{userID: k[0], day: k[1], kind: k[2], keyID: k[3]}
-		row := rows[id]
-		if row == nil {
-			row = &KeyUsage{Day: k[1], UserID: k[0], KeyID: k[3], Kind: Kind(k[2])}
-			rows[id] = row
-		}
-		return row
-	}
-	for k, tokens := range m.used {
-		if k[1] < from || k[1] > to {
+	m.keysByUser = keysByUser
+}
+
+// KeyUsage 读取内存账本中的已结算量、预留、上报量与尝试次数。
+func (m *MemoryQuota) KeyUsage(ctx context.Context, from, to, userID string) ([]KeyUsage, error) {
+	m.mu.Lock()
+	var out []KeyUsage
+	for key, row := range m.usage {
+		if key.day < from || key.day > to || (userID != "" && key.userID != userID) {
 			continue
 		}
-		get(k).Tokens += tokens
+		out = append(out, KeyUsage{
+			Day: key.day, UserID: key.userID, KeyID: key.keyID, Kind: key.kind, KeyUsageCounts: row.KeyUsageCounts,
+		})
 	}
-	for k, reserved := range m.reserved {
-		if k[1] < from || k[1] > to {
-			continue
+	readKeys := m.keysByUser
+	m.mu.Unlock()
+
+	if readKeys != nil {
+		keysByAccount := make(map[string]map[string]auth.APIKey)
+		for i := range out {
+			row := &out[i]
+			if row.KeyID == "" {
+				continue
+			}
+			keys, loaded := keysByAccount[row.UserID]
+			if !loaded {
+				records, err := readKeys(ctx, row.UserID)
+				if err != nil {
+					return nil, err
+				}
+				keys = make(map[string]auth.APIKey, len(records))
+				for _, record := range records {
+					keys[record.ID] = record
+				}
+				keysByAccount[row.UserID] = keys
+			}
+			if key, present := keys[row.KeyID]; present {
+				row.Name, row.Prefix = key.Name, key.Prefix
+				row.KeyPresent, row.Revoked = true, !key.RevokedAt.IsZero()
+				row.LastUsedAt = key.LastUsedAt
+			}
 		}
-		get(k).ReservedTokens += reserved
-	}
-	for k, attempts := range m.attempts {
-		if k[1] < from || k[1] > to {
-			continue
-		}
-		get(k).Attempts += attempts
-	}
-	for k, failures := range m.failures {
-		if k[1] < from || k[1] > to {
-			continue
-		}
-		get(k).Failures += failures
-	}
-	out := make([]KeyUsage, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, *row)
 	}
 	slices.SortFunc(out, func(a, b KeyUsage) int {
 		return cmp.Or(cmp.Compare(a.Day, b.Day), cmp.Compare(a.UserID, b.UserID),

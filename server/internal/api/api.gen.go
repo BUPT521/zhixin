@@ -639,8 +639,13 @@ type AdminKeyUsageDay struct {
 
 // AdminKeyUsageReport defines model for AdminKeyUsageReport.
 type AdminKeyUsageReport struct {
-	Keys     []AdminKeyUsage `json:"keys"`
-	Timezone string          `json:"timezone"`
+	// FromDay 统计区间的首日
+	FromDay  openapi_types.Date `json:"from_day"`
+	Keys     []AdminKeyUsage    `json:"keys"`
+	Timezone string             `json:"timezone"`
+
+	// ToDay 统计区间的末日
+	ToDay openapi_types.Date `json:"to_day"`
 
 	// TokensPerPoint 一个积分覆盖的计费 token 数，与核销同一配置
 	TokensPerPoint int64 `json:"tokens_per_point"`
@@ -1545,6 +1550,9 @@ type GetAdminV1FeedbackParams struct {
 type GetAdminV1KeyUsageParams struct {
 	// Days 包含今天，按服务端时区计算
 	Days *int `form:"days,omitempty" json:"days,omitempty"`
+
+	// UserId 只查这个账号编号的用量，省略时查全部账号
+	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
 }
 
 // PostAdminV1ModelsNameTestParams defines parameters for PostAdminV1ModelsNameTest.
@@ -2502,6 +2510,19 @@ func (siw *ServerInterfaceWrapper) GetAdminV1KeyUsage(w http.ResponseWriter, r *
 			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
 		} else {
 			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "user_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "user_id", r.URL.Query(), &params.UserId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "user_id"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "user_id", Err: err})
 		}
 		return
 	}

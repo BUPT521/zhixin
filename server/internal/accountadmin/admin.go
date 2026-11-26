@@ -135,12 +135,13 @@ func (a *Admin) Get(w http.ResponseWriter, r *http.Request, id string) {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
 	}
-	usage, err := a.usage(r.Context(), id)
+	now := a.now().In(a.loc)
+	usage, err := a.usage(r.Context(), id, now)
 	if err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
 	}
-	points, err := a.pointsView(r.Context(), id)
+	points, err := a.pointsView(r.Context(), id, now.Format(time.DateOnly))
 	if err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
@@ -154,7 +155,7 @@ func (a *Admin) Get(w http.ResponseWriter, r *http.Request, id string) {
 // RefreshPoints 同步查一次这个账号的积分余额并覆盖本地副本，返回刷新后的积分视图。
 // 积分是钱：后台只提供查看与刷新，不提供补分、扣分或退款，核销流水也只读。
 func (a *Admin) RefreshPoints(w http.ResponseWriter, r *http.Request, id string) {
-	if _, ok := a.load(w, r, id); !ok {
+	if _, ok := a.loadUser(w, r, id); !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), pointsQueryTimeout)
@@ -171,7 +172,7 @@ func (a *Admin) RefreshPoints(w http.ResponseWriter, r *http.Request, id string)
 			"points purchases are not enabled on this instance")
 		return
 	}
-	view, err := a.pointsView(ctx, id)
+	view, err := a.pointsView(r.Context(), id, a.now().In(a.loc).Format(time.DateOnly))
 	if err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
@@ -182,7 +183,7 @@ func (a *Admin) RefreshPoints(w http.ResponseWriter, r *http.Request, id string)
 // PutQuota 整体替换一个账号的额度覆盖值。两项都为空且没有备注时等同于清除，
 // 与数据库里不留一条空覆盖行的处理一致。
 func (a *Admin) PutQuota(w http.ResponseWriter, r *http.Request, id string) {
-	if _, ok := a.load(w, r, id); !ok {
+	if _, ok := a.loadUser(w, r, id); !ok {
 		return
 	}
 	var in api.PutAdminV1AccountsIdQuotaJSONRequestBody
@@ -218,7 +219,7 @@ func (a *Admin) PutQuota(w http.ResponseWriter, r *http.Request, id string) {
 
 // DeleteQuota 清除覆盖行，账号回到实例默认额度；没有覆盖行时同样返回 204。
 func (a *Admin) DeleteQuota(w http.ResponseWriter, r *http.Request, id string) {
-	if _, ok := a.load(w, r, id); !ok {
+	if _, ok := a.loadUser(w, r, id); !ok {
 		return
 	}
 	if err := a.quota.ClearQuotaOverride(r.Context(), id); err != nil {
@@ -250,15 +251,22 @@ func (a *Admin) DeleteAccount(w http.ResponseWriter, r *http.Request, id string)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// load 读取账号与登录方式；账号不存在时写好 404。
-func (a *Admin) load(w http.ResponseWriter, r *http.Request, id string) (auth.AccountRecord, bool) {
+func (a *Admin) loadUser(w http.ResponseWriter, r *http.Request, id string) (auth.User, bool) {
 	user, err := a.accounts.UserByID(r.Context(), id)
 	if errors.Is(err, auth.ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
-		return auth.AccountRecord{}, false
+		return auth.User{}, false
 	}
 	if err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
+		return auth.User{}, false
+	}
+	return user, true
+}
+
+func (a *Admin) load(w http.ResponseWriter, r *http.Request, id string) (auth.AccountRecord, bool) {
+	user, ok := a.loadUser(w, r, id)
+	if !ok {
 		return auth.AccountRecord{}, false
 	}
 	identities, err := a.accounts.Identities(r.Context(), id)
@@ -279,9 +287,8 @@ func (a *Admin) override(ctx context.Context, id string) (llmproxy.QuotaOverride
 
 // usage 按服务端时区取今天的已结算用量；在途预留不计入，页面据此判断今天的
 // 消耗而不是此刻的临时占用。
-func (a *Admin) usage(ctx context.Context, id string) (api.AdminAccountUsage, error) {
-	now := a.now().In(a.loc)
-	day := now.Format("2006-01-02")
+func (a *Admin) usage(ctx context.Context, id string, now time.Time) (api.AdminAccountUsage, error) {
+	day := now.Format(time.DateOnly)
 	chat, err := a.quota.Used(ctx, id, day, llmproxy.KindChat)
 	if err != nil {
 		return api.AdminAccountUsage{}, err
@@ -298,8 +305,7 @@ func (a *Admin) usage(ctx context.Context, id string) (api.AdminAccountUsage, er
 // pointsView 组装积分视图：今天已核销、可用积分、副本快照时刻与最近几条流水。
 // 没有开通收款时三项都为空，页面据此说明这个实例不卖积分；开通了收款但账号还没有
 // 副本时只给已核销积分，可用积分等副本同步之后再显示，不把缺失写成零（ADR-0073）。
-func (a *Admin) pointsView(ctx context.Context, id string) (*api.AdminAccountPoints, error) {
-	day := a.now().In(a.loc).Format("2006-01-02")
+func (a *Admin) pointsView(ctx context.Context, id, day string) (*api.AdminAccountPoints, error) {
 	points, err := a.quota.Points(ctx, id, day)
 	if err != nil {
 		return nil, err

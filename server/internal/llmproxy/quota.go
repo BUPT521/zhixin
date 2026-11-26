@@ -5,6 +5,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/auth"
 )
 
 // Quota tracks tokens used per account, model kind, and local day. The day key is a
@@ -149,29 +151,29 @@ type quotaLimits interface {
 	SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyTokens int64)
 }
 
+// memoryUsageKey matches the dimensions of an llm_usage row.
+type memoryUsageKey struct {
+	userID, day string
+	kind        Kind
+	keyID       string
+}
+
+type memoryUsageRow struct {
+	KeyUsageCounts
+	last Usage
+}
+
 // MemoryQuota is a Quota kept in process memory.
 type MemoryQuota struct {
-	mu sync.Mutex
-	// used 的键是账号、自然日、用途与模型代理密钥编号；密钥编号为空表示访问令牌。
-	// 额度判定按账号合计，记账按密钥分开，与 PostgreSQL 实现同一口径（ADR-0063）。
-	used map[[4]string]int64
-	// reserved 记还没有结算的在途预留，与 used 同键；额度判定看两者之和，展示与
-	// 核销只看 used，口径与 llm_usage 的两列一致（ADR-0071）。
-	reserved map[[4]string]int64
-	// split 记最近一次结算的原始用量，与 used 同键；只用于核对缓存命中统计。
-	split map[[4]string]Usage
-	// attempts 与 failures 记已结算的尝试次数与其中失败、按 0 结算的次数，与
-	// used 同键。失败的尝试在 used 里不留痕迹，后台看得见与否只看这两个计数
-	// （ADR-0083）；它们不参与额度判定。
-	attempts map[[4]string]int64
-	failures map[[4]string]int64
+	mu         sync.Mutex
+	usage      map[memoryUsageKey]memoryUsageRow
+	keysByUser func(context.Context, string) ([]auth.APIKey, error)
 	// limits 是管理后台调整过的额度覆盖值；quotaNotes 与 quotaUpdated 跟着覆盖行
 	// 一起保存，供后台列表显示备注与保存时间。
 	limits       map[[2]string]int64
 	quotaNotes   map[string]string
 	quotaUpdated map[string]time.Time
-	// instance 是实例当天的账本，按自然日记 token 数；它与 used 分开保存，删号
-	// 只清 used，已经占用的实例预算因此不会重新腾出来（ADR-0036）。
+	// instance 按自然日保存实例用量，删号之后保留（ADR-0036）。
 	instance map[string]int64
 
 	// dailyTokens 与 instanceTokens 是配置里的默认额度与实例预算，由 NewHandler
@@ -183,11 +185,7 @@ type MemoryQuota struct {
 
 func NewMemoryQuota() *MemoryQuota {
 	return &MemoryQuota{
-		used:         map[[4]string]int64{},
-		reserved:     map[[4]string]int64{},
-		split:        map[[4]string]Usage{},
-		attempts:     map[[4]string]int64{},
-		failures:     map[[4]string]int64{},
+		usage:        make(map[memoryUsageKey]memoryUsageRow),
 		limits:       map[[2]string]int64{},
 		quotaNotes:   map[string]string{},
 		quotaUpdated: map[string]time.Time{},
@@ -208,36 +206,27 @@ func (m *MemoryQuota) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instance
 func (m *MemoryQuota) Used(_ context.Context, userID, day string, kind Kind) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.settledByAccountLocked(userID, day, kind), nil
+	return m.accountUsageLocked(userID, day, kind).Tokens, nil
 }
 
-// settledByAccountLocked 汇总账号当天某类模型已经结算的用量。调用方必须持有 m.mu。
-func (m *MemoryQuota) settledByAccountLocked(userID, day string, kind Kind) int64 {
-	var total int64
-	for key, tokens := range m.used {
-		if key[0] == userID && key[1] == day && key[2] == string(kind) {
-			total += tokens
+func (m *MemoryQuota) accountUsageLocked(userID, day string, kind Kind) KeyUsageCounts {
+	var counts KeyUsageCounts
+	for key, row := range m.usage {
+		if key.userID == userID && key.day == day && key.kind == kind {
+			counts.add(row.KeyUsageCounts)
 		}
 	}
-	return total
-}
-
-// occupiedByAccountLocked 汇总已结算与在途预留，额度判定按这个合计。
-func (m *MemoryQuota) occupiedByAccountLocked(userID, day string, kind Kind) int64 {
-	total := m.settledByAccountLocked(userID, day, kind)
-	for key, tokens := range m.reserved {
-		if key[0] == userID && key[1] == day && key[2] == string(kind) {
-			total += tokens
-		}
-	}
-	return total
+	return counts
 }
 
 func (m *MemoryQuota) Add(_ context.Context, userID, day string, kind Kind, tokens int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// Add 只用于按账号累加已结算用量，没有密钥可归；与访问令牌调用记在同一行。
-	m.used[[4]string{userID, day, string(kind), ""}] += tokens
+	key := memoryUsageKey{userID, day, kind, ""}
+	row := m.usage[key]
+	row.Tokens += tokens
+	m.usage[key] = row
 	return nil
 }
 
@@ -250,11 +239,12 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := [4]string{userID, day, string(kind), keyID}
+	key := memoryUsageKey{userID, day, kind, keyID}
 	limit, limited := m.accountLimitLocked(userID, kind)
 	free := int64(0)
 	if limited {
-		free = max(0, limit-m.occupiedByAccountLocked(userID, day, kind))
+		counts := m.accountUsageLocked(userID, day, kind)
+		free = max(0, limit-counts.Tokens-counts.ReservedTokens)
 	}
 	if limited && want > free {
 		return 0, &QuotaExceededError{Reason: QuotaReasonAccount}
@@ -265,7 +255,9 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	if m.instanceTokens > 0 && instance > max(0, m.instanceTokens-m.instance[day]) {
 		return 0, &QuotaExceededError{Reason: QuotaReasonInstance}
 	}
-	m.reserved[key] += want
+	row := m.usage[key]
+	row.ReservedTokens += want
+	m.usage[key] = row
 	m.instance[day] += instance
 	return want, nil
 }
@@ -273,28 +265,32 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// 缓存命中的拆分与 PostgreSQL 的 llm_usage 一样按密钥分行记，内存实现里
-	// 单独存一份，供本地联调与测试核对；额度判定只看计费后的总量。
-	key := [4]string{userID, day, string(kind), keyID}
-	m.split[key] = usage
-	// 尝试次数先记，再判断这一笔有没有 token：失败按 0 结算，token 两列都不变，
-	// 后台正是靠这两个计数才看得见失败的调用（ADR-0083）。
-	m.attempts[key] += max(0, attempt.Attempts)
-	m.failures[key] += max(0, attempt.Failures)
-	if actual == 0 && reserved == 0 && usage.Total() == 0 {
-		return nil
+	key := memoryUsageKey{userID, day, kind, keyID}
+	row := m.usage[key]
+	// 退回一笔未发送的预留时没有上游用量，最近一次结算的样本继续保留。
+	if attempt.Attempts > 0 || usage.Total() > 0 {
+		row.last = usage
 	}
-	// 实例账本只加减免费额度内的部分。结算前的账号合计含这次预留，先减掉它
-	// 才知道这次请求开始时已经用掉多少免费额度。
+	row.InputTokens += usage.Input
+	row.CachedTokens += usage.Cached
+	row.Attempts += max(0, attempt.Attempts)
+	row.Failures += max(0, attempt.Failures)
+
+	// 实例账本只加减免费额度内的部分。
 	instance := actual - reserved
 	if limit, limited := m.accountLimitLocked(userID, kind); limited {
-		before := max(0, m.occupiedByAccountLocked(userID, day, kind)-reserved)
+		counts := m.accountUsageLocked(userID, day, kind)
+		before := max(0, counts.Tokens+counts.ReservedTokens-reserved)
 		free := max(0, limit-before)
 		instance = min(actual, free) - min(reserved, free)
 	}
-	m.reserved[key] = max(0, m.reserved[key]-reserved)
-	settled := m.used[key] + actual
-	m.used[key] = max(0, settled)
+	row.ReservedTokens = max(0, row.ReservedTokens-reserved)
+	row.Tokens = max(0, row.Tokens+actual)
+	if row.KeyUsageCounts == (KeyUsageCounts{}) {
+		delete(m.usage, key)
+	} else {
+		m.usage[key] = row
+	}
 	m.instance[day] = max(0, m.instance[day]+instance)
 	return nil
 }
@@ -304,8 +300,7 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 func (m *MemoryQuota) Split(userID, day string, kind Kind) Usage {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	v := m.split[[4]string{userID, day, string(kind), ""}]
-	return v
+	return m.usage[memoryUsageKey{userID, day, kind, ""}].last
 }
 
 func (m *MemoryQuota) InstanceUsed(_ context.Context, day string) (int64, error) {
@@ -449,14 +444,9 @@ func (m *MemoryQuota) clearQuotaOverrideLocked(userID string) {
 func (m *MemoryQuota) DeleteUser(_ context.Context, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for k := range m.used {
-		if k[0] == userID {
-			delete(m.used, k)
-		}
-	}
-	for k := range m.reserved {
-		if k[0] == userID {
-			delete(m.reserved, k)
+	for key := range m.usage {
+		if key.userID == userID {
+			delete(m.usage, key)
 		}
 	}
 	m.clearQuotaOverrideLocked(userID)

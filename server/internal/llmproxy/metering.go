@@ -1,0 +1,149 @@
+package llmproxy
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/httpx"
+)
+
+type attemptResult struct {
+	// usage 是来源报告的原始用量，额度结算、账号统计与路由统计都从这里取数。
+	// unknown 表示这次没有拿到 usage（请求失败、来源不报用量），结算改用估算。
+	usage   Usage
+	unknown bool
+	// estimated 是按估算记账的原始 token 数，只进后台用量统计，不参与扣减：
+	// 扣减看 usage 与估算。
+	estimated int64
+	// unbilled 表示这次尝试不向账号结算：请求没有发出、连接都没有建立，来源
+	// 明确拒绝（非 2xx），或者来源虽然回了 2xx 却没有可核对的上游用量（页面、
+	// 错误体、正文根本没有读）。来源回了带 usage 或能解析成响应对象的整段响应时
+	// 按用量的口径结算，不记 0（ADR-0070）。
+	unbilled bool
+	// outputEstimate 是已经转给客户端的输出 token 估算；没有 usage 时按它加
+	// 输入估算结算，不沿用预留量。
+	outputEstimate int64
+
+	success        bool
+	notSent        bool
+	outputLimited  bool
+	clientCanceled bool
+}
+
+type finishAttempt func(attemptResult)
+
+// attemptBudget reserves quota and supplies a completion function for a route.
+// A nil budget is used for admin probes.
+type attemptBudget func(liveRoute, Usage, bool) (finishAttempt, error)
+
+func (budget attemptBudget) start(route liveRoute, estimate Usage, first bool) (finishAttempt, error) {
+	if budget == nil {
+		return func(attemptResult) {}, nil
+	}
+	return budget(route, estimate, first)
+}
+
+type quotaReservationError struct{ cause error }
+
+func (e quotaReservationError) Error() string { return e.cause.Error() }
+func (e quotaReservationError) Unwrap() error { return e.cause }
+
+func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) attemptBudget {
+	// 用量记到这次调用所用的模型代理密钥上；用访问令牌时编号为空字符串。
+	keyID := auth.MustPrincipal(r.Context()).KeyID
+	return func(route liveRoute, estimate Usage, first bool) (finishAttempt, error) {
+		want := estimate.reserve(model.Kind)
+		// Reserve 要么拿到完整的 want，要么返回带原因的错误；不再按剩余量截断，
+		// 因此这里不需要退回预留，429 也能说清是哪种额度用完（ADR-0071）。
+		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, keyID, want)
+		if err != nil {
+			return nil, quotaReservationError{cause: err}
+		}
+		return func(result attemptResult) {
+			var attempt SettleAttempt
+			if !result.notSent {
+				attempt = attemptOf(!result.success)
+			}
+			billed := billedTokens(model.Kind, estimate, result)
+			p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage, attempt)
+			if p.usage == nil || result.notSent {
+				return
+			}
+			canceled := result.clientCanceled || r.Context().Err() != nil
+			p.recordRouteUsage(r.Context(), RouteUsage{
+				Day: day,
+				RouteUsageKey: RouteUsageKey{
+					Kind: model.Kind, Model: model.Name, ProviderID: route.ProviderID, UpstreamModel: route.UpstreamModel,
+				},
+				UsageCounts: routeAttemptUsage(model.Kind, estimate, result, first, canceled),
+			})
+		}, nil
+	}
+}
+
+// routeAttemptUsage records raw upstream tokens separately from quota settlement.
+func routeAttemptUsage(kind Kind, estimate Usage, result attemptResult, first, canceled bool) UsageCounts {
+	counts := UsageCounts{Attempts: 1, InputTokens: result.usage.Input, CachedTokens: result.usage.Cached}
+	switch {
+	case result.unbilled:
+		// 上游拒绝请求时保留尝试次数，Token 记 0。
+	case result.usage.Total() > 0:
+		counts.Tokens, counts.EstimatedTokens = result.usage.Total(), result.estimated
+	default:
+		raw := estimate.Input + result.outputEstimate
+		counts.Tokens, counts.EstimatedTokens = raw, raw
+	}
+	if first {
+		counts.FirstAttempts = 1
+	} else {
+		counts.FailoverAttempts = 1
+	}
+	counts.recordCache(kind, first, result.usage)
+	switch {
+	case result.success:
+		counts.Successes = 1
+	case result.outputLimited:
+		counts.TruncatedAttempts = 1
+	case canceled:
+		counts.CanceledAttempts = 1
+	}
+	return counts
+}
+
+// billedTokens 返回一次尝试应当记的计费 token 数。有 usage 就按 usage；没有
+// usage 时按输入估算与已经转出的输出估算结算，确定没有产生上游费用的失败记 0，
+// 不再沿用预留量。估算仍按未命中缓存的输入折算，与客户端发请求前的判断同口径。
+func billedTokens(kind Kind, estimate Usage, result attemptResult) int64 {
+	switch {
+	case result.notSent || result.unbilled:
+		return 0
+	case result.usage.Total() > 0:
+		return result.usage.Billed(kind)
+	case result.outputEstimate > 0:
+		return Usage{Input: estimate.Input, Output: result.outputEstimate}.Billed(kind)
+	default:
+		return Usage{Input: estimate.Input}.Billed(kind)
+	}
+}
+
+func (p *Proxy) recordRouteUsage(ctx context.Context, row RouteUsage) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := p.usage.AddRouteUsage(ctx, row); err != nil {
+		p.log.Error("record llm route usage", slog.String("request_id", httpx.RequestIDFrom(ctx)), slog.String("error", err.Error()))
+	}
+}
+
+// settle 即使客户端断开也结算本次预留。reserved 与 actual 都是计费 token，
+// usage 是来源报告的原始用量，只用于统计缓存命中，不参与扣减；attempt 是这次
+// 尝试与它是否失败，只进 llm_usage 的尝试统计，让后台看得见按 0 结算的调用。
+func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	if err := p.quota.Settle(ctx, userID, day, kind, keyID, reserved, actual, usage, attempt); err != nil {
+		p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
+	}
+}

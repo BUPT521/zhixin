@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
@@ -59,7 +60,7 @@ func fakeProvider(t *testing.T) (*httptest.Server, func() string) {
 
 func TestAdminDisabledWithoutToken(t *testing.T) {
 	h := newHarness(t, nil)
-	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/mark.png", "/admin/v1/providers", "/admin/v1/usage?days=invalid"} {
+	for _, path := range []string{"/admin", "/admin/", "/admin/app.js", "/admin/key-usage.js", "/admin/mark.png", "/admin/v1/providers", "/admin/v1/usage?days=invalid"} {
 		resp := h.do("GET", path, testAdminToken, nil, nil)
 		resp.Body.Close()
 		if resp.StatusCode != http.StatusNotFound {
@@ -368,7 +369,7 @@ func TestAdminTokenAndPage(t *testing.T) {
 	resp := h.do("GET", "/admin/", "", nil, nil)
 	page, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(page), "模型后台") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(page), "管理后台") {
 		t.Fatalf("页面不需要令牌即可打开：%d", resp.StatusCode)
 	}
 	if csp := resp.Header.Get("Content-Security-Policy"); !strings.Contains(csp, "script-src 'self'") {
@@ -590,5 +591,25 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 	}
 	if code := admin("DELETE", "/admin/v1/providers/bailian", nil, nil); code != http.StatusNotFound {
 		t.Fatalf("重复删除应 404：%d", code)
+	}
+}
+
+func TestAdminKeyUsageFiltersByExactAccount(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
+	today := time.Now().In(h.cfg.Location).Format(time.DateOnly)
+	for _, id := range []string{"account", "account-other"} {
+		if err := h.stores.Quota.Add(t.Context(), id, today, llmproxy.KindChat, 42); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var report api.AdminKeyUsageReport
+	if status := h.json("GET", "/admin/v1/key-usage?days=1&user_id=account", testAdminToken, nil, &report); status != http.StatusOK {
+		t.Fatalf("key usage status: %d", status)
+	}
+	if len(report.Keys) != 1 || report.Keys[0].UserId != "account" || report.Keys[0].Chat.Tokens != 42 {
+		t.Fatalf("expected usage for the exact account only: %+v", report.Keys)
+	}
+	if report.FromDay.String() != today || report.ToDay.String() != today {
+		t.Fatalf("expected the report date to be %s: %s to %s", today, report.FromDay, report.ToDay)
 	}
 }

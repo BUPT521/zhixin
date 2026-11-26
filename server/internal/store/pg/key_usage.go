@@ -12,7 +12,7 @@ import (
 // 每日清理删除之后的用量。
 var _ llmproxy.KeyUsageStore = (*Store)(nil)
 
-func (s *Store) KeyUsage(ctx context.Context, from, to string) ([]llmproxy.KeyUsage, error) {
+func (s *Store) KeyUsage(ctx context.Context, from, to, userID string) ([]llmproxy.KeyUsage, error) {
 	start, err := pgDate(from)
 	if err != nil {
 		return nil, err
@@ -21,7 +21,7 @@ func (s *Store) KeyUsage(ctx context.Context, from, to string) ([]llmproxy.KeyUs
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.q.ListKeyUsage(ctx, db.ListKeyUsageParams{FromDay: start, ToDay: end})
+	rows, err := s.q.ListKeyUsage(ctx, db.ListKeyUsageParams{FromDay: start, ToDay: end, UserID: userID})
 	if err != nil {
 		return nil, err
 	}
