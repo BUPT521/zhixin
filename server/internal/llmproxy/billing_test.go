@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
@@ -114,6 +115,88 @@ func TestHandlerBillsResponseEstimateWhenUsageMissing(t *testing.T) {
 	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &quota)
 	if quota.Used != 61 {
 		t.Fatalf("应按输入 49 加输出 3 结算为 61，得到 %d", quota.Used)
+	}
+}
+
+// TestHandlerBillsDiscardedStreamResponse 核对流式请求收到 2xx 的整段响应时不再
+// 记 0：来源已经处理完这次请求、可能已经计费，响应里的 usage 就是这一笔的上游
+// 用量。来源回 200 JSON（输入 10、输出 20，折 90 计费 token）之后换到备用来源，
+// 备用来源报告的 5 一并计入，当天用量共 95。
+func TestHandlerBillsDiscardedStreamResponse(t *testing.T) {
+	primary := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"r","object":"response","output":[],"usage":{"input_tokens":10,"output_tokens":20}}`)
+	})
+	env, _, backupHits := newPreludeTestServer(t, time.Second, primary, streamReply("备用正文"))
+	token := signIn(t, env.authSvc, "json-stream@b.cn")
+
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		bytes.NewReader(chatBody(true)), roundBudgetHeaders(5000))
+	body := testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "备用正文") || backupHits.Load() != 1 {
+		t.Fatalf("来源回 JSON 时应换到备用来源：%d %q，备用尝试 %d 次", resp.StatusCode, body, backupHits.Load())
+	}
+	var quota struct {
+		Used int64 `json:"used_tokens"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &quota)
+	if quota.Used != 95 {
+		t.Fatalf("应按被丢弃响应的 90 与备用来源的 5 结算为 95，得到 %d", quota.Used)
+	}
+}
+
+// TestHandlerBillsDiscardedStreamResponseEstimate 核对流式请求收到 2xx 的整段响应、
+// 正文里没有 usage 时按正文估算输出：来源回了一份 Responses 响应对象，输入“hi”
+// 估 49、输出“你好啊”估 3（按输出权重折 12），共 61 与被丢弃的这次尝试一起结算，
+// 备用来源报告的 5 另计，当天用量共 66。
+func TestHandlerBillsDiscardedStreamResponseEstimate(t *testing.T) {
+	primary := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"r","object":"response","output":[
+			{"type":"message","content":[{"type":"output_text","text":"你好啊"}]}
+		]}`)
+	})
+	env, _, backupHits := newPreludeTestServer(t, time.Second, primary, streamReply("备用正文"))
+	token := signIn(t, env.authSvc, "json-stream-estimate@b.cn")
+
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		bytes.NewReader(chatBody(true)), roundBudgetHeaders(5000))
+	body := testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "备用正文") || backupHits.Load() != 1 {
+		t.Fatalf("来源回 JSON 时应换到备用来源：%d %q，备用尝试 %d 次", resp.StatusCode, body, backupHits.Load())
+	}
+	var quota struct {
+		Used int64 `json:"used_tokens"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &quota)
+	if quota.Used != 66 {
+		t.Fatalf("应按被丢弃响应的 61 与备用来源的 5 结算为 66，得到 %d", quota.Used)
+	}
+}
+
+// TestHandlerDoesNotBillStreamFaultPage 核对流式请求收到 2xx 的故障页时仍然记 0：
+// 页面里没有可核对的上游用量，来源多半没有计费，换到备用来源之后当天用量只有
+// 备用来源报告的 5。
+func TestHandlerDoesNotBillStreamFaultPage(t *testing.T) {
+	primary := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, "<html>Service temporarily unavailable</html>")
+	})
+	env, _, backupHits := newPreludeTestServer(t, time.Second, primary, streamReply("备用正文"))
+	token := signIn(t, env.authSvc, "html-stream@b.cn")
+
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		bytes.NewReader(chatBody(true)), roundBudgetHeaders(5000))
+	body := testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "备用正文") || backupHits.Load() != 1 {
+		t.Fatalf("来源回页面时应换到备用来源：%d %q，备用尝试 %d 次", resp.StatusCode, body, backupHits.Load())
+	}
+	var quota struct {
+		Used int64 `json:"used_tokens"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &quota)
+	if quota.Used != 5 {
+		t.Fatalf("故障页不应计入用量，应按备用来源的 5 结算，得到 %d", quota.Used)
 	}
 }
 

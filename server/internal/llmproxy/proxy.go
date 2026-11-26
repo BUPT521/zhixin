@@ -362,8 +362,10 @@ type attemptResult struct {
 	// estimated 是按估算记账的原始 token 数，只进后台用量统计，不参与扣减：
 	// 扣减看 usage 与估算。
 	estimated int64
-	// unbilled 表示这次尝试确定没有产生上游计费：请求没有发出、连接都没有
-	// 建立，或者来源明确拒绝（非 2xx），结算记 0 而不是按预留量扣。
+	// unbilled 表示这次尝试不向账号结算：请求没有发出、连接都没有建立，来源
+	// 明确拒绝（非 2xx），或者来源虽然回了 2xx 却没有可核对的上游用量（页面、
+	// 错误体、正文根本没有读）。来源回了带 usage 或能解析成响应对象的整段响应时
+	// 按用量的口径结算，不记 0（ADR-0070）。
 	unbilled bool
 	// outputEstimate 是已经转给客户端的输出 token 估算；没有 usage 时按它加
 	// 输入估算结算，不沿用预留量。
@@ -895,6 +897,8 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			resp.Body.Close()
 			outcome := httpFailure(reply.status, resp.Header.Get("Retry-After"))
 			outcome.reason, outcome.scope = "响应类型不可用", routeFailure
+			// 页面与 problem 里没有可核对的上游用量，来源多半没有计费，按没有产生
+			// 上游费用记 0；非 2xx 是明确拒绝，同样记 0（ADR-0070）。
 			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status, outcome)
 			lastErr = errors.New("provider did not return a usable response")
 			continue
@@ -912,8 +916,14 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		}
 		if stream {
 			if mediaType == "application/json" || mediaType == "text/html" || mediaType == "application/problem+json" {
-				resp.Body.Close()
-				p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status,
+				// 来源用 2xx 回了一份整段响应（来源忽略了 stream，或者回的是错误
+				// 体）。请求可能已经被处理并计费：响应里带 usage 就按 usage 结算，
+				// 能解析成 Responses 响应对象就按正文估算输出，两者都拿不到时才按
+				// 没有产生上游费用记 0（ADR-0070）。正文不转给客户端，换下一个来源。
+				amount, output := p.discardedUsage(resp.Body, mediaType)
+				result := attemptResult{usage: amount, unknown: amount.Total() <= 0, outputEstimate: output}
+				result.unbilled = amount.Total() <= 0 && output <= 0
+				p.finishAttempt(plan, attempt, result, reply.status,
 					healthOutcome{reason: "流式响应类型不可用", scope: routeFailure, sourceReached: true})
 				lastErr = errors.New("provider did not return a chat stream")
 				continue
@@ -980,6 +990,8 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		// 占不到时没有写出任何内容，整次请求按实例繁忙结束，不换来源重试。
 		release, reserved := p.mem.reserve(p.cfg.MaxResponseBytes)
 		if !reserved {
+			// 来源已经用 2xx 回了响应，可能已经计费，但正文被直接关掉、拿不到
+			// 任何用量；客户端收到 429 会重试，这次不向账号结算，成本由实例承担。
 			resp.Body.Close()
 			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status,
 				healthOutcome{reason: "服务端响应预算不足", sourceReached: true})
@@ -1326,6 +1338,32 @@ func readResponse(body io.Reader, maxBytes int64) ([]byte, error) {
 		return nil, errResponseTooLarge
 	}
 	return b, nil
+}
+
+// discardedUsage 读一份不会转给客户端的 2xx 响应体，取出 usage 与整段响应的输出
+// 估算：有 usage 时以 usage 为准，没有时只要能解析成 Responses 响应对象就按正文
+// 估算输出。实例响应预算不够或正文不是 JSON 时返回零值，调用方据此把这次尝试记为
+// 没有产生上游费用。
+func (p *Proxy) discardedUsage(body io.ReadCloser, mediaType string) (Usage, int64) {
+	release, reserved := p.mem.reserve(p.cfg.MaxResponseBytes)
+	if !reserved {
+		body.Close()
+		return Usage{}, 0
+	}
+	b, _ := readResponse(body, p.cfg.MaxResponseBytes)
+	body.Close()
+	release()
+	if mediaType != "application/json" {
+		return Usage{}, 0
+	}
+	if amount := parseUsage(b, KindChat); amount.Total() > 0 {
+		return amount, 0
+	}
+	response, err := parseResponseObject(b)
+	if err != nil {
+		return Usage{}, 0
+	}
+	return Usage{}, estimateResponseOutput(response.Output)
 }
 
 // copyResponseHeaders 只复制客户端解释响应需要的头；其余头由代理自己决定。
