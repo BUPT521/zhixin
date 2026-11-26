@@ -94,6 +94,9 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
             go build -trimpath -ldflags="-s -w" -o zhixin-api ./cmd/zhixin-api
+          # 上传的是压缩件：Runner 到服务器的上行只有十几 KB/s 时，20 MB 传不完，
+          # 压缩之后是 7 MB 左右，见 server/运维手册.md 的「自动部署与回滚」。
+          gzip -9 -k zhixin-api
 
       # 私钥只放在 DEPLOY_SSH_KEY；主机指纹固定成 known_hosts，不依赖 Runner
       # 首次连接时自动信任。两个 secret 为空时这里直接失败，不会带着默认信任部署。
@@ -116,28 +119,37 @@ jobs:
       # 远端只做四件事：备份当前文件、换上新文件、重启、轮询 /readyz。轮询不
       # 通过就换回备份并重启，工作流标红；成功后 Runner 再核对一次公网入口。
       #
-      # 上传与切换都带上连接超时和保活参数：链路卡住时在十几秒内报错结束，不在
-      # 十分钟上限里一直等待，失败时线上仍是切换前的那一份文件。
+      # 上传与切换都带上连接超时和保活参数：链路卡住时在十几秒内报错结束，失败
+      # 时线上仍是切换前的那一份文件。上传的是 gzip 之后的文件，2026-11-26 的
+      # 一次部署因为 Runner 到服务器的上行只有约 15 KB/s，20 MB 的原始文件没能在
+      # 二十分钟内传完，压缩之后是 7 MB 左右；文件名带上运行编号，同一提交重跑
+      # 不会复用上一次写了一半的文件。这一步另设十二分钟上限，慢链路不会一直拖到
+      # 整个任务的上限。
       - name: 上传并切换
+        timeout-minutes: 12
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           GIT_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           SHA=${GIT_SHA:0:12}
+          NAME=zhixin-api.new-$SHA-$RUN_ID
           SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
           scp -i ~/.ssh/deploy_key "${SSH_OPTS[@]}" \
-            server/zhixin-api "$DEPLOY_USER@$DEPLOY_HOST:/opt/zhixin/bin/zhixin-api.new-$SHA"
+            server/zhixin-api.gz "$DEPLOY_USER@$DEPLOY_HOST:/opt/zhixin/bin/$NAME.gz"
           ssh -i ~/.ssh/deploy_key "${SSH_OPTS[@]}" \
-            "$DEPLOY_USER@$DEPLOY_HOST" "bash -s -- $SHA" <<'REMOTE'
+            "$DEPLOY_USER@$DEPLOY_HOST" "bash -s -- $NAME" <<'REMOTE'
           set -euo pipefail
-          SHA="$1"
+          NAME="$1"
           BIN=/opt/zhixin/bin
           cd "$BIN"
+          gunzip -c "$NAME.gz" > "$NAME"
+          rm -f "$NAME.gz"
           cp -p zhixin-api zhixin-api.prev
-          chmod 0755 "zhixin-api.new-$SHA"
-          mv -f "zhixin-api.new-$SHA" zhixin-api
+          chmod 0755 "$NAME"
+          mv -f "$NAME" zhixin-api
           sudo /usr/bin/systemctl restart zhixin-api
           ready=0
           for _ in $(seq 1 20); do
@@ -154,7 +166,7 @@ jobs:
             journalctl -u zhixin-api -n 20 -o cat --no-pager || true
             exit 1
           fi
-          echo "已切换到 $SHA"
+          echo "已切换到 $NAME"
           REMOTE
 
       - name: 核对公网入口
