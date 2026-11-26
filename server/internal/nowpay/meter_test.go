@@ -468,7 +468,8 @@ func waitForMethod(t *testing.T, started <-chan string, method string) {
 }
 
 // TestFullRefreshQueueDropsTheRefresh 守住刷新队列满时的处理：丢弃并报告没有入队，
-// 不阻塞请求，也不 panic。
+// 不阻塞请求，也不 panic；这次没有排上的查询不占合并窗口，队列空出来之后的请求
+// 仍然能再排一次。
 func TestFullRefreshQueueDropsTheRefresh(t *testing.T) {
 	ledger := &fakeLedger{}
 	meter := newTestMeter(t, ledger, &fakeCaller{})
@@ -480,6 +481,10 @@ func TestFullRefreshQueueDropsTheRefresh(t *testing.T) {
 	}
 	if len(meter.refreshQueue) != cap(meter.refreshQueue) {
 		t.Fatalf("队列满时不该再放入任务，实际 %d", len(meter.refreshQueue))
+	}
+	<-meter.refreshQueue
+	if !meter.RefreshBalance(context.Background(), "user_9") {
+		t.Fatal("队列腾出位置之后应重新排一次查询，不能被上一次的合并窗口挡住")
 	}
 }
 

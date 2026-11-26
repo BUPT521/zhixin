@@ -202,7 +202,13 @@ func (m *Meter) RefreshBalance(_ context.Context, userID string) bool {
 	if userID == "" || !m.markRefresh(userID) {
 		return false
 	}
-	return m.enqueue(job{balance: true, userID: userID})
+	if m.enqueue(job{balance: true, userID: userID}) {
+		return true
+	}
+	// 队列满时这次查询没排上，合并窗口不能先占住：这一分钟内的下一次请求还要能
+	// 再排一次，否则 429 会退化成 account/points，用户被引导去买积分（ADR-0073）。
+	m.forgetRefresh(userID)
+	return false
 }
 
 // markRefresh 记下这次余额查询并报告是否要真的排队；同一个账号在合并窗口内重复
@@ -224,6 +230,14 @@ func (m *Meter) markRefresh(userID string) bool {
 	}
 	m.refreshAt[userID] = now
 	return true
+}
+
+// forgetRefresh 退回已经占住的合并窗口。只有队列没排上时才调用：那种情况下这一轮
+// 的余额查询并没有发生，窗口还应当留给下一次请求。
+func (m *Meter) forgetRefresh(userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.refreshAt, userID)
 }
 
 // TokensPerPoint 是一个积分覆盖的计费 token 数，额度预留按它把余额折成 token。
