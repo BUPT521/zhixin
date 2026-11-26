@@ -13,7 +13,8 @@ const String privacyPolicyTitle = '隐私政策';
 /// 正文最后更新的日期，显示在文档开头，与 [kTermsVersion] 各自独立。
 const String legalUpdatedAt = '2026-11-26';
 
-const String userTermsText = '''
+const String userTermsText =
+    '''
 # 用户须知
 
 最后更新：$legalUpdatedAt
@@ -91,7 +92,8 @@ AI 生成的回答在法律允许的范围内归你使用，但我们不保证�
 7. 商品下架：积分包停售之后，已购积分照常使用。
 ''';
 
-const String privacyPolicyText = '''
+const String privacyPolicyText =
+    '''
 # 隐私政策
 
 最后更新：$legalUpdatedAt

@@ -32,7 +32,9 @@ class AccentPicker extends StatelessWidget {
         if (showLabel) ...[
           Text(
             '主题色',
-            style: theme.text.labelLarge.copyWith(color: theme.colors.onSurface),
+            style: theme.text.labelLarge.copyWith(
+              color: theme.colors.onSurface,
+            ),
           ),
           SizedBox(height: theme.space.xs),
           Text(

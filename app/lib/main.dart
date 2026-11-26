@@ -58,7 +58,9 @@ Future<void> main() async {
       : await _loadAppearance(spaces.pathsFor(spaceId));
   // 引导状态存在设备级位置（ADR-0077）：完成标记、同意的须知版本与是否同意
   // 三项都在根目录的小文件里，不随本机空间切换。
-  final onboardingStore = paths == null ? null : OnboardingStore(paths.filesDir);
+  final onboardingStore = paths == null
+      ? null
+      : OnboardingStore(paths.filesDir);
   final onboarding = onboardingStore == null
       ? null
       : await _readOrNull(onboardingStore.read) ?? const OnboardingRecord();
@@ -66,7 +68,10 @@ Future<void> main() async {
       ? null
       : await _readOrNull(() async {
           final store = TelemetryStore(filesDir: paths.filesDir);
-          return (enabled: await store.enabled(), seen: await store.noticeSeen());
+          return (
+            enabled: await store.enabled(),
+            seen: await store.noticeSeen(),
+          );
         });
   // 老用户升级：没有完成标记，但已经登录、本机库非空或已经看过匿名统计说明，
   // 只补第一步。本机库按数据库文件是否已经存在判断，引导本身不读库。
@@ -131,9 +136,7 @@ Future<({String id, bool signedIn})> _openStartupSpace(AppSpaces spaces) async {
       ? null
       : await accounts.readProfile(origin: origin);
   final signedIn = session != null && !session.isExpired;
-  final id = !signedIn
-      ? AppSpaces.local
-      : syncScopeFor(session.userId, origin);
+  final id = !signedIn ? AppSpaces.local : syncScopeFor(session.userId, origin);
   await spaces.open(
     id,
     adoptLocal: previous == AppSpaces.local,
