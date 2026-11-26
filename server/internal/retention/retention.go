@@ -2,12 +2,13 @@
 // 记一行，未登录的设备匿名上报安装标识，服务端只保存它的 HMAC-SHA256 与日期。
 //
 // 采集口径见 ADR-0019：不含学习内容，不保存原始安装标识、IP 与设备编号；匿名
-// 数据按 180 天滚动删除。怎么查询活跃与留存写在 server/README 的留存统计一节。
+// 数据按 180 天滚动删除。后台的留存视图读同一批数据，见 report.go。
 package retention
 
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 )
@@ -87,8 +88,113 @@ func (m *MemoryStore) PruneInstallsBefore(_ context.Context, before string) erro
 	return nil
 }
 
-// installCount 与 userDayCount 供本包测试核对保存与清理的结果；读取入口不对外，
-// 管理员按 server/README 的语句直接查库。
+// DailyInstallActive 汇总 since 之后每天有上报的安装数，键是自然日。
+func (m *MemoryStore) DailyInstallActive(_ context.Context, since string) ([]DayCount, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	counts := make(map[string]int64)
+	for key := range m.installs {
+		if key[1] >= since {
+			counts[key[1]]++
+		}
+	}
+	return dayCounts(counts), nil
+}
+
+// DailyUserActive 汇总 since 之后每天有鉴权请求的账号数。
+func (m *MemoryStore) DailyUserActive(_ context.Context, since string) ([]DayCount, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	counts := make(map[string]int64)
+	for key := range m.users {
+		if key[1] >= since {
+			counts[key[1]]++
+		}
+	}
+	return dayCounts(counts), nil
+}
+
+// InstallRetentionCohorts 按第一次出现的日子分组，数一周与四周内再次活跃的
+// 安装。内存实现与 SQL 用同一套规则：首次当天不算回访，只有首次出现日不早于
+// since 才计入。
+func (m *MemoryStore) InstallRetentionCohorts(_ context.Context, since string) ([]Cohort, error) {
+	m.mu.Lock()
+	days := make(map[string][]string, len(m.installs))
+	for key := range m.installs {
+		days[key[0]] = append(days[key[0]], key[1])
+	}
+	m.mu.Unlock()
+
+	byFirst := make(map[string]*Cohort)
+	for _, seen := range days {
+		first := ""
+		for _, day := range seen {
+			if first == "" || day < first {
+				first = day
+			}
+		}
+		if first == "" || first < since {
+			continue
+		}
+		cohort := byFirst[first]
+		if cohort == nil {
+			cohort = &Cohort{FirstDay: first}
+			byFirst[first] = cohort
+		}
+		cohort.Installs++
+		returned7, returned28 := false, false
+		for _, day := range seen {
+			if day <= first {
+				continue
+			}
+			if withinDays(first, day, 7) {
+				returned7 = true
+			}
+			if withinDays(first, day, 28) {
+				returned28 = true
+			}
+		}
+		if returned7 {
+			cohort.Returned7d++
+		}
+		if returned28 {
+			cohort.Returned28d++
+		}
+	}
+	out := make([]Cohort, 0, len(byFirst))
+	for _, cohort := range byFirst {
+		out = append(out, *cohort)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].FirstDay < out[j].FirstDay })
+	return out, nil
+}
+
+// withinDays 判断 day 是否落在 first 之后 days 天之内（含第 days 天，不含
+// first 当天）。SQL 里是 first_day + days 的比较，这里用同一段时间轴。
+func withinDays(first, day string, days int) bool {
+	from, err := time.Parse("2006-01-02", first)
+	if err != nil {
+		return false
+	}
+	to, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return false
+	}
+	return !to.After(from.AddDate(0, 0, days))
+}
+
+// dayCounts 把日期到数量的映射排成按日期升序的行。
+func dayCounts(counts map[string]int64) []DayCount {
+	out := make([]DayCount, 0, len(counts))
+	for day, count := range counts {
+		out = append(out, DayCount{Day: day, Count: count})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Day < out[j].Day })
+	return out
+}
+
+// installCount 与 userDayCount 供本包测试核对保存与清理的结果，后台视图走
+// Reader 的读取方法。
 func (m *MemoryStore) installCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1313,6 +1313,10 @@ func TestPostgresRetention(t *testing.T) {
 	if err := st.MarkInstallActive(ctx, "hash-old", "2026-01-01", "", ""); err != nil {
 		t.Fatalf("seed old install: %v", err)
 	}
+	// 同一个安装一周后再活跃一次，用来核对队列留存的日期比较。
+	if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-25", "0.2.0", "android"); err != nil {
+		t.Fatalf("seed returning install: %v", err)
+	}
 
 	var users, installs int
 	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM user_active WHERE user_id = 'u1'`).Scan(&users); err != nil {
@@ -1324,8 +1328,37 @@ func TestPostgresRetention(t *testing.T) {
 	if users != 1 {
 		t.Fatalf("同一账号同一天应只有一行，得到 %d", users)
 	}
-	if installs != 2 {
-		t.Fatalf("两个不同安装标识应各留一行，重复上报不新增，得到 %d", installs)
+	if installs != 3 {
+		t.Fatalf("两个安装标识三天应各留一行，重复上报不新增，得到 %d", installs)
+	}
+
+	// 读取侧与写入侧共用同一批数据：每日活跃按日汇总，队列留存只统计区间内
+	// 第一次出现的安装。
+	installDays, err := st.DailyInstallActive(ctx, "2026-11-01")
+	if err != nil {
+		t.Fatalf("daily install active: %v", err)
+	}
+	if len(installDays) != 2 || installDays[0].Day != "2026-11-18" || installDays[0].Count != 1 ||
+		installDays[1].Day != "2026-11-25" || installDays[1].Count != 1 {
+		t.Fatalf("每日匿名活跃不对：%+v", installDays)
+	}
+	userDays, err := st.DailyUserActive(ctx, "2026-11-01")
+	if err != nil {
+		t.Fatalf("daily user active: %v", err)
+	}
+	if len(userDays) != 1 || userDays[0].Day != "2026-11-18" || userDays[0].Count != 1 {
+		t.Fatalf("每日登录活跃不对：%+v", userDays)
+	}
+	cohorts, err := st.InstallRetentionCohorts(ctx, "2026-11-01")
+	if err != nil {
+		t.Fatalf("install cohorts: %v", err)
+	}
+	if len(cohorts) != 1 {
+		t.Fatalf("只有 11-18 这一批落在区间内：%+v", cohorts)
+	}
+	cohort := cohorts[0]
+	if cohort.FirstDay != "2026-11-18" || cohort.Installs != 1 || cohort.Returned7d != 1 || cohort.Returned28d != 1 {
+		t.Fatalf("11-25 是第 7 天回访，一周与四周都应算：%+v", cohort)
 	}
 
 	if err := st.PruneInstallsBefore(ctx, "2026-05-22"); err != nil {
@@ -1334,8 +1367,8 @@ func TestPostgresRetention(t *testing.T) {
 	if err := st.pool.QueryRow(ctx, `SELECT count(*) FROM install_active`).Scan(&installs); err != nil {
 		t.Fatalf("count after prune: %v", err)
 	}
-	if installs != 1 {
-		t.Fatalf("保留期外的一行应被删除，留下 1 行，得到 %d", installs)
+	if installs != 2 {
+		t.Fatalf("保留期外的一行应被删除，留下 2 行，得到 %d", installs)
 	}
 
 	if err := st.DeleteUser(ctx, "u1"); err != nil {

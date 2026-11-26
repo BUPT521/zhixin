@@ -224,6 +224,9 @@ func (Base) PostAdminV1Models(w http.ResponseWriter, _ *http.Request) {
 func (Base) GetAdminV1Usage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1UsageParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) GetAdminV1Retention(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1RetentionParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) GetAdminV1Accounts(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1AccountsParams) {
 	w.WriteHeader(http.StatusNotFound)
 }

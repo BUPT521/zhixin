@@ -708,6 +708,45 @@ type AdminQuotaInput struct {
 	Note *string `json:"note,omitempty"`
 }
 
+// AdminRetentionCohort defines model for AdminRetentionCohort.
+type AdminRetentionCohort struct {
+	// FirstDay 这批安装第一次出现的日子
+	FirstDay openapi_types.Date `json:"first_day"`
+
+	// Installs 这一天第一次出现的安装数
+	Installs int64 `json:"installs"`
+
+	// Returned28d 28 天内再次活跃的安装数，不含首次当天
+	Returned28d int64 `json:"returned_28d"`
+
+	// Returned7d 7 天内再次活跃的安装数，不含首次当天
+	Returned7d int64 `json:"returned_7d"`
+}
+
+// AdminRetentionDay defines model for AdminRetentionDay.
+type AdminRetentionDay struct {
+	// Day 服务端时区下的自然日
+	Day openapi_types.Date `json:"day"`
+
+	// Installs 当天有匿名上报的安装数
+	Installs int64 `json:"installs"`
+
+	// Users 当天有鉴权请求的登录账号数
+	Users int64 `json:"users"`
+}
+
+// AdminRetentionReport defines model for AdminRetentionReport.
+type AdminRetentionReport struct {
+	Cohorts []AdminRetentionCohort `json:"cohorts"`
+	Daily   []AdminRetentionDay    `json:"daily"`
+
+	// Days 本次返回的天数，与请求一致
+	Days int `json:"days"`
+
+	// Timezone 计算自然日用的时区，取自 ZHIXIN_TIMEZONE
+	Timezone string `json:"timezone"`
+}
+
 // AdminRoute defines model for AdminRoute.
 type AdminRoute struct {
 	Enabled bool `json:"enabled"`
@@ -1440,6 +1479,12 @@ type PostAdminV1ModelsNameTestParams struct {
 	UpstreamModel *string `form:"upstream_model,omitempty" json:"upstream_model,omitempty"`
 }
 
+// GetAdminV1RetentionParams defines parameters for GetAdminV1Retention.
+type GetAdminV1RetentionParams struct {
+	// Days 包含今天，按服务端时区计算；匿名活跃最多保留 180 天
+	Days *int `form:"days,omitempty" json:"days,omitempty"`
+}
+
 // GetAdminV1UsageParams defines parameters for GetAdminV1Usage.
 type GetAdminV1UsageParams struct {
 	// Days 包含今天，按服务端时区计算
@@ -1907,6 +1952,9 @@ type ServerInterface interface {
 	// PostAdminV1ProvidersIdTest 用来源的 key 请求一次 /models，检查地址与 key
 	// (POST /admin/v1/providers/{id}/test)
 	PostAdminV1ProvidersIdTest(w http.ResponseWriter, r *http.Request, id string)
+	// GetAdminV1Retention 留存统计的每日活跃与一周、四周留存
+	// (GET /admin/v1/retention)
+	GetAdminV1Retention(w http.ResponseWriter, r *http.Request, params GetAdminV1RetentionParams)
 	// GetAdminV1Usage 托管模型的每日用量与路由汇总
 	// (GET /admin/v1/usage)
 	GetAdminV1Usage(w http.ResponseWriter, r *http.Request, params GetAdminV1UsageParams)
@@ -2598,6 +2646,39 @@ func (siw *ServerInterfaceWrapper) PostAdminV1ProvidersIdTest(w http.ResponseWri
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAdminV1ProvidersIdTest(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminV1Retention operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1Retention(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminV1RetentionParams
+
+	// ------------- Optional query parameter "days" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "days", r.URL.Query(), &params.Days, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "days"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "days", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1Retention(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4001,6 +4082,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/providers/{id}/test", wrapper.PostAdminV1ProvidersIdTest)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/usage", wrapper.GetAdminV1Usage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/key-usage", wrapper.GetAdminV1KeyUsage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/retention", wrapper.GetAdminV1Retention)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/accounts", wrapper.GetAdminV1Accounts)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/accounts/{id}", wrapper.DeleteAdminV1AccountsId)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/accounts/{id}", wrapper.GetAdminV1AccountsId)

@@ -1263,6 +1263,26 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/retention:
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 留存统计的每日活跃与一周、四周留存
+      description: 只读视图，数据来自 install_active 与 user_active。匿名安装按安装标识的 HMAC 分组算留存，登录账号只给每日活跃；两者都不含学习内容、原始安装标识与 IP。
+      parameters:
+        - name: days
+          in: query
+          description: 包含今天，按服务端时区计算；匿名活跃最多保留 180 天
+          schema: { type: integer, minimum: 1, maximum: 180, default: 30 }
+      responses:
+        "200":
+          description: 按日的活跃与按首次出现日分组的留存
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminRetentionReport" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /admin/v1/accounts:
     get:
       tags: [admin]
@@ -1834,6 +1854,33 @@ components:
         keys:
           type: array
           items: { $ref: "#/components/schemas/AdminKeyUsage" }
+    AdminRetentionDay:
+      type: object
+      required: [day, installs, users]
+      properties:
+        day: { type: string, format: date, description: 服务端时区下的自然日 }
+        installs: { type: integer, format: int64, description: 当天有匿名上报的安装数 }
+        users: { type: integer, format: int64, description: 当天有鉴权请求的登录账号数 }
+    AdminRetentionCohort:
+      type: object
+      required: [first_day, installs, returned_7d, returned_28d]
+      properties:
+        first_day: { type: string, format: date, description: 这批安装第一次出现的日子 }
+        installs: { type: integer, format: int64, description: 这一天第一次出现的安装数 }
+        returned_7d: { type: integer, format: int64, description: 7 天内再次活跃的安装数，不含首次当天 }
+        returned_28d: { type: integer, format: int64, description: 28 天内再次活跃的安装数，不含首次当天 }
+    AdminRetentionReport:
+      type: object
+      required: [timezone, days, daily, cohorts]
+      properties:
+        timezone: { type: string, description: 计算自然日用的时区，取自 ZHIXIN_TIMEZONE }
+        days: { type: integer, description: 本次返回的天数，与请求一致 }
+        daily:
+          type: array
+          items: { $ref: "#/components/schemas/AdminRetentionDay" }
+        cohorts:
+          type: array
+          items: { $ref: "#/components/schemas/AdminRetentionCohort" }
     AdminAccountIdentity:
       type: object
       description: 管理后台看到的账号登录方式，不含内部编号；现在只有邮箱一种

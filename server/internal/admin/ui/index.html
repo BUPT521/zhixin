@@ -44,6 +44,9 @@
     <button type="button" role="tab" id="nav-usage" data-tab="usage" aria-selected="false" aria-controls="tab-usage" tabindex="-1">
       <span class="tab-icon icon-usage" aria-hidden="true"></span>用量统计
     </button>
+    <button type="button" role="tab" id="nav-retention" data-tab="retention" aria-selected="false" aria-controls="tab-retention" tabindex="-1">
+      <span class="tab-icon icon-retention" aria-hidden="true"></span>留存
+    </button>
     <button type="button" role="tab" id="nav-accounts" data-tab="accounts" aria-selected="false" aria-controls="tab-accounts" tabindex="-1">
       <span class="tab-icon icon-accounts" aria-hidden="true"></span>账号管理
     </button>
@@ -169,6 +172,49 @@
           <tbody id="key-usage-rows"></tbody>
         </table></div>
         <p class="hint usage-note">对话的计费 token 是上游报告用量按缓存命中折算之后的数量；约合积分按核销同一比例折算并向上取整，没有扣当天的免费额度，只作对账参考，嵌入只占每日免费额度，不计入积分。在途是还没有结算的预留，撤销超过保留期的密钥显示为已清理。</p>
+      </section>
+    </div>
+  </section>
+
+  <section id="tab-retention" class="panel" role="tabpanel" aria-labelledby="nav-retention" hidden>
+    <div class="panel-head usage-head">
+      <div>
+        <h1 class="panel-title">留存</h1>
+        <p id="retention-period" class="hint"></p>
+      </div>
+      <div class="usage-controls">
+        <label>统计范围<select id="retention-days"><option value="7">最近 7 天</option><option value="30" selected>最近 30 天</option><option value="90">最近 90 天</option><option value="180">最近 180 天</option></select></label>
+        <button id="refresh-retention" class="ghost" type="button">刷新</button>
+      </div>
+    </div>
+    <p id="retention-status" class="hint" role="status" hidden></p>
+    <div id="retention-report" hidden>
+      <section class="usage-card" aria-labelledby="retention-cohort-title">
+        <div class="usage-card-head">
+          <div class="usage-breakdown-heading">
+            <h2 id="retention-cohort-title">按首次出现日的留存</h2>
+            <span class="hint">首次当天不算回访</span>
+          </div>
+          <p id="retention-summary" class="hint"></p>
+        </div>
+        <p id="retention-cohort-empty" class="empty" hidden>所选范围内还没有匿名安装的记录。</p>
+        <div class="scroll" role="region" aria-labelledby="retention-cohort-title" tabindex="0"><table class="grid usage-table retention-table">
+          <thead><tr><th scope="col">首次出现</th><th scope="col">新增安装</th><th scope="col">7 日回访</th><th scope="col">7 日留存</th><th scope="col">28 日回访</th><th scope="col">28 日留存</th></tr></thead>
+          <tbody id="retention-cohort-rows"></tbody>
+        </table></div>
+      </section>
+      <section class="usage-card" aria-labelledby="retention-daily-title">
+        <div class="usage-card-head">
+          <div class="usage-breakdown-heading">
+            <h2 id="retention-daily-title">每日活跃</h2>
+            <span class="hint">匿名安装与登录账号分开计</span>
+          </div>
+        </div>
+        <div class="scroll" role="region" aria-labelledby="retention-daily-title" tabindex="0"><table class="grid usage-table retention-table">
+          <thead><tr><th scope="col">日期</th><th scope="col">匿名安装</th><th scope="col">登录账号</th></tr></thead>
+          <tbody id="retention-daily-rows"></tbody>
+        </table></div>
+        <p class="hint usage-note">匿名安装来自未登录设备每天最多一次的上报，安装标识只保存哈希与日期；登录账号由服务端按请求日期记录。两者都不含学习内容，匿名数据保留 180 天。队列留存只用匿名安装计算，登录账号的队列留存还没有定口径，因此不在这里给出。</p>
       </section>
     </div>
   </section>
@@ -469,3 +515,4 @@
 <script src="/admin/app.js"></script>
 </body>
 </html>
+

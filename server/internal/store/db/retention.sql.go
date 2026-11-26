@@ -11,6 +11,139 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const dailyInstallActive = `-- name: DailyInstallActive :many
+SELECT day, count(*)::bigint AS installs
+FROM install_active
+WHERE day >= $1::date
+GROUP BY day
+ORDER BY day
+`
+
+type DailyInstallActiveRow struct {
+	Day      pgtype.Date
+	Installs int64
+}
+
+// 管理后台的留存视图从这里读。区间下界由服务层按请求天数与保留期算出；两张表
+// 都是按 day 全表扫描，万行以下不建索引（审查 V4）。
+func (q *Queries) DailyInstallActive(ctx context.Context, since pgtype.Date) ([]DailyInstallActiveRow, error) {
+	rows, err := q.db.Query(ctx, dailyInstallActive, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DailyInstallActiveRow{}
+	for rows.Next() {
+		var i DailyInstallActiveRow
+		if err := rows.Scan(&i.Day, &i.Installs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dailyUserActive = `-- name: DailyUserActive :many
+SELECT day, count(*)::bigint AS users
+FROM user_active
+WHERE day >= $1::date
+GROUP BY day
+ORDER BY day
+`
+
+type DailyUserActiveRow struct {
+	Day   pgtype.Date
+	Users int64
+}
+
+func (q *Queries) DailyUserActive(ctx context.Context, since pgtype.Date) ([]DailyUserActiveRow, error) {
+	rows, err := q.db.Query(ctx, dailyUserActive, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DailyUserActiveRow{}
+	for rows.Next() {
+		var i DailyUserActiveRow
+		if err := rows.Scan(&i.Day, &i.Users); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const installRetentionCohorts = `-- name: InstallRetentionCohorts :many
+WITH first_seen AS (
+  SELECT install_hash, min(day)::date AS first_day
+  FROM install_active
+  GROUP BY install_hash
+)
+SELECT f.first_day,
+       count(*)::bigint AS installs,
+       count(*) FILTER (
+         WHERE EXISTS (
+           SELECT 1 FROM install_active a
+           WHERE a.install_hash = f.install_hash
+             AND a.day > f.first_day
+             AND a.day <= f.first_day + 7
+         )
+       )::bigint AS returned_7d,
+       count(*) FILTER (
+         WHERE EXISTS (
+           SELECT 1 FROM install_active a
+           WHERE a.install_hash = f.install_hash
+             AND a.day > f.first_day
+             AND a.day <= f.first_day + 28
+         )
+       )::bigint AS returned_28d
+FROM first_seen f
+WHERE f.first_day >= $1::date
+GROUP BY f.first_day
+ORDER BY f.first_day
+`
+
+type InstallRetentionCohortsRow struct {
+	FirstDay    pgtype.Date
+	Installs    int64
+	Returned7d  int64
+	Returned28d int64
+}
+
+// 匿名安装的留存：按第一次出现的日子分组，数一周与四周内再次活跃的安装。首次
+// 当天不算回访（day > first_day），否则每次首次使用都会被算成留存；回访可以落在
+// 下界之后的任意一天，只要还在保留期内。只有首次出现日在下界之内才计入。
+func (q *Queries) InstallRetentionCohorts(ctx context.Context, since pgtype.Date) ([]InstallRetentionCohortsRow, error) {
+	rows, err := q.db.Query(ctx, installRetentionCohorts, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InstallRetentionCohortsRow{}
+	for rows.Next() {
+		var i InstallRetentionCohortsRow
+		if err := rows.Scan(
+			&i.FirstDay,
+			&i.Installs,
+			&i.Returned7d,
+			&i.Returned28d,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markInstallActive = `-- name: MarkInstallActive :exec
 
 INSERT INTO install_active (install_hash, day, app_version, platform)

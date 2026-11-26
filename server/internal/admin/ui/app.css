@@ -182,6 +182,20 @@ body { margin: 0; background: var(--paper); color: var(--ink); }
     linear-gradient(currentColor, currentColor) 7px bottom / 2px 9px no-repeat,
     linear-gradient(currentColor, currentColor) 11px bottom / 2px 13px no-repeat;
 }
+.icon-retention {
+  width: 16px;
+  height: 16px;
+  margin: 2px;
+  border: 1.5px solid currentColor;
+  border-radius: 50%;
+}
+.icon-retention::before {
+  position: absolute;
+  inset: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
 .icon-accounts::before {
   position: absolute;
   inset: 2px 5px auto;
@@ -587,6 +601,8 @@ label.check input { flex: 0 0 auto; }
 .usage-table { min-width: 720px; }
 .usage-table th:first-child, .usage-table th:last-child { border-radius: 0; }
 .usage-table .numeric, .usage-table th:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+/* 留存的两张表除首列外都是数字，表头也跟着数字右对齐。 */
+.retention-table th:nth-child(n+2) { text-align: right; }
 .usage-table .mono { overflow-wrap: anywhere; }
 .usage-note { margin-top: 10px; font-size: 12px; }
 .key-usage-table { min-width: 880px; }

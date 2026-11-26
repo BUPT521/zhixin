@@ -3,6 +3,9 @@ package pg
 import (
 	"context"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
+	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 )
 
@@ -41,4 +44,62 @@ func (s *Store) PruneInstallsBefore(ctx context.Context, before string) error {
 		return err
 	}
 	return s.q.PruneInstallActiveBefore(ctx, date)
+}
+
+// dayString 把数据库里的自然日转回服务层使用的 YYYY-MM-DD。
+func dayString(date pgtype.Date) string { return date.Time.Format("2006-01-02") }
+
+// DailyInstallActive 按自然日汇总匿名安装数。区间只影响读取，判断自然日的时区
+// 在写入时已经定下，这里不再换算。
+func (s *Store) DailyInstallActive(ctx context.Context, since string) ([]retention.DayCount, error) {
+	date, err := pgDate(since)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.DailyInstallActive(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]retention.DayCount, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, retention.DayCount{Day: dayString(row.Day), Count: row.Installs})
+	}
+	return out, nil
+}
+
+// DailyUserActive 按自然日汇总登录账号数。
+func (s *Store) DailyUserActive(ctx context.Context, since string) ([]retention.DayCount, error) {
+	date, err := pgDate(since)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.DailyUserActive(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]retention.DayCount, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, retention.DayCount{Day: dayString(row.Day), Count: row.Users})
+	}
+	return out, nil
+}
+
+// InstallRetentionCohorts 按首次出现日汇总匿名安装的一周与四周回访。
+func (s *Store) InstallRetentionCohorts(ctx context.Context, since string) ([]retention.Cohort, error) {
+	date, err := pgDate(since)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.InstallRetentionCohorts(ctx, date)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]retention.Cohort, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, retention.Cohort{
+			FirstDay: dayString(row.FirstDay), Installs: row.Installs,
+			Returned7d: row.Returned7d, Returned28d: row.Returned28d,
+		})
+	}
+	return out, nil
 }

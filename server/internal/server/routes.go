@@ -16,6 +16,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
+	"github.com/BUPT521/zhixin/server/internal/retentionadmin"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -37,6 +38,8 @@ type routes struct {
 	feedbackAdmin *feedbackadmin.Admin
 	release       *release.Handler
 	retention     *retention.Handler
+	// retentionAdmin 是后台的留存视图，只读；与公开的上报接口分开。
+	retentionAdmin *retentionadmin.Admin
 
 	// cloud 清空账号的云端数据；由 server.New 注入，见 DeleteV1Cloud。
 	cloud func(w http.ResponseWriter, r *http.Request)
@@ -214,6 +217,10 @@ func (rt routes) GetAdminV1Models(w http.ResponseWriter, r *http.Request) {
 func (rt routes) PostAdminV1Models(w http.ResponseWriter, r *http.Request) {
 	rt.llmAdmin.CreateModel(w, r)
 }
+func (rt routes) GetAdminV1Retention(w http.ResponseWriter, r *http.Request, params api.GetAdminV1RetentionParams) {
+	rt.retentionAdmin.Report(w, r, params)
+}
+
 func (rt routes) GetAdminV1Usage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1UsageParams) {
 	rt.llmAdmin.Usage(w, r, params)
 }

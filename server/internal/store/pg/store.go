@@ -62,6 +62,7 @@ var (
 	_ llmproxy.Quota       = (*Store)(nil)
 	_ feedback.Repository  = (*Store)(nil)
 	_ retention.Store      = (*Store)(nil)
+	_ retention.Reader     = (*Store)(nil)
 	_ blobs.Store          = (*BlobStore)(nil)
 	_ interface{ Close() } = (*Store)(nil)
 )

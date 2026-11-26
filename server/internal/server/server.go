@@ -29,6 +29,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 	"github.com/BUPT521/zhixin/server/internal/release"
 	"github.com/BUPT521/zhixin/server/internal/retention"
+	"github.com/BUPT521/zhixin/server/internal/retentionadmin"
 	"github.com/BUPT521/zhixin/server/internal/routepolicy"
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
@@ -38,6 +39,13 @@ import (
 // sync commits and backups. It must equal the schema number at the top of
 // docs/01; both sides move together and old versions are rejected (ADR-0002).
 const ClientSchemaVersion = 32
+
+// RetentionStore 既写入活跃数据（公开上报与鉴权中间件），也读取管理后台的
+// 留存视图。PostgreSQL 与内存两种实现都满足，装配处因此不用做类型断言。
+type RetentionStore interface {
+	retention.Store
+	retention.Reader
+}
 
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
@@ -61,7 +69,7 @@ type Stores struct {
 	// 与删号时一并删除。
 	Cache     llmproxy.EmbeddingCache
 	Feedback  feedback.Repository
-	Retention retention.Store
+	Retention RetentionStore
 	// Objects 与备份、附件共用同一份对象存储，清除云端数据时按账号前缀兜底
 	// 清理遗留对象。
 	Objects objectstore.Store
@@ -247,6 +255,9 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	}
 	retentionSvc := retention.NewService(st.Retention, telemetrySecret, cfg.Location)
 	authSvc.SetActivityRecorder(retentionSvc)
+	// 后台的留存视图与写入共用同一份存储，时区也共用，读出来的自然日因此与
+	// 写入时落库的日子一致。
+	retentionReporter := retention.NewReporter(st.Retention, cfg.Location)
 
 	clientHost := httpx.NewClientHost(cfg.TrustedProxies)
 
@@ -348,13 +359,14 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		llmAdmin: llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
 		accounts: accountadmin.New(st.Auth, st.Quota, authSvc.DeleteAccountByID,
 			cfg.LLM.DailyTokens, cfg.LLM.EmbeddingDailyTokens, cfg.Location, log, cfg.MaxJSONBytes),
-		feedback:      feedbackHandler,
-		feedbackAdmin: feedbackadmin.New(st.Feedback, log),
-		release:       release.NewHandler(cfg.Releases),
-		retention:     retentionHandler,
-		cloud:         cloudpurge.NewHandler(purgeSvc, log).Purge,
-		schemaVersion: ClientSchemaVersion,
-		ready:         st.Ready,
+		feedback:       feedbackHandler,
+		feedbackAdmin:  feedbackadmin.New(st.Feedback, log),
+		release:        release.NewHandler(cfg.Releases),
+		retention:      retentionHandler,
+		retentionAdmin: retentionadmin.New(retentionReporter, log),
+		cloud:          cloudpurge.NewHandler(purgeSvc, log).Purge,
+		schemaVersion:  ClientSchemaVersion,
+		ready:          st.Ready,
 	}
 
 	// 契约之外的路径给 problem 体，而不是默认的文本 404。
