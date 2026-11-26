@@ -56,6 +56,36 @@ func streamReply(text string) http.Handler {
 	})
 }
 
+// TestStreamPreludeReasoningBeforeOutput 核对正文之前的思考增量不会被当成
+// “首字前的事件太多”而整次换来源。思考型模型在正文之前会连续输出 reasoning
+// 增量，开启思考的第三方客户端因此会在每条路由上都撞上旧的 64 KiB 上限。
+func TestStreamPreludeReasoningBeforeOutput(t *testing.T) {
+	var reasoningHits atomic.Int64
+	primary := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		reasoningHits.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		filler := strings.Repeat("想", 30)
+		// 约 180 KB 的思考增量：超过旧的 64 KiB 上限，在 1 MiB 以内。
+		for i := 0; i < 2000; i++ {
+			fmt.Fprint(w, sseEvent(`{"type":"response.reasoning_summary_text.delta","delta":"`+filler+`"}`))
+		}
+		fmt.Fprint(w, sseEvent(`{"type":"response.output_text.delta","delta":"答"}`))
+		fmt.Fprint(w, sseEvent(`{"type":"response.completed","response":{"usage":{"total_tokens":5}}}`))
+	})
+	env, _, backupHits := newPreludeTestServer(t, 3*time.Second, primary, streamReply("备"))
+	token := signIn(t, env.authSvc, "reasoning-prelude@b.cn")
+
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		bytes.NewReader(chatBody(true)), roundBudgetHeaders(10000))
+	body := testutil.ReadBody(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "答") {
+		t.Fatalf("首条来源应交付自己的正文，得到 %d %q", resp.StatusCode, body)
+	}
+	if reasoningHits.Load() != 1 || backupHits.Load() != 0 {
+		t.Fatalf("不该换来源，得到 primary=%d backup=%d", reasoningHits.Load(), backupHits.Load())
+	}
+}
+
 // TestStreamSwitchesAfterOpeningEvents 核对响应头与开场事件之后、首段正文之前
 // 上游断开时换下一条候选：客户端只看到备用来源的正文，开场事件不外泄。
 func TestStreamSwitchesAfterOpeningEvents(t *testing.T) {
@@ -229,11 +259,14 @@ func TestCandidatesExhaustedProblem(t *testing.T) {
 // TestStreamPreludeIsBoundedByBytes 核对开场事件达到暂存上限时换到备用来源。
 func TestStreamPreludeIsBoundedByBytes(t *testing.T) {
 	const padding = "0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789"
+	event := sseEvent(`{"type":"response.created","padding":"` + padding + `"}`)
+	// 按当前上限换算条数，上限调整之后用例仍然成立。
+	count := maxPreludeBytes/len(event) + 2
 	primary := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)
-		for range 900 {
-			fmt.Fprint(w, sseEvent(`{"type":"response.created","padding":"`+padding+`"}`))
+		for range count {
+			fmt.Fprint(w, event)
 		}
 		flusher.Flush()
 		fmt.Fprint(w, sseEvent(`{"type":"response.output_text.delta","delta":"正文"}`))

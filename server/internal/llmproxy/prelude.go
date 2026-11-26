@@ -9,8 +9,11 @@ import (
 	"time"
 )
 
-// maxPreludeBytes 是首个有效输出之前最多暂存的字节数。
-const maxPreludeBytes = 64 << 10
+// maxPreludeBytes 是首个有效输出之前最多暂存的字节数。思考型模型在正文之前会
+// 持续输出 reasoning 增量，首次输出之前的等待最多 20 秒，按每秒十几 KB 的增量
+// 速率算不到 400 KB；64 KiB 的旧上限会在几秒内被填满，开启思考的第三方客户端
+// 因此每一条路由都按“首个有效输出前的流事件超过上限”失败。
+const maxPreludeBytes = 1 << 20
 
 var errPreludeTooLarge = errors.New("首个有效输出前的流事件超过上限")
 
@@ -32,7 +35,8 @@ type prelude struct {
 // 已经读到的字节全部保留：读一块时可能顺带读到后面的事件，丢掉就会让客户端少
 // 事件。达到字节上限仍没有可交付事件时结束这次尝试。
 func readPrelude(body io.Reader, limit int) prelude {
-	buf := make([]byte, 0, limit)
+	// 先按常见的开头大小分配，随事件增长；上限只用于截断，不预留整块内存。
+	buf := make([]byte, 0, min(limit, 64<<10))
 	chunk := make([]byte, 16<<10)
 	scanned := 0
 	for len(buf) < limit {
