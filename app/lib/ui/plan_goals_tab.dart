@@ -25,7 +25,7 @@ class PlanGoalsTab extends StatelessWidget {
     return CustomScrollView(
       key: const PageStorageKey<String>('plan-tab-2'),
       slivers: [
-        // 左右由页签外层统一给页面边距，这里只留上下的间隔。
+        // 左右边距由页面在每一页的外层给出，页签整幅滑进滑出；这里只留上下的间隔。
         SliverPadding(
           padding: EdgeInsets.only(
             top: theme.space.xs,

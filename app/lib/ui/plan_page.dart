@@ -480,46 +480,54 @@ class _PlanPageState extends State<PlanPage> {
     ),
   );
 
-  /// 读到内容之后整页淡入；之后换周按前后次序左右滑过去，换页签同样滑列表。
-  /// 页签与列表放在同一块带页面边距的容器里，内容直接铺满这一块即可；页签条
-  /// 会画底色，因此左右边距由它下面这层统一给出，各页签的列表不再各加一次。
+  /// 读到内容之后整页淡入；之后换周按前后次序左右滑过去，换页签同样滑整页。
+  ///
+  /// 页签内容整幅滑进滑出，页面边距因此放在每一页里面：外层只给页签条与读取
+  /// 失败的说明留边距，切换位移取整幅页宽，旧页从屏幕左边缘滑完、新页从右边缘
+  /// 进来。外层若统一给左右边距，位移只剩版心宽度，旧页的右端会停在页面边距
+  /// 里，新页提前露出一截。
   Widget _loadedWeek(ZhixinTheme theme, PlanWeek week, PlanActions actions) =>
       FadeIn(
         child: PageWidth(
-          child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-            child: Column(
-              children: [
-                _tabBar(theme),
-                // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
-                if (_error != null)
-                  Padding(
-                    padding: EdgeInsets.only(bottom: theme.space.sm),
-                    child: InlineNotice(message: _error!, onRetry: _reload),
+          child: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                child: _tabBar(theme),
+              ),
+              // 已经显示的一周保留时，读取失败在页签下方说明一次并就地重试。
+              if (_error != null)
+                Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    theme.space.page,
+                    0,
+                    theme.space.page,
+                    theme.space.sm,
                   ),
-                Expanded(
-                  // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
-                  child: SlideSwap(
-                    identity: _shownAnchor!,
-                    order: _weekOrder(_shownAnchor!),
-                    child: TabSlideStack(
-                      index: _tab,
-                      // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
-                      // 已读到的内容都留住；首次进入某个页签时才建。
-                      children: [
-                        for (var tab = 0; tab < 4; tab++)
-                          KeyedSubtree(
-                            key: ValueKey('plan-tab-layer-$tab'),
-                            child: _visited.contains(tab)
-                                ? _tabContent(week, actions, tab)
-                                : const SizedBox.shrink(),
-                          ),
-                      ],
-                    ),
+                  child: InlineNotice(message: _error!, onRetry: _reload),
+                ),
+              Expanded(
+                // 换周换的是同一块位置上的内容：旧的一周滑出去，新的一周进来。
+                child: SlideSwap(
+                  identity: _shownAnchor!,
+                  order: _weekOrder(_shownAnchor!),
+                  child: TabSlideStack(
+                    index: _tab,
+                    // 四个页签常驻，切换只换显示：切回来不再重建，滚动位置与
+                    // 已读到的内容都留住；首次进入某个页签时才建。
+                    children: [
+                      for (var tab = 0; tab < 4; tab++)
+                        KeyedSubtree(
+                          key: ValueKey('plan-tab-layer-$tab'),
+                          child: _visited.contains(tab)
+                              ? _tabContent(week, actions, tab)
+                              : const SizedBox.shrink(),
+                        ),
+                    ],
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       );
@@ -565,9 +573,12 @@ class _PlanPageState extends State<PlanPage> {
   );
 
   /// 每个页签自己的滚动位置由各自的 [CustomScrollView] 与 PageStorageKey 保住。
+  ///
+  /// 左右边距加在每一页里面，页签整幅滑进滑出时位移才覆盖整幅页宽（见
+  /// [_loadedWeek]）；页签里的列表因此不再各加一次边距。
   Widget _tabContent(PlanWeek week, PlanActions actions, int tab) {
     final weekStart = _shownAnchor!;
-    return switch (tab) {
+    final content = switch (tab) {
       0 => PlanScheduleTab(
         week: week,
         weekStart: weekStart,
@@ -590,5 +601,9 @@ class _PlanPageState extends State<PlanPage> {
       2 => PlanGoalsTab(week: week, actions: actions),
       _ => PlanOperationsTab(week: week, actions: actions),
     };
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: context.zhixin.space.page),
+      child: content,
+    );
   }
 }

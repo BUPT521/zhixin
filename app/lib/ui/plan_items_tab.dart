@@ -248,7 +248,7 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
         key: const PageStorageKey<String>('plan-tab-1'),
         slivers: [
           SliverPadding(
-            // 左右由页签外层统一给页面边距，这里只留上下的间隔。
+            // 左右边距由页面在每一页的外层给出，页签整幅滑进滑出；这里只留上下的间隔。
             padding: EdgeInsets.only(
               top: theme.space.xs,
               bottom: theme.space.section,

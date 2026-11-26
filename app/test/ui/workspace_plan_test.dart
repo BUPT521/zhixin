@@ -77,6 +77,37 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('切页签时旧页签整幅滑出，新页签从屏幕右边缘进来', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.text('安排').last.hitTestable());
+    await settle(tester);
+    await tester.tap(find.text('事项'));
+    await settle(tester);
+
+    Finder layer(int tab) =>
+        find.byKey(ValueKey('plan-tab-layer-$tab'), skipOffstage: false);
+    Finder inLayer(int tab, String text) => find.descendant(
+      of: layer(tab),
+      matching: find.text(text, skipOffstage: false),
+      skipOffstage: false,
+    );
+
+    // 屏宽 390，页面边距 24：新页从屏幕右边缘之外开始，不是从版心右边界开始。
+    await tester.tap(find.text('目标'));
+    await tester.pump();
+    expect(
+      tester.getTopLeft(inLayer(2, '学习目标')).dx,
+      moreOrLessEquals(390 + 24, epsilon: 0.5),
+    );
+
+    // 动画走完之前旧页已经整幅滑到屏幕左边缘之外，右端的“新建”不再停在边距里。
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(tester.getTopRight(inLayer(1, '新建')).dx, lessThanOrEqualTo(0));
+    await tester.pumpAndSettle();
+    expect(tester.getTopLeft(inLayer(2, '学习目标')).dx, moreOrLessEquals(24));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('已完成事项滚动时自动续读，切回事项页签时保留滚动位置', (tester) async {
     await openApp(tester);
     await tester.runAsync(() async {
