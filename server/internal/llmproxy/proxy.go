@@ -994,7 +994,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		}
 		reply = chatReply{route: rt, attempt: attempt}
 		attemptStarted := p.now()
-		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream, firstOutput)
+		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream, firstOutput, plan.session)
 		if err != nil {
 			if budgetOnly && errors.Is(err, errFirstOutputTimeout) {
 				// 最后一次尝试的首字时限就是这一轮剩下的时间，它到点说明预算用完；
@@ -1210,10 +1210,21 @@ func (p *Proxy) firstOutputBudget(plan *attemptPlan, index int, deadline time.Ti
 // 以 /v1 结尾；管理员在后台配置来源时写的就是这个结尾。
 const upstreamResponsesPath = "/responses"
 
+// isOpenCodeSource 报告这个来源是不是 OpenCode 的网关。它的 Go 通道要求同一条
+// 会话带稳定的 `x-opencode-session`，缺了按 `MissingSessionID` 回 400；管理员在
+// 后台写的是 `https://opencode.ai/inference/go/v1` 这类地址，按主机名判断即可。
+func isOpenCodeSource(baseURL string) bool {
+	return strings.Contains(strings.ToLower(baseURL), "opencode.ai")
+}
+
 // attempt 向一个来源发一次请求。eventStream 表示这是等待流式事件的聊天请求，
 // 请求带上 Accept: text/event-stream；headerTimeout 大于 0 时，响应头必须在这段
 // 时间内到达，否则尝试下一条路由。非流式聊天要等整段回答生成完才有响应头，传 0。
-func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, eventStream bool, headerTimeout time.Duration) (*http.Response, error) {
+//
+// session 是这条讨论的调度键，同时作为 OpenCode Go 通道要求的 `x-opencode-session`
+// 头发出去：它的网关按这个头把同一会话的请求排到同一个上游，缺这个头直接回 400
+// `MissingSessionID`。其余来源忽略这个头，只在地址指向 OpenCode 时才带。
+func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, body []byte, eventStream bool, headerTimeout time.Duration, session string) (*http.Response, error) {
 	actx, cancel := context.WithCancel(ctx)
 	var gotConnection atomic.Bool
 	actx = httptrace.WithClientTrace(actx, &httptrace.ClientTrace{
@@ -1230,6 +1241,14 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 	}
 	if eventStream {
 		req.Header.Set("Accept", "text/event-stream")
+	}
+	if isOpenCodeSource(prov.BaseURL) {
+		if session == "" {
+			// 后台自测与探活没有讨论标识，用固定值即可：这个头只要求同一个会话内
+			// 稳定，否则网关按缺少会话标识拒绝整次请求。
+			session = "zhixin-probe"
+		}
+		req.Header.Set("x-opencode-session", session)
 	}
 	var timer *time.Timer
 	if headerTimeout > 0 {

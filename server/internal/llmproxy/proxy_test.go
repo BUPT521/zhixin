@@ -354,6 +354,57 @@ func TestHandlerResponsesLenientForAPIKeys(t *testing.T) {
 	}
 }
 
+// TestHandlerResponsesOpenCodeSession 断言发往 OpenCode 网关的请求带上稳定的
+// `x-opencode-session`：Go 通道缺这个头会按 `MissingSessionID` 回 400，而客户端
+// 不需要知道这个头。同一个讨论的两次请求必须带同一个值，别的来源不带这个头。
+func TestHandlerResponsesOpenCodeSession(t *testing.T) {
+	var mu sync.Mutex
+	var sessions []string
+	var other string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if strings.HasPrefix(r.URL.Path, "/opencode.ai") {
+			sessions = append(sessions, r.Header.Get("x-opencode-session"))
+		} else {
+			other = r.Header.Get("x-opencode-session")
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_1","object":"response","status":"completed","output":[]}`)
+	}))
+	defer upstream.Close()
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "oc", upstream.URL+"/opencode.ai/v1", "sk-oc")
+		putModel(t, c, ModelRecord{Name: "opencode-chat", Kind: KindChat, Routes: []Route{{ProviderID: "oc", UpstreamModel: "deepseek-v4.1-flash"}}})
+		putProvider(t, c, box, "plain", upstream.URL+"/plain/v1", "sk-plain")
+		putModel(t, c, ModelRecord{Name: "plain-chat", Kind: KindChat, Routes: []Route{{ProviderID: "plain", UpstreamModel: "deepseek-flash"}}})
+	})
+	tokens, err := env.authSvc.Register(context.Background(), "opencode@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.quota.SetDailyLimit(tokens.UserID, 1<<30)
+
+	input := []any{map[string]any{"type": "message", "role": "user", "content": "同一个讨论"}}
+	for i := 0; i < 2; i++ {
+		if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tokens.AccessToken,
+			map[string]any{"model": "opencode-chat", "input": input}, nil); code != http.StatusOK {
+			t.Fatalf("第 %d 次请求应通过，得到 %d", i+1, code)
+		}
+	}
+	if len(sessions) != 2 || sessions[0] == "" || sessions[0] != sessions[1] {
+		t.Fatalf("同一讨论应带同一个会话标识，得到 %v", sessions)
+	}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tokens.AccessToken,
+		map[string]any{"model": "plain-chat", "input": input}, nil); code != http.StatusOK {
+		t.Fatalf("普通来源应通过，得到 %d", code)
+	}
+	if other != "" {
+		t.Fatalf("普通来源不该收到 x-opencode-session，得到 %q", other)
+	}
+}
+
 func TestHandlerQuotaOverride(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
