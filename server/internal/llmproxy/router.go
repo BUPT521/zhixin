@@ -167,7 +167,7 @@ type capabilities struct{ tools, images bool }
 
 // candidates 按优先级分组，组内按权重排列。执行前还要重新检查健康状态并占用
 // 试探名额。session 非空时组内顺序由会话与权重确定，同一会话的追问与工具步骤
-// 因此落到同一条来源；为空时每次请求重新随机，管理端探测与旧客户端照旧分流。
+// 因此优先使用同一条来源；为空时每次请求按权重随机排列。
 // need 里要求的能力对应的标记为假时，这条路由不进入候选。
 func (r *Router) candidates(m *liveModel, session string, need capabilities) []liveRoute {
 	if !m.Enabled {

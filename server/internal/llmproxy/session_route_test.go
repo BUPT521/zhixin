@@ -106,8 +106,42 @@ func TestSessionKeyScopesAccount(t *testing.T) {
 	}
 }
 
-// TestSessionHeaderKeepsOneRoute 核对带讨论标识的几次请求都落到同一条来源并
-// 只记这一个来源的用量；不带标识时仍按权重分散到两条来源。
+func TestRoutingSessionKeyFallsBackToFirstUserMessage(t *testing.T) {
+	initial := []byte(`[{"role":"developer","content":"规则"},{"role":"user","content":[{"type":"input_text","text":"第一问"}]}]`)
+	followup := []byte(`[{"role":"developer","content":"更新后的规则"},{"role":"user","content":[ { "type":"input_text", "text":"第一问" } ]},{"role":"assistant","content":"上次回答"},{"role":"user","content":"追问"}]`)
+	key := routingSessionKey("u1", nil, initial)
+	if key == "" || routingSessionKey("u1", nil, followup) != key {
+		t.Fatal("追加消息、更新开发者指令或改变 JSON 空白时应复用首条用户消息的调度键")
+	}
+	blank, long := "  ", strings.Repeat("x", maxSessionIDBytes+1)
+	for _, id := range []*string{&blank, &long} {
+		if routingSessionKey("u1", id, initial) != key {
+			t.Fatal("无效标识应按首条用户消息调度")
+		}
+	}
+	explicit := "discussion-7"
+	if routingSessionKey("u1", &explicit, initial) != sessionKey("u1", &explicit) {
+		t.Fatal("显式讨论标识应优先")
+	}
+	if routingSessionKey("u2", nil, initial) == key {
+		t.Fatal("不同账号的相同消息不应共用调度键")
+	}
+	if other := routingSessionKey("u1", nil, []byte(`[{"role":"user","content":"另一条讨论"}]`)); other == "" || other == key {
+		t.Fatal("首条消息不同应得到不同的键")
+	}
+	for _, input := range []string{
+		`[]`,
+		`[{"role":"developer","content":"只有指令"}]`,
+		`[{"role":"user","content":"   "}]`,
+		`[{"role":"user","content":[]}]`,
+	} {
+		if routingSessionKey("u1", nil, []byte(input)) != "" {
+			t.Fatalf("没有可用首条用户消息时应保持随机路由：%s", input)
+		}
+	}
+}
+
+// TestSessionHeaderKeepsOneRoute 核对显式标识和首条用户消息都能稳定选择来源。
 func TestSessionHeaderKeepsOneRoute(t *testing.T) {
 	var hitsA, hitsB atomic.Int64
 	reply := func(hits *atomic.Int64) http.HandlerFunc {
@@ -134,9 +168,11 @@ func TestSessionHeaderKeepsOneRoute(t *testing.T) {
 	})
 	usage := NewMemoryUsage()
 	env.proxy.SetUsageStore(usage)
-	// 测试装配默认关掉随机头部次序，这里恢复按权重随机，才看得到不带标识时的
-	// 分散效果。
-	env.proxy.router.shuffle = weightedShuffle
+	var shuffled atomic.Int64
+	env.proxy.router.shuffle = func(routes []liveRoute) {
+		shuffled.Add(1)
+		weightedShuffle(routes)
+	}
 	token := signIn(t, env.authSvc, "session@b.cn")
 	body := chatBody(false)
 
@@ -156,17 +192,28 @@ func TestSessionHeaderKeepsOneRoute(t *testing.T) {
 		t.Fatalf("应共发出 4 次上游调用，得到 %d", total)
 	}
 
-	// 不带标识时按权重重新随机：二十次请求里两条来源都应当被用到。
-	for range 20 {
+	beforeA, beforeB := hitsA.Load(), hitsB.Load()
+	for _, requestBody := range [][]byte{
+		body,
+		[]byte(`{"model":"m","instructions":"本轮新指令","input":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"追问"}]}`),
+	} {
 		resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
-			bytes.NewReader(body), roundBudgetHeaders(5000))
+			bytes.NewReader(requestBody), roundBudgetHeaders(5000))
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("不带标识的请求应成功，得到 %d", resp.StatusCode)
 		}
 		resp.Body.Close()
 	}
-	if hitsA.Load() == 4 || hitsB.Load() == 0 {
-		t.Fatalf("不带标识时应分散到两条来源，得到 a=%d b=%d", hitsA.Load(), hitsB.Load())
+	afterA, afterB := hitsA.Load()-beforeA, hitsB.Load()-beforeB
+	if shuffled.Load() != 0 || afterA+afterB != 2 || (afterA != 0 && afterB != 0) {
+		t.Fatalf("带同一首条消息的无标识请求应复用首选来源，得到 a=%d b=%d，随机次数 %d", afterA, afterB, shuffled.Load())
+	}
+
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		strings.NewReader(`{"model":"m","instructions":"仅有指令","input":[]}`), roundBudgetHeaders(5000))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || shuffled.Load() != 1 {
+		t.Fatalf("没有首条用户消息时应按原有方式随机，得到状态 %d，随机次数 %d", resp.StatusCode, shuffled.Load())
 	}
 }
 

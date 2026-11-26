@@ -569,7 +569,7 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 	}
 	plan := attemptPlan{
 		model:      model,
-		candidates: p.router.candidates(model, sessionKey(userID, opts.SessionID), need),
+		candidates: p.router.candidates(model, routingSessionKey(userID, opts.SessionID, fields["input"]), need),
 		reserve:    reserve,
 	}
 	reply, err := p.dispatch(reqCtx, &plan, fields, stream, output, deadline)
@@ -652,7 +652,7 @@ const maxSessionIDBytes = 64
 
 // sessionKey 把账号与客户端给的讨论标识收成一个只在代理内使用的调度键：同一
 // 账号的同一讨论永远得到同一个键，换账号不会共享；键是散列值，日志与上游都
-// 看不到原标识。没有标识时返回空串，路由按原样重新随机。
+// 看不到原标识。没有有效标识时返回空串，由调用方决定如何回退。
 func sessionKey(userID string, raw *string) string {
 	if raw == nil {
 		return ""
@@ -663,6 +663,50 @@ func sessionKey(userID string, raw *string) string {
 	}
 	sum := sha256.Sum256([]byte(userID + "\x00" + id))
 	return hex.EncodeToString(sum[:16])
+}
+
+// routingSessionKey 优先使用显式标识。缺省时，同账号中保留了首条用户消息的
+// 追问仍可复用路由，追加消息及变动的 instructions 不影响这个选择。
+func routingSessionKey(userID string, explicit *string, input json.RawMessage) string {
+	if key := sessionKey(userID, explicit); key != "" {
+		return key
+	}
+	decoder := json.NewDecoder(bytes.NewReader(input))
+	if start, err := decoder.Token(); err != nil || start != json.Delim('[') {
+		return ""
+	}
+	for decoder.More() {
+		var item struct {
+			Type    string          `json:"type"`
+			Role    string          `json:"role"`
+			Content json.RawMessage `json:"content"`
+		}
+		if err := decoder.Decode(&item); err != nil {
+			return ""
+		}
+		if item.Role != "user" || (item.Type != "" && item.Type != "message") {
+			continue
+		}
+		content := item.Content
+		if isJSONString(content) {
+			var text string
+			if json.Unmarshal(content, &text) != nil || strings.TrimSpace(text) == "" {
+				return ""
+			}
+		} else if !isJSONArray(content) {
+			return ""
+		}
+		var compact bytes.Buffer
+		if json.Compact(&compact, content) != nil || compact.Len() <= 2 {
+			return ""
+		}
+		// 独立的命名空间避免显式标识与消息派生的键重合。
+		hash := sha256.New()
+		hash.Write([]byte("first-user-message\x00" + userID + "\x00"))
+		hash.Write(compact.Bytes())
+		return "input:" + hex.EncodeToString(hash.Sum(nil)[:16])
+	}
+	return ""
 }
 
 // roundDeadline 把客户端带来的本轮剩余预算换成截止时间：客户端不给值时返回零

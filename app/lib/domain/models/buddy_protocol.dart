@@ -114,8 +114,8 @@ class BuddyContext {
   final List<String> crossSessionNotes;
   final String? conversationFocus;
 
-  /// 这条讨论的稳定标识，只用于服务端把追问与工具步骤分到同一条来源：同一讨论
-  /// 的请求因此复用上游处理过的前缀。没有归属时为空，服务端照旧按权重分流。
+  /// 讨论或同一次批量调用的路由标识，让相关请求优先使用同一条模型来源。
+  /// 没有可用标识时，由代理根据请求内容决定组内顺序。
   final String? sessionId;
 
   Iterable<MaterialPage> get uniqueOutlinePages =>

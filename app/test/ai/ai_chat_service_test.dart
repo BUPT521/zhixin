@@ -1316,6 +1316,7 @@ void main() {
   test('模型拒绝工具声明时用首轮证据普通请求回答', () async {
     var plainRequests = 0;
     final client = MockClient((request) async {
+      expect(request.headers['X-Zhixin-Session-Id'], 'discussion-7');
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       final tools = body['tools'];
       if (tools is List && tools.isNotEmpty) {
@@ -1334,6 +1335,7 @@ void main() {
     final reply = await service.ask(
       context: BuddyContext(
         now: DateTime(2026, 11, 7, 20),
+        sessionId: 'discussion-7',
         evidence: [
           EvidenceHit(
             kind: EvidenceKind.materialPage,

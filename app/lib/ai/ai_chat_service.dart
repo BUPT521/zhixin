@@ -191,6 +191,7 @@ class AiChatService implements BuddyAi {
       final plain = await client.complete(
         system: '$system\n\n本轮不能调用工具，只写正文，不要提交引用、建议或记忆。',
         messages: messages,
+        budget: LlmRequestBudget(sessionId: context.sessionId),
       );
       final body = plain.text.trim();
       if (body.isEmpty) rethrow;

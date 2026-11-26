@@ -281,6 +281,7 @@ class StudyPlanService {
     }
 
     const pagesPerRequest = 6;
+    final routingSessionId = newUuidV7();
     final proposed = <StudyStepDraft>[];
     var modelBatches = 0;
     var localBatches = 0;
@@ -290,6 +291,7 @@ class StudyPlanService {
       final batchTo = batch.last.pageNo;
       try {
         final batchSteps = await _proposeBatch(
+          routingSessionId: routingSessionId,
           materialId: materialId,
           goalId: goalId,
           conversationFocus: conversationFocus,
@@ -339,6 +341,7 @@ class StudyPlanService {
   }
 
   Future<List<StudyStepDraft>> _proposeBatch({
+    required String routingSessionId,
     required String materialId,
     required String? goalId,
     required String? conversationFocus,
@@ -351,6 +354,7 @@ class StudyPlanService {
     final facts = await context.load(
       ContextRequest(
         mode: BuddyMode.plan,
+        routingSessionId: routingSessionId,
         goalId: goalId,
         materialId: materialId,
         pageNo: batchFrom,
