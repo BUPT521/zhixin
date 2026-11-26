@@ -29,6 +29,12 @@ const (
 	maxOffset    = 100000
 	maxQuery     = 254
 	maxNote      = 200
+	// maxCharges 是后台详情里列出的最近核销流水条数；流水只用于对账，不做完整
+	// 翻页，需要看更早的流水时按运维手册查库。
+	maxCharges = 5
+	// pointsQueryTimeout 是“刷新余额”等即刻收一次查询的上限，与核销队列里的余额
+	// 刷新同一量级；超时按即刻收不可用返回，副本保持原值。
+	pointsQueryTimeout = 8 * time.Second
 )
 
 // AccountStore 是账号管理需要的 auth 存储子集。账号列表与管理接口都不看密码，
@@ -117,7 +123,8 @@ func (a *Admin) List(w http.ResponseWriter, r *http.Request, params api.GetAdmin
 	})
 }
 
-// Get 读取一个账号的登录方式、额度与今日已结算用量。用量只读，不推进任何计数。
+// Get 读取一个账号的登录方式、额度、今日已结算用量与积分视图。用量与积分只读，
+// 不推进任何计数，也不调用即刻收。
 func (a *Admin) Get(w http.ResponseWriter, r *http.Request, id string) {
 	record, ok := a.load(w, r, id)
 	if !ok {
@@ -133,8 +140,42 @@ func (a *Admin) Get(w http.ResponseWriter, r *http.Request, id string) {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
 	}
+	points, err := a.pointsView(r.Context(), id)
+	if err != nil {
+		httpx.WriteInternal(w, r, a.log, err)
+		return
+	}
 	view := a.accountView(record, override)
 	view.Usage = &usage
+	view.Points = points
+	httpx.WriteJSON(w, http.StatusOK, view)
+}
+
+// RefreshPoints 同步查一次这个账号的积分余额并覆盖本地副本，返回刷新后的积分视图。
+// 积分是钱：后台只提供查看与刷新，不提供补分、扣分或退款，核销流水也只读。
+func (a *Admin) RefreshPoints(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := a.load(w, r, id); !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), pointsQueryTimeout)
+	defer cancel()
+	enabled, err := a.quota.RefreshPoints(ctx, id)
+	if err != nil {
+		a.log.Warn("refresh the nowpay balance", "user_id", id, "error", err)
+		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed,
+			"query the points balance from the payment provider")
+		return
+	}
+	if !enabled {
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict,
+			"points purchases are not enabled on this instance")
+		return
+	}
+	view, err := a.pointsView(ctx, id)
+	if err != nil {
+		httpx.WriteInternal(w, r, a.log, err)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, view)
 }
 
@@ -252,6 +293,44 @@ func (a *Admin) usage(ctx context.Context, id string) (api.AdminAccountUsage, er
 	return api.AdminAccountUsage{
 		Day: types.Date{Time: now}, ChatTokens: chat, EmbeddingTokens: embedding,
 	}, nil
+}
+
+// pointsView 组装积分视图：今天已核销、可用积分、副本快照时刻与最近几条流水。
+// 没有开通收款时三项都为空，页面据此说明这个实例不卖积分；开通了收款但账号还没有
+// 副本时只给已核销积分，可用积分等副本同步之后再显示，不把缺失写成零（ADR-0073）。
+func (a *Admin) pointsView(ctx context.Context, id string) (*api.AdminAccountPoints, error) {
+	day := a.now().In(a.loc).Format("2006-01-02")
+	points, err := a.quota.Points(ctx, id, day)
+	if err != nil {
+		return nil, err
+	}
+	view := &api.AdminAccountPoints{
+		Enabled: points.ChargedKnown, ChargedToday: points.Charged,
+		Charges: []api.AdminPointCharge{},
+	}
+	if points.RemainingKnown {
+		remaining := points.Remaining
+		view.Remaining = &remaining
+	}
+	if !points.SyncedAt.IsZero() {
+		synced := points.SyncedAt
+		view.SyncedAt = &synced
+	}
+	if !view.Enabled {
+		return view, nil
+	}
+	charges, err := a.quota.PointCharges(ctx, id, maxCharges)
+	if err != nil {
+		return nil, err
+	}
+	for _, charge := range charges {
+		view.Charges = append(view.Charges, api.AdminPointCharge{
+			Id: charge.ID, Day: types.Date{Time: charge.Day}, Points: charge.Points,
+			BilledTokens: charge.BilledTokens, Status: api.AdminPointChargeStatus(charge.Status),
+			CreatedAt: charge.CreatedAt, UpdatedAt: charge.UpdatedAt,
+		})
+	}
+	return view, nil
 }
 
 // accountView 把账号、登录方式与覆盖行合成响应。生效额度优先取覆盖值，没有

@@ -337,6 +337,59 @@ func (q *Queries) ReadyPurchaseLink(ctx context.Context, arg ReadyPurchaseLinkPa
 	return err
 }
 
+const recentChargesByUser = `-- name: RecentChargesByUser :many
+SELECT id, day, points, billed_tokens, status, created_at, updated_at
+FROM nowpay_charge
+WHERE user_id = $1
+ORDER BY created_at DESC, id DESC
+LIMIT $2
+`
+
+type RecentChargesByUserParams struct {
+	UserID  pgtype.Text
+	MaxRows int32
+}
+
+type RecentChargesByUserRow struct {
+	ID           string
+	Day          pgtype.Date
+	Points       int64
+	BilledTokens int64
+	Status       string
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
+// 管理后台查看一个账号最近的核销流水，新到旧；删号之后 user_id 被置空的行不取，
+// 它们已经不属于任何账号。只读，不改变流水状态。
+func (q *Queries) RecentChargesByUser(ctx context.Context, arg RecentChargesByUserParams) ([]RecentChargesByUserRow, error) {
+	rows, err := q.db.Query(ctx, recentChargesByUser, arg.UserID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RecentChargesByUserRow{}
+	for rows.Next() {
+		var i RecentChargesByUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Day,
+			&i.Points,
+			&i.BilledTokens,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const replacePurchaseLink = `-- name: ReplacePurchaseLink :exec
 UPDATE nowpay_purchase
 SET out_request_no = $1,

@@ -116,7 +116,43 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 		return points, nil
 	}
 	points.Remaining, points.RemainingKnown = view.points, true
+	points.SyncedAt = view.syncedAt
 	return points, nil
+}
+
+// PointCharges 返回账号最近的核销流水，供管理后台查看。没有开通收款时返回空；
+// 只读，不改变流水状态。删号之后解除关联的行不再属于任何账号，不返回。
+func (s *Store) PointCharges(ctx context.Context, userID string, limit int) ([]llmproxy.PointCharge, error) {
+	if s.nowpay == nil || limit < 1 {
+		return nil, nil
+	}
+	rows, err := s.q.RecentChargesByUser(ctx, db.RecentChargesByUserParams{
+		UserID: text(userID), MaxRows: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pg: 读取积分核销流水失败: %w", err)
+	}
+	charges := make([]llmproxy.PointCharge, 0, len(rows))
+	for _, row := range rows {
+		charges = append(charges, llmproxy.PointCharge{
+			ID: row.ID, Day: row.Day.Time, Points: row.Points,
+			BilledTokens: row.BilledTokens, Status: row.Status,
+			CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+		})
+	}
+	return charges, nil
+}
+
+// RefreshPoints 同步查询一次即刻收的余额并覆盖本地副本，供管理后台的“刷新余额”
+// 使用。没有开通收款时返回 false，调用方据此说明这个实例不卖积分。
+func (s *Store) RefreshPoints(ctx context.Context, userID string) (bool, error) {
+	if s.nowpay == nil {
+		return false, nil
+	}
+	if err := s.nowpay.QueryBalance(ctx, userID); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 // ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。同一天同一账号
@@ -495,10 +531,11 @@ func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, da
 // balanceView 是余额副本的读数。points 是可用积分，raw 是副本减去没有反映的核销、
 // 还没有扣当天未记流水的计费量。
 type balanceView struct {
-	points int64
-	raw    int64
-	known  bool
-	stale  bool
+	points   int64
+	raw      int64
+	known    bool
+	stale    bool
+	syncedAt time.Time
 }
 
 // balancePoints 读余额副本并算出可用积分：副本减去还没有反映的核销，再减去当天
@@ -533,9 +570,10 @@ func (s *Store) balancePoints(ctx context.Context, q *db.Queries, userID string,
 		unbilled = max(chargeableTokens(used, limit)-charged, 0)
 	}
 	view := balanceView{
-		raw:   max(balance.RemainingPoints-unreflected, 0),
-		known: true,
-		stale: time.Since(balance.SyncedAt.Time) > nowpay.BalanceRefreshAfter,
+		raw:      max(balance.RemainingPoints-unreflected, 0),
+		known:    true,
+		stale:    time.Since(balance.SyncedAt.Time) > nowpay.BalanceRefreshAfter,
+		syncedAt: balance.SyncedAt.Time,
 	}
 	view.points = view.raw
 	if unbilled > 0 {

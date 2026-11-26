@@ -1700,8 +1700,45 @@ $('#account-next').addEventListener('click', () => {
   loadAccounts();
 });
 
-// openQuota 先读单个账号，取得今天的已结算用量再打开弹窗；列表里的额度可能
-// 已经被另一次保存改过，打开时以服务端返回的覆盖值为准。
+// 积分一节只读：余额在支付宝一侧，服务端保存的是一份副本，后台可以刷新但不能
+// 补分、扣分或退款。没有开通收款、还没有副本与确实为零是三种不同的状态，文案分开。
+const pointChargeStatus = {
+  pending: ['待核销', 'warn'],
+  processing: ['处理中', 'warn'],
+  succeeded: ['已核销', 'ok'],
+  failed: ['失败', 'bad'],
+};
+
+function renderAccountPoints(points) {
+  const enabled = Boolean(points && points.enabled);
+  $('#quota-points-body').hidden = !enabled;
+  $('#quota-points-refresh').hidden = !enabled;
+  $('#quota-points-note').textContent = enabled
+    ? '只读：余额在支付宝一侧，扣减由即刻收完成。'
+    : '这个实例没有开通积分收款。';
+  if (!enabled) return;
+  $('#quota-points-remaining').textContent = points.remaining == null
+    ? '还没有同步' : number.format(points.remaining);
+  $('#quota-points-charged').textContent = number.format(points.charged_today || 0);
+  $('#quota-points-synced').textContent = points.synced_at ? moment(points.synced_at) : '—';
+  const body = $('#quota-points-charges');
+  body.replaceChildren();
+  const charges = points.charges || [];
+  for (const charge of charges) {
+    const [label, tone] = pointChargeStatus[charge.status] || [charge.status, 'muted'];
+    body.append(el('tr', {},
+      el('td', { class: 'nowrap' }, moment(charge.created_at) || charge.day),
+      el('td', { class: 'numeric' }, number.format(charge.points)),
+      el('td', { class: 'numeric' }, number.format(charge.billed_tokens)),
+      el('td', {}, el('span', { class: 'badge ' + tone }, label))));
+  }
+  const table = body.closest('table');
+  if (table) table.parentElement.hidden = charges.length === 0;
+  $('#quota-points-empty').hidden = charges.length > 0;
+}
+
+// openQuota 先读单个账号，取得今天的已结算用量与积分视图再打开弹窗；列表里的额度
+// 可能已经被另一次保存改过，打开时以服务端返回的覆盖值为准。
 async function openQuota(account) {
   try {
     const detail = await api('GET', '/accounts/' + encodeURIComponent(account.id));
@@ -1717,6 +1754,7 @@ async function openQuota(account) {
     $('#quota-chat-default').textContent = accountLimitText(detail.quota.default_daily_tokens);
     $('#quota-embedding-default').textContent = accountLimitText(detail.quota.default_embedding_daily_tokens);
     $('#quota-updated').textContent = detail.quota.updated_at ? '最近保存 ' + moment(detail.quota.updated_at) : '';
+    renderAccountPoints(detail.points);
     $('#quota-reset').disabled = detail.quota.daily_tokens_override == null &&
       detail.quota.embedding_daily_tokens_override == null && !detail.quota.note;
     clearError('quota-error');
@@ -1758,6 +1796,28 @@ $('#quota-form').addEventListener('submit', async (event) => {
     $('#quota-dialog').close();
     toast('额度已保存，下一次模型请求生效。');
   }, 'quota-error');
+});
+
+$('#quota-points-refresh').addEventListener('click', async () => {
+  if (!accountQuotaAccount) return;
+  const button = $('#quota-points-refresh');
+  if (button.disabled) return;
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = '刷新中…';
+  clearError('quota-error');
+  try {
+    const points = await api('POST',
+      '/accounts/' + encodeURIComponent(accountQuotaAccount.id) + '/points/refresh');
+    accountQuotaAccount.points = points;
+    renderAccountPoints(points);
+    toast('余额已刷新。');
+  } catch (err) {
+    showError('quota-error', err.message);
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
 });
 
 $('#quota-reset').addEventListener('click', async () => {

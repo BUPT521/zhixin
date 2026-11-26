@@ -39,6 +39,12 @@ type Quota interface {
 	// 标记：没有开通收款时都给不出，余额副本还没建好或账号还没有副本时只给已核销
 	// 积分，接口据此分别决定哪个字段回 null，见 ADR-0073。
 	Points(ctx context.Context, userID, day string) (Points, error)
+	// PointCharges 返回账号最近的核销流水，新到旧，供管理后台查看；没有开通收款时
+	// 返回空。只读，不改变流水状态。
+	PointCharges(ctx context.Context, userID string, limit int) ([]PointCharge, error)
+	// RefreshPoints 同步查询一次即刻收的余额并覆盖本地副本，供管理后台的“刷新余额”
+	// 使用；没有开通收款时返回 false，表示这次没有查询。
+	RefreshPoints(ctx context.Context, userID string) (bool, error)
 
 	// QuotaOverrides 批量读取管理后台用到的额度覆盖行。它只返回有覆盖的账号，
 	// 没有出现说明这一类额度走实例默认值；一次读回一页账号，避免逐行查询。
@@ -59,14 +65,29 @@ type QuotaOverride struct {
 	UpdatedAt            time.Time
 }
 
-// Points 是账号的积分视图，用于账号页展示。Charged 是当天已经落库成功的核销，
-// Remaining 是可用积分，与额度放行用同一个口径。ChargedKnown 为真表示收款已经
-// 开通、Charged 有效；RemainingKnown 为真表示余额副本可用、Remaining 有效。
+// Points 是账号的积分视图，用于账号页与管理后台展示。Charged 是当天已经落库成功
+// 的核销，Remaining 是可用积分，与额度放行用同一个口径。ChargedKnown 为真表示收款
+// 已经开通、Charged 有效；RemainingKnown 为真表示余额副本可用、Remaining 有效。
+// SyncedAt 是这份副本对应的快照时刻，零值表示没有副本。
 type Points struct {
 	Charged        int64
 	Remaining      int64
 	ChargedKnown   bool
 	RemainingKnown bool
+	SyncedAt       time.Time
+}
+
+// PointCharge 是一笔积分核销流水在管理后台的视图。ID 同时是提交给即刻收的
+// out_request_no；BilledTokens 是这次申请对应的计费 token 数。它只读，后台不提供
+// 撤销或补扣。
+type PointCharge struct {
+	ID           string
+	Day          time.Time
+	Points       int64
+	BilledTokens int64
+	Status       string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // ErrQuotaExceeded 表示账号当日额度或实例总预算不足；代理据此回 429
@@ -264,6 +285,17 @@ func (m *MemoryQuota) InstanceUsed(_ context.Context, day string) (int64, error)
 // Points 在内存实现里没有积分：本地联调不配即刻收，返回未知，接口不回这两个数。
 func (m *MemoryQuota) Points(context.Context, string, string) (Points, error) {
 	return Points{}, nil
+}
+
+// PointCharges 在内存实现里没有积分流水：本地联调不配即刻收，后台的积分一节只显示
+// 没有开通收款。
+func (m *MemoryQuota) PointCharges(context.Context, string, int) ([]PointCharge, error) {
+	return nil, nil
+}
+
+// RefreshPoints 在内存实现里没有余额可查，报告没有开通收款。
+func (m *MemoryQuota) RefreshPoints(context.Context, string) (bool, error) {
+	return false, nil
 }
 
 // instancePortion 返回一次预留里应当记进实例账本的计费 token 数：只有免费额度

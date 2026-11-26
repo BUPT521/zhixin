@@ -331,6 +331,11 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .account-usage { display: flex; gap: 24px; margin: 0; }
 .account-usage dt { color: var(--muted); font-size: 12px; }
 .account-usage dd { margin: 2px 0 0; font-variant-numeric: tabular-nums; }
+.points-table { table-layout: fixed; }
+.points-table th:nth-child(1) { width: 34%; }
+.points-table th:nth-child(2) { width: 16%; }
+.points-table th:nth-child(3) { width: 26%; }
+.points-table th:nth-child(4) { width: 24%; }
 .feedback-facts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));

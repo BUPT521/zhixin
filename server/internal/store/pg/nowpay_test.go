@@ -40,6 +40,9 @@ type fakeRecorder struct {
 	perPoint  int64
 	refreshed []string
 	charged   []int64
+	// queried 记下管理后台“刷新余额”同步查询过的账号；queryErr 模拟即刻收不可用。
+	queried  []string
+	queryErr error
 	// coalesced 为真时 RefreshBalance 报告这次没有入队，模拟一分钟合并窗口里的
 	// 重复请求。
 	coalesced bool
@@ -54,6 +57,13 @@ func (f *fakeRecorder) Resume(context.Context, string) {}
 func (f *fakeRecorder) RefreshBalance(_ context.Context, userID string) bool {
 	f.refreshed = append(f.refreshed, userID)
 	return !f.coalesced
+}
+
+// QueryBalance 让管理后台的“刷新余额”在这个假执行器上也能通过：它记下被同步查询
+// 的账号，余额副本由测试自己写。
+func (f *fakeRecorder) QueryBalance(_ context.Context, userID string) error {
+	f.queried = append(f.queried, userID)
+	return f.queryErr
 }
 
 func (f *fakeRecorder) TokensPerPoint() int64 { return f.perPoint }
@@ -262,6 +272,79 @@ func TestPostgresPointsView(t *testing.T) {
 	// 5 个积分减去还在途的 1 个；已经成功的那 2 个也在副本同步之后，一并扣掉。
 	if points.Remaining != 2 {
 		t.Fatalf("剩余积分应为 2，得到 %+v", points)
+	}
+}
+
+// TestPostgresPointsAdminView 守住管理后台的积分只读视图：最近流水按时间倒序、
+// 余额副本带出快照时刻，以及“刷新余额”确实同步查询了一次即刻收；查询失败原样
+// 返回，副本不动。
+func TestPostgresPointsAdminView(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	// 没有配置即刻收时没有流水，也没有余额可查。
+	if charges, err := st.PointCharges(ctx, "u1", 5); err != nil || len(charges) != 0 {
+		t.Fatalf("未开通收款时不应有流水: %+v %v", charges, err)
+	}
+	if enabled, err := st.RefreshPoints(ctx, "u1"); err != nil || enabled {
+		t.Fatalf("未开通收款时不应查询余额: %v %v", enabled, err)
+	}
+
+	recorder := &fakeRecorder{perPoint: 1000}
+	enablePaidQuota(t, st)
+	st.SetNowPay(recorder)
+	for i, charge := range []struct {
+		id, status string
+		points     int64
+		tokens     int64
+	}{
+		{"nc_1", nowpay.StatusSucceeded, 2, 2000},
+		{"nc_2", nowpay.StatusFailed, 1, 1000},
+		{"nc_3", nowpay.StatusPending, 3, 3000},
+	} {
+		if _, err := st.pool.Exec(ctx,
+			`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
+			 VALUES ($1, 'u1', $2::date, $3, $4, $5, now() - make_interval(mins => $6::int), now())`,
+			charge.id, day, charge.points, charge.tokens, charge.status, 10-i); err != nil {
+			t.Fatalf("insert charge: %v", err)
+		}
+	}
+	charges, err := st.PointCharges(ctx, "u1", 2)
+	if err != nil {
+		t.Fatalf("charges: %v", err)
+	}
+	if len(charges) != 2 || charges[0].ID != "nc_3" || charges[1].ID != "nc_2" {
+		t.Fatalf("最近两条流水应新到旧: %+v", charges)
+	}
+	if charges[0].Points != 3 || charges[0].BilledTokens != 3000 || charges[0].Status != nowpay.StatusPending ||
+		charges[0].Day.Format("2006-01-02") != day {
+		t.Fatalf("流水字段: %+v", charges[0])
+	}
+
+	synced := time.Now().Add(-30 * time.Second)
+	if err := st.SaveBalance(ctx, "u1", 7, synced); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	points, err := st.Points(ctx, "u1", day)
+	if err != nil {
+		t.Fatalf("points: %v", err)
+	}
+	if !points.RemainingKnown || points.Remaining != 7 || points.SyncedAt.IsZero() {
+		t.Fatalf("副本与快照时刻: %+v", points)
+	}
+
+	if enabled, err := st.RefreshPoints(ctx, "u1"); err != nil || !enabled {
+		t.Fatalf("刷新余额: %v %v", enabled, err)
+	}
+	if len(recorder.queried) != 1 || recorder.queried[0] != "u1" {
+		t.Fatalf("刷新余额应同步查询一次: %+v", recorder.queried)
+	}
+	recorder.queryErr = errors.New("gateway down")
+	if enabled, err := st.RefreshPoints(ctx, "u1"); !enabled || err == nil {
+		t.Fatalf("查询失败应原样返回: %v %v", enabled, err)
 	}
 }
 

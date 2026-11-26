@@ -357,8 +357,8 @@
   <form id="quota-form" method="dialog">
     <header class="dialog-head">
       <div class="dialog-heading">
-        <h2 id="quota-title">调整每日额度</h2>
-        <p id="quota-desc" class="dialog-sub">额度按计费 token 计，保存之后下一次模型请求生效。</p>
+        <h2 id="quota-title">额度与积分</h2>
+        <p id="quota-desc" class="dialog-sub">额度按计费 token 计，保存之后下一次模型请求生效；积分只读，扣减由即刻收完成。</p>
       </div>
       <button type="button" class="icon-button" data-close="quota-dialog" aria-label="关闭">×</button>
     </header>
@@ -370,6 +370,29 @@
           <div><dt>嵌入今日</dt><dd id="quota-embedding-used"></dd></div>
         </dl>
       </div>
+      <section class="form-section" aria-labelledby="quota-points-title">
+        <div class="section-head">
+          <div>
+            <h3 id="quota-points-title">积分</h3>
+            <p class="field-hint" id="quota-points-note"></p>
+          </div>
+          <button type="button" class="ghost" id="quota-points-refresh">刷新余额</button>
+        </div>
+        <div id="quota-points-body">
+          <dl class="account-usage">
+            <div><dt>可用积分</dt><dd id="quota-points-remaining"></dd></div>
+            <div><dt>今日已扣</dt><dd id="quota-points-charged"></dd></div>
+            <div><dt>副本同步</dt><dd id="quota-points-synced"></dd></div>
+          </dl>
+          <div class="scroll" role="region" aria-labelledby="quota-points-title" tabindex="0">
+            <table class="grid points-table">
+              <thead><tr><th scope="col">时间</th><th scope="col">积分</th><th scope="col">计费 Token</th><th scope="col">状态</th></tr></thead>
+              <tbody id="quota-points-charges"></tbody>
+            </table>
+          </div>
+          <p class="hint" id="quota-points-empty" hidden>最近没有核销流水。</p>
+        </div>
+      </section>
       <section class="form-section">
         <div class="field-row">
           <label>聊天每日额度

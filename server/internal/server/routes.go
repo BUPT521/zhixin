@@ -233,6 +233,9 @@ func (rt routes) PutAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Reques
 func (rt routes) DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request, id string) {
 	rt.accounts.DeleteQuota(w, r, id)
 }
+func (rt routes) PostAdminV1AccountsIdPointsRefresh(w http.ResponseWriter, r *http.Request, id string) {
+	rt.accounts.RefreshPoints(w, r, id)
+}
 
 func (rt routes) GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1KeyUsageParams) {
 	rt.llmAdmin.KeyUsage(w, r, params)

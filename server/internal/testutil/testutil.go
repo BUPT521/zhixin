@@ -239,6 +239,9 @@ func (Base) PutAdminV1AccountsIdQuota(w http.ResponseWriter, _ *http.Request, _ 
 func (Base) DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) PostAdminV1AccountsIdPointsRefresh(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) GetAdminV1KeyUsage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1KeyUsageParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
