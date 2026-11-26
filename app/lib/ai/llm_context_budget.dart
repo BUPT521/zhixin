@@ -1,10 +1,15 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
-import 'llm_client.dart';
 import 'llm_config.dart';
+import 'llm_protocol.dart';
 
 /// 兼容接口没有共用 tokenizer，按实际进入请求的内容估算输入。
+///
+/// 条目计数与服务端 `estimateChatInput` 一致：请求体固定 32，每条输入条目带 16 的
+/// 包装，带工具调用的助手消息在线格式里额外展开成若干 `function_call` 条目（各带
+/// 16 的包装与 20 的调用开销），工具结果按实际发送的 JSON 文本估算。`tools` 为空时
+/// 请求里不出现这个字段，这里也不计。
 class LlmContextBudget {
   const LlmContextBudget(this.config);
 
@@ -20,19 +25,24 @@ class LlmContextBudget {
   int fixedTokens(String system, List<LlmTool> tools) =>
       32 +
       estimateLlmTextTokens(system) +
-      estimateLlmTextTokens(
-        jsonEncode(tools.map((tool) => tool.toJson()).toList()),
-      );
+      (tools.isEmpty
+          ? 0
+          : estimateLlmTextTokens(
+              jsonEncode(tools.map((tool) => tool.toJson()).toList()),
+            ));
 
   int messageTokens(LlmMessage message) =>
       16 +
-      estimateLlmTextTokens(message.content) +
+      (message.toolCallId == null
+          ? estimateLlmTextTokens(message.content)
+          : estimateLlmTextTokens(toolResultWireText(message))) +
       (message.images.length * 2048) +
       estimateLlmTextTokens(message.toolCallId ?? '') +
       message.toolCalls.fold<int>(
         0,
         (total, call) =>
             total +
+            16 +
             20 +
             estimateLlmTextTokens(call.id) +
             estimateLlmTextTokens(call.name) +

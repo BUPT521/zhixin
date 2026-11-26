@@ -176,6 +176,12 @@ Map<String, Object?> responsesBody({
   };
 }
 
+/// 工具结果在请求里的 `output` 文本：当场执行的工具按结果编码成 JSON，讨论历史里
+/// 保存的原文原样发送。估算输入时也用这一份，客户端与服务端读到的才是同一段文字。
+String toolResultWireText(LlmMessage message) => message.compileArgs
+    ? jsonEncode(_toolOutput(message.content))
+    : message.content;
+
 /// 一条消息展开成请求里的条目：工具结果单独成条，其余按角色生成 `message`，
 /// 助手消息发起的工具调用跟在正文之后。
 ///
@@ -188,9 +194,7 @@ List<Map<String, Object?>> _items(LlmMessage message) {
       {
         'type': 'function_call_output',
         'call_id': id,
-        'output': message.compileArgs
-            ? jsonEncode(_toolOutput(message.content))
-            : message.content,
+        'output': toolResultWireText(message),
       },
     ];
   }
