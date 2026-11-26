@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
@@ -9,12 +10,14 @@ import 'application/sync_service.dart' show syncScopeFor;
 import 'data/cloud/account_store.dart';
 import 'data/cloud/cloud_preferences_store.dart';
 import 'data/cloud/server_client.dart' show ServerClient;
+import 'data/cloud/telemetry_store.dart';
 import 'data/diagnostics/crash_log.dart';
 import 'platform/app_license.dart';
 import 'platform/app_paths.dart';
 import 'platform/diagnostics_store.dart';
 import 'platform/first_frame.dart';
 import 'platform/legacy_layout.dart';
+import 'platform/onboarding_store.dart';
 import 'platform/prompt_assets.dart';
 import 'platform/secure_secret_store.dart';
 import 'platform/theme_accent_store.dart';
@@ -46,12 +49,42 @@ Future<void> main() async {
   // 提示词在启动时读一次；读取失败只影响模型回答，本机功能照常可用。
   await _loadPromptText(crashLog);
   final spaces = paths == null ? null : AppSpaces(paths);
-  final spaceId = spaces == null
-      ? AppSpaces.local
-      : await _readOrNull(() => _openStartupSpace(spaces)) ?? AppSpaces.local;
+  final opened = spaces == null
+      ? null
+      : await _readOrNull(() => _openStartupSpace(spaces));
+  final spaceId = opened?.id ?? AppSpaces.local;
   final appearance = spaces == null
       ? null
       : await _loadAppearance(spaces.pathsFor(spaceId));
+  // 引导状态存在设备级位置（ADR-0077）：完成标记、同意的须知版本与是否同意
+  // 三项都在根目录的小文件里，不随本机空间切换。
+  final onboardingStore = paths == null
+      ? null
+      : OnboardingStore(paths.filesDir);
+  final onboarding = onboardingStore == null
+      ? null
+      : await _readOrNull(onboardingStore.read) ?? const OnboardingRecord();
+  final telemetry = paths == null
+      ? null
+      : await _readOrNull(() async {
+          final store = TelemetryStore(filesDir: paths.filesDir);
+          return (
+            enabled: await store.enabled(),
+            seen: await store.noticeSeen(),
+          );
+        });
+  // 老用户升级：没有完成标记，但已经登录、本机库非空或已经看过匿名统计说明，
+  // 只补第一步。本机库按数据库文件是否已经存在判断，引导本身不读库。
+  final existingUser =
+      spaces != null &&
+      paths != null &&
+      await _looksLikeExistingUser(
+        spaces,
+        spaceId,
+        signedIn: opened?.signedIn ?? false,
+        filesDir: paths.filesDir,
+        noticeSeen: telemetry?.seen ?? false,
+      );
   final reporting =
       paths != null &&
       await DiagnosticsStore(paths.filesDir).read(fallback: !kReleaseMode);
@@ -64,6 +97,11 @@ Future<void> main() async {
       themeAccent: appearance?.themeAccent,
       spaces: spaces,
       spaceId: spaceId,
+      onboardingStore: onboardingStore,
+      onboardingRecord: onboarding,
+      existingUser: existingUser,
+      signedIn: opened?.signedIn ?? false,
+      telemetryEnabled: telemetry?.enabled ?? true,
     ),
   );
 
@@ -88,7 +126,7 @@ Future<void> main() async {
   }, appRunner: run);
 }
 
-Future<String> _openStartupSpace(AppSpaces spaces) async {
+Future<({String id, bool signedIn})> _openStartupSpace(AppSpaces spaces) async {
   final previous = await spaces.lastOpened();
   final preferences = CloudPreferencesStore(filesDir: spaces.device.filesDir);
   final origin = ServerClient.originOf(await preferences.serverBaseUrl());
@@ -97,9 +135,8 @@ Future<String> _openStartupSpace(AppSpaces spaces) async {
   final profile = session == null
       ? null
       : await accounts.readProfile(origin: origin);
-  final id = session == null || session.isExpired
-      ? AppSpaces.local
-      : syncScopeFor(session.userId, origin);
+  final signedIn = session != null && !session.isExpired;
+  final id = !signedIn ? AppSpaces.local : syncScopeFor(session.userId, origin);
   await spaces.open(
     id,
     adoptLocal: previous == AppSpaces.local,
@@ -108,7 +145,26 @@ Future<String> _openStartupSpace(AppSpaces spaces) async {
         ? null
         : '${profile.displayLabel} · ${Uri.parse(origin).authority}',
   );
-  return id;
+  return (id: id, signedIn: signedIn);
+}
+
+/// 升级前是否已经用过知新。
+///
+/// 引导本身不读数据库：已登录、本机库文件已经存在或已经看过匿名统计说明，都
+/// 说明这台设备以前用过应用，只让用户补第一步。全新安装时这三项都不成立。
+Future<bool> _looksLikeExistingUser(
+  AppSpaces spaces,
+  String spaceId, {
+  required bool signedIn,
+  required String filesDir,
+  required bool noticeSeen,
+}) async {
+  if (signedIn || noticeSeen) return true;
+  try {
+    return File(spaces.pathsFor(spaceId).dbPath).existsSync();
+  } catch (_) {
+    return false;
+  }
 }
 
 /// 删除 0.2.0 留在应用私有目录根下的学习数据。

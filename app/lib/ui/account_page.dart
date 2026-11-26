@@ -15,13 +15,14 @@ import '../application/sync_service.dart';
 import '../data/cloud/account_store.dart' show AccountIdentity;
 import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
 import 'account_dialogs.dart';
+import 'account_login_form.dart';
+import 'navigation.dart';
 import 'quota_purchase_panel.dart';
 import 'quota_text.dart';
 import 'cloud_sync_prompts.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
-import 'navigation.dart';
 import 'zhixin_header.dart';
 import 'workspace_widgets.dart';
 
@@ -37,7 +38,22 @@ typedef _AccountPrewarm = ({
 /// 账号是可选项：不登录时应用完全在本机运行；登录之后才开启云端备份、按提交
 /// 的增量同步与“知新服务”模型来源（ADR-0008）。
 class AccountPage extends StatefulWidget {
-  const AccountPage({super.key});
+  const AccountPage({
+    super.key,
+    this.initialReset = false,
+    this.initialIdentifier = '',
+  });
+
+  /// 打开时直接显示找回密码的表单，不再显示登录卡与账号页的其他区块。
+  ///
+  /// 首次启动引导的“忘记密码”走这里：用户点一次就落在重设表单上，不必进了
+  /// 账号页再找一次入口，也看不到设备名册、云端数据与退出登录这些与引导无关
+  /// 的内容。
+  final bool initialReset;
+
+  /// 找回密码表单预填的邮箱；为空时留空。引导第二步已经填过邮箱，带过来省一次
+  /// 输入。
+  final String initialIdentifier;
 
   @override
   State<AccountPage> createState() => _AccountPageState();
@@ -45,7 +61,6 @@ class AccountPage extends StatefulWidget {
 
 class _AccountPageState extends State<AccountPage> {
   final _identifier = TextEditingController();
-  final _password = TextEditingController();
   final _verifyCode = TextEditingController();
   final _resetCode = TextEditingController();
   final _newPassword = TextEditingController();
@@ -79,6 +94,15 @@ class _AccountPageState extends State<AccountPage> {
   bool _started = false;
 
   @override
+  void initState() {
+    super.initState();
+    _showReset = widget.initialReset;
+    if (widget.initialIdentifier.isNotEmpty) {
+      _identifier.text = widget.initialIdentifier;
+    }
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_started) return;
@@ -100,7 +124,6 @@ class _AccountPageState extends State<AccountPage> {
   void dispose() {
     _resendTicker?.cancel();
     _identifier.dispose();
-    _password.dispose();
     _verifyCode.dispose();
     _resetCode.dispose();
     _newPassword.dispose();
@@ -168,58 +191,22 @@ class _AccountPageState extends State<AccountPage> {
     });
   }
 
-  Future<void> _submit({required bool register}) async {
-    if (_busy) return;
+  /// 登录表单成功之后收尾：本机模式下登录会换空间，整棵子树重建，这一页随之
+  /// 卸载，不再改它的状态；不换空间时报告成功并重读账号。
+  Future<void> _signedIn(
+    AccountSnapshot result, {
+    required bool register,
+  }) async {
+    if (!mounted) return;
+    if (AppScope.of(context).managesSpaces) return;
+    _codeSent = false;
+    _showReset = false;
     final identifier = _identifier.text.trim();
-    final password = _password.text;
-    if (identifier.isEmpty || password.isEmpty) {
-      _report('填写邮箱与密码后再继续', failed: true);
-      return;
-    }
-    if (password.length < 8) {
-      _report('密码至少 8 位', failed: true);
-      return;
-    }
-    setState(() => _busy = true);
-    final scope = AppScope.of(context);
-    try {
-      final account = scope.accountServices.account;
-      final result = register
-          ? await account.register(identifier: identifier, password: password)
-          : await account.login(identifier: identifier, password: password);
-      if (!mounted || scope.managesSpaces) return;
-      _password.clear();
-      // 登录之后是“确认登录方式”的流程，找回密码那一套的验证码状态要清掉。
-      _codeSent = false;
-      _showReset = false;
-      await scope.accountServices.sync.schedule(
-        delay: const Duration(seconds: 1),
-      );
-      _report(
-        '${register ? '注册并登录' : '登录'}成功：${result.displayLabel.isEmpty ? identifier : result.displayLabel}；'
-        '云端备份与知新服务已经可用，需要时点“立即同步”把本机记录同步到这个账号',
-      );
-      await _load();
-    } on FormatException catch (error) {
-      if (!mounted) return;
-      _report(error.message, failed: true);
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: register ? '注册' : '登录',
-          kind: 'account_login',
-          kept: '本机记录没有改动',
-          next: '可以检查邮箱、密码与服务地址后重试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    _report(
+      '${register ? '注册并登录' : '登录'}成功：${result.displayLabel.isEmpty ? identifier : result.displayLabel}；'
+      '云端备份与知新服务已经可用，需要时点“立即同步”把本机记录同步到这个账号',
+    );
+    await _load();
   }
 
   /// 需要确认的第一条登录方式；都确认过时为 null。
@@ -417,7 +404,6 @@ class _AccountPageState extends State<AccountPage> {
         code: code,
         newPassword: password,
       );
-      _password.clear();
       _newPassword.clear();
       _resetCode.clear();
       _codeSent = false;
@@ -872,7 +858,7 @@ class _AccountPageState extends State<AccountPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     return DetailScaffold(
-      header: const ZhixinHeader(title: Text('账号与云同步'), showBack: true),
+      header: ZhixinHeader(title: Text(_title), showBack: true),
       // 首读期间保留标题栏，内容用与卡片同高的骨架占位。
       child: _loading
           ? ListView(
@@ -883,10 +869,22 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  /// 从引导直接打开找回密码：只留这一张卡，不显示本机空间、账号状态与页尾说明。
+  bool get _focusedReset => widget.initialReset && !_isSignedIn;
+
+  bool get _isSignedIn => _snapshot?.signedIn ?? false;
+
+  /// 从引导打开时标题跟着卡片走；正常从“我的”进来仍是账号与云同步。
+  String get _title {
+    if (!widget.initialReset) return '账号与云同步';
+    return _showReset ? '找回密码' : '登录或注册';
+  }
+
   Widget _content(BuildContext context) {
     final theme = context.zhixin;
     final snapshot = _snapshot;
     final signedIn = snapshot?.signedIn ?? false;
+    final focused = _focusedReset;
     return ListView(
       padding: theme.space.pageInsets(bottom: 96),
       children: [
@@ -897,15 +895,17 @@ class _AccountPageState extends State<AccountPage> {
                   padding: EdgeInsets.only(bottom: theme.space.md),
                   child: Text(_notice!, style: theme.text.bodySmall),
                 ),
-        if (_spaces.isNotEmpty) ..._localSpaces(context),
+        if (!focused && _spaces.isNotEmpty) ..._localSpaces(context),
         if (!signedIn) ..._loggedOut(context),
         if (signedIn) ..._loggedIn(context, snapshot!),
-        SizedBox(height: theme.space.md),
-        Text(
-          '学习记录默认保存在本机，登录之后才会使用服务端的备份、同步与模型代理；'
-          '调用模型时只发送当次所需内容。令牌只保存在这台设备的 Keystore 里。',
-          style: theme.text.bodySmall,
-        ),
+        if (!focused) ...[
+          SizedBox(height: theme.space.md),
+          Text(
+            '学习记录默认保存在本机，登录之后才会使用服务端的备份、同步与模型代理；'
+            '调用模型时只发送当次所需内容。令牌只保存在这台设备的 Keystore 里。',
+            style: theme.text.bodySmall,
+          ),
+        ],
       ],
     );
   }
@@ -963,6 +963,9 @@ class _AccountPageState extends State<AccountPage> {
 
   List<Widget> _loggedOut(BuildContext context) {
     final theme = context.zhixin;
+    // 本机模式（首次启动时选了“不同意”）下不提供登录入口：登录会把内容发到
+    // 服务端，先要把用户须知与隐私政策同意回来。
+    if (!AppScope.of(context).networkAllowed) return _localModeOnly(context);
     return [
       SectionHeading(
         title: _showReset ? '找回密码' : '登录或注册',
@@ -979,107 +982,119 @@ class _AccountPageState extends State<AccountPage> {
       forui.FCard(
         child: Padding(
           padding: EdgeInsets.all(theme.space.lg),
+          child: _showReset ? _resetForm(context) : _loginForm(context),
+        ),
+      ),
+    ];
+  }
+
+  /// 登录卡：与首次启动引导第二步共用同一个表单。
+  Widget _loginForm(BuildContext context) => AccountLoginForm(
+    identifier: _identifier,
+    onSignedIn: _signedIn,
+    onForgotPassword: () {
+      setState(() {
+        _showReset = true;
+        _codeSent = false;
+        _clearResendCooldown();
+      });
+      _report('先点“发送验证码”，再填写邮件里的六位数字');
+    },
+  );
+
+  /// 找回密码的表单；邮箱与登录卡共用同一个输入框控制器。
+  Widget _resetForm(BuildContext context) {
+    final theme = context.zhixin;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        forui.FTextField(
+          control: .managed(controller: _identifier),
+          keyboardType: TextInputType.emailAddress,
+          label: const Text('邮箱'),
+        ),
+        SizedBox(height: theme.space.gap),
+        if (_codeSent) ...[
+          forui.FTextField(
+            control: .managed(controller: _resetCode),
+            keyboardType: TextInputType.number,
+            label: const Text('邮件里的六位验证码'),
+          ),
+          SizedBox(height: theme.space.gap),
+          forui.FTextField(
+            control: .managed(controller: _newPassword),
+            obscureText: true,
+            label: const Text('新密码（至少 8 位）'),
+          ),
+          SizedBox(height: theme.space.md),
+        ],
+        Wrap(
+          spacing: theme.space.sm,
+          runSpacing: theme.space.sm,
+          children: [
+            _sendCodeButton(send: _sendResetCode),
+            if (_codeSent)
+              forui.FButton(
+                variant: forui.FButtonVariant.outline,
+                mainAxisSize: MainAxisSize.min,
+                onPress: _busy ? null : _resetPassword,
+                child: const Text('重设密码'),
+              ),
+            forui.FButton(
+              variant: forui.FButtonVariant.ghost,
+              mainAxisSize: MainAxisSize.min,
+              onPress: _busy
+                  ? null
+                  : () => setState(() {
+                      _showReset = false;
+                      _codeSent = false;
+                      _clearResendCooldown();
+                      _resetCode.clear();
+                      _newPassword.clear();
+                    }),
+              child: const Text('返回登录'),
+            ),
+          ],
+        ),
+        if (_codeSent) ...[
+          SizedBox(height: theme.space.sm),
+          Text(
+            '没收到先看垃圾邮件；同一条登录方式一分钟内只能发一封，反复重发要等几小时。',
+            style: theme.text.bodySmall.copyWith(
+              color: theme.colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// 本机模式下账号页的替代内容：说明现在停用了哪些联网功能，并给同意入口。
+  List<Widget> _localModeOnly(BuildContext context) {
+    final theme = context.zhixin;
+    return [
+      const SectionHeading(
+        title: '登录或注册',
+        first: true,
+        subtitle: '首次启动时选择了仅在本机使用；同意用户须知与隐私政策之后才能登录。',
+      ),
+      forui.FCard(
+        child: Padding(
+          padding: EdgeInsets.all(theme.space.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              forui.FTextField(
-                control: .managed(controller: _identifier),
-                keyboardType: TextInputType.emailAddress,
-                label: const Text('邮箱'),
+              Text(
+                '现在匿名使用统计、更新检查与登录都已停用，学习记录、材料、查找、'
+                '导出与恢复照常可用。',
+                style: theme.text.bodyMedium,
               ),
-              SizedBox(height: theme.space.gap),
-              if (!_showReset) ...[
-                forui.FTextField(
-                  control: .managed(controller: _password),
-                  obscureText: true,
-                  label: const Text('密码（至少 8 位）'),
-                ),
-                SizedBox(height: theme.space.md),
-                Wrap(
-                  spacing: theme.space.sm,
-                  runSpacing: theme.space.sm,
-                  children: [
-                    forui.FButton(
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : () => _submit(register: false),
-                      child: const Text('登录'),
-                    ),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.outline,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : () => _submit(register: true),
-                      child: const Text('注册'),
-                    ),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy
-                          ? null
-                          : () {
-                              setState(() {
-                                _showReset = true;
-                                _codeSent = false;
-                                _clearResendCooldown();
-                              });
-                              _report('先点“发送验证码”，再填写邮件里的六位数字');
-                            },
-                      child: const Text('忘记密码'),
-                    ),
-                  ],
-                ),
-              ] else ...[
-                if (_codeSent) ...[
-                  forui.FTextField(
-                    control: .managed(controller: _resetCode),
-                    keyboardType: TextInputType.number,
-                    label: const Text('邮件里的六位验证码'),
-                  ),
-                  SizedBox(height: theme.space.gap),
-                  forui.FTextField(
-                    control: .managed(controller: _newPassword),
-                    obscureText: true,
-                    label: const Text('新密码（至少 8 位）'),
-                  ),
-                  SizedBox(height: theme.space.md),
-                ],
-                Wrap(
-                  spacing: theme.space.sm,
-                  runSpacing: theme.space.sm,
-                  children: [
-                    _sendCodeButton(send: _sendResetCode),
-                    if (_codeSent)
-                      forui.FButton(
-                        variant: forui.FButtonVariant.outline,
-                        mainAxisSize: MainAxisSize.min,
-                        onPress: _busy ? null : _resetPassword,
-                        child: const Text('重设密码'),
-                      ),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.ghost,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy
-                          ? null
-                          : () => setState(() {
-                              _showReset = false;
-                              _codeSent = false;
-                              _clearResendCooldown();
-                              _resetCode.clear();
-                              _newPassword.clear();
-                            }),
-                      child: const Text('返回登录'),
-                    ),
-                  ],
-                ),
-                if (_codeSent) ...[
-                  SizedBox(height: theme.space.sm),
-                  Text(
-                    '没收到先看垃圾邮件；同一条登录方式一分钟内只能发一封，反复重发要等几小时。',
-                    style: theme.text.bodySmall.copyWith(
-                      color: theme.colors.onSurfaceVariant,
-                    ),
-                  ),
-                ],
-              ],
+              SizedBox(height: theme.space.md),
+              forui.FButton(
+                mainAxisSize: MainAxisSize.max,
+                onPress: () => openUserTerms(context),
+                child: const Text('查看并同意用户须知'),
+              ),
             ],
           ),
         ),

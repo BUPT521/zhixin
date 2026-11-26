@@ -182,11 +182,15 @@ class AccountService {
       preferences.setDeveloperMode(enabled);
 
   /// 先用无凭据请求确认目标实例就绪且支持当前 schema，再切换服务实例。
+  ///
+  /// [requireDeveloperMode] 为真时要求先打开设置里的开发者模式；首次启动引导
+  /// 里的“使用自建服务”直接选实例，不再先让用户去设置里打开开关，传假。
   Future<void> configureServerBaseUrl(
     String value, {
     required int schemaVersion,
+    bool requireDeveloperMode = true,
   }) async {
-    if (!await developerMode()) {
+    if (requireDeveloperMode && !await developerMode()) {
       throw const AccountConfigException('请先开启开发者模式');
     }
     final epoch = _epoch;
@@ -215,7 +219,7 @@ class AccountService {
     } finally {
       candidate.dispose();
     }
-    if (!await developerMode()) {
+    if (requireDeveloperMode && !await developerMode()) {
       throw const AccountConfigException('请先开启开发者模式');
     }
     _ensureIdentityUnchanged(epoch);

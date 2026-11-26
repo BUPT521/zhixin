@@ -49,7 +49,7 @@ void main() {
     final source = File(navigation).readAsStringSync();
     final tabs = _tabPages(ui);
     for (final page in pages) {
-      if (p.basename(page.path) == 'home_shell.dart') continue;
+      if (_rootPages.contains(p.basename(page.path))) continue;
       if (tabs.contains(page.path)) continue;
       final className = _pageClass(page);
       expect(
@@ -66,6 +66,10 @@ void main() {
   });
 }
 
+/// 由应用根部直接摆放的页面：底栏四栏之外，首次启动引导也由应用根部决定显示，
+/// 不经过推入入口，因此不需要在 navigation.dart 里构造。
+const _rootPages = {'home_shell.dart', 'onboarding_page.dart'};
+
 /// 页面文件：文件名以 `_page.dart` 结尾，加上拼装底栏的 `home_shell.dart`。
 List<File> _pageFiles(Directory ui) => ui
     .listSync()
@@ -73,7 +77,7 @@ List<File> _pageFiles(Directory ui) => ui
     .where(
       (file) =>
           file.path.endsWith('_page.dart') ||
-          p.basename(file.path) == 'home_shell.dart',
+          _rootPages.contains(p.basename(file.path)),
     )
     .toList(growable: false);
 

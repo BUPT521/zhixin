@@ -18,10 +18,11 @@ import '../domain/rules/time_policy.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
 import '../platform/diagnostics_store.dart';
+import 'accent_picker.dart';
 import 'account_dialogs.dart';
 import 'failure_feedback.dart';
-import 'live_view.dart';
 import 'navigation.dart';
+import 'live_view.dart';
 import 'update_notice.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
@@ -812,7 +813,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   },
                 ),
                 const _CardDivider(),
-                _AccentPicker(
+                AccentPicker(
                   selected: AppScope.of(context).themeAccent.value,
                   onSelected: (accent) async {
                     try {
@@ -947,6 +948,18 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
         ),
         ?_resultFor(_Area.diagnostics),
+        SizedBox(height: theme.space.sm),
+        forui.FTile(
+          prefix: const LeadingIcon(FLucideIcons.shieldCheck),
+          title: const Text('用户须知与隐私政策'),
+          subtitle: Text(
+            AppScope.of(context).networkAllowed
+                ? '已同意当前版本；登录、云同步与自动检查更新可用。'
+                : '现在只在本机使用；同意之后恢复匿名上报、更新检查与登录。',
+          ),
+          suffix: const Icon(FLucideIcons.chevronRight),
+          onPress: () => openUserTerms(context),
+        ),
         const SectionHeading(title: '更新', subtitle: '有新版本时提示一次，不在应用内安装。'),
         forui.FTile(
           prefix: const LeadingIcon(FLucideIcons.refreshCw),
@@ -975,53 +988,6 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 }
 
-/// 主题色：一行六个圆形色块，选中的那个带对勾与外圈描边；点一下立即换色。
-///
-/// 色块画的是各主题色在浅色外观下的主色，点过之后整个应用的按钮、链接与
-/// 选中态一起换。无障碍标签写主题色名称，不写色值。
-class _AccentPicker extends StatelessWidget {
-  const _AccentPicker({required this.selected, required this.onSelected});
-
-  final ZhixinAccent selected;
-  final ValueChanged<ZhixinAccent> onSelected;
-
-  static const _swatchSize = 32.0;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.zhixin;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '主题色',
-          style: theme.text.labelLarge.copyWith(color: theme.colors.onSurface),
-        ),
-        SizedBox(height: theme.space.xs),
-        Text(
-          '只换按钮、链接、选中态与强调卡片的颜色，页面与卡片保持纯白或纯黑。',
-          style: theme.text.bodySmall.copyWith(
-            color: theme.colors.onSurfaceVariant,
-          ),
-        ),
-        SizedBox(height: theme.space.md),
-        Row(
-          children: [
-            for (final accent in ZhixinAccent.values)
-              Expanded(
-                child: _AccentSwatch(
-                  accent: accent,
-                  selected: accent == selected,
-                  onPressed: () => onSelected(accent),
-                ),
-              ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
 /// 同一张卡片里两组设置之间的分隔线：左右与卡片内容对齐，上下留一档间距。
 class _CardDivider extends StatelessWidget {
   const _CardDivider();
@@ -1034,60 +1000,6 @@ class _CardDivider extends StatelessWidget {
       child: SizedBox(
         height: 1,
         child: ColoredBox(color: theme.colors.outlineVariant),
-      ),
-    );
-  }
-}
-
-class _AccentSwatch extends StatelessWidget {
-  const _AccentSwatch({
-    required this.accent,
-    required this.selected,
-    required this.onPressed,
-  });
-
-  final ZhixinAccent accent;
-  final bool selected;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.zhixin.colors;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: '${accent.label}主题色',
-      excludeSemantics: true,
-      child: GestureDetector(
-        onTap: onPressed,
-        behavior: HitTestBehavior.opaque,
-        child: SizedBox(
-          height: 44,
-          child: Center(
-            child: Container(
-              width: _AccentPicker._swatchSize,
-              height: _AccentPicker._swatchSize,
-              decoration: BoxDecoration(
-                color: accent.light,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: selected ? colors.onSurface : colors.outlineVariant,
-                  width: selected ? 2 : 1,
-                ),
-              ),
-              // 对勾压在主色上：主色偏暗时用白，偏亮（深色的石墨）时用正文色。
-              child: selected
-                  ? Icon(
-                      Icons.check,
-                      size: 18,
-                      color: accent.light.computeLuminance() > 0.4
-                          ? colors.onSurface
-                          : const Color(0xFFFFFFFF),
-                    )
-                  : null,
-            ),
-          ),
-        ),
       ),
     );
   }
