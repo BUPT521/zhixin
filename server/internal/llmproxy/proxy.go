@@ -910,6 +910,14 @@ func stripClientHints(fields map[string]json.RawMessage) {
 	}
 }
 
+// upstreamErrorSnippet 取来源错误体的开头一小段，只用于日志。来源的拒绝原因
+// 通常写在这里（参数名、类型、越界值），不读出来就只能看到一句 upstream_failed；
+// 长度上限保证来源返回一页 HTML 时也不会把日志撑大。
+func upstreamErrorSnippet(body io.Reader) string {
+	b, _ := io.ReadAll(io.LimitReader(body, 300))
+	return strings.TrimSpace(string(b))
+}
+
 // retryable 报告这个状态码是否换下一个来源再试：限流、服务端错误、key 被拒与
 // 上游账户欠费都可能只是这个来源的问题；400、404、422 这类说明请求本身有问题，
 // 换来源也一样，直接返回给客户端。402 的含义见 httpFailure 与 ADR-0075。
@@ -1022,8 +1030,19 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			continue
 		}
 		if reply.status < 200 || reply.status >= 300 {
+			// 来源的拒绝原因只有来源自己的错误体里才有；不读出来，客户端只能看到
+			// 一句 upstream_failed，排查时无从下手。只取开头一小段，请求内容不进
+			// 日志（ADR-0052 的“请求体与响应体不记录”不因此改变）。
+			snippet := upstreamErrorSnippet(resp.Body)
 			resp.Body.Close()
 			reply.retryAfter = resp.Header.Get("Retry-After")
+			p.log.Warn("模型来源拒绝了请求",
+				slog.String("request_id", httpx.RequestIDFrom(ctx)),
+				slog.String("provider", rt.Provider.ID),
+				slog.String("upstream_model", rt.UpstreamModel),
+				slog.Int("status", reply.status),
+				slog.String("error", snippet),
+			)
 			p.finishAttempt(plan, attempt, attemptResult{unknown: rejectedUsage(reply.status) < 0, unbilled: true}, reply.status,
 				httpFailure(reply.status, reply.retryAfter))
 			if retryable(reply.status) {
