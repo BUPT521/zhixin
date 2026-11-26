@@ -47,6 +47,9 @@
     <button type="button" role="tab" id="nav-accounts" data-tab="accounts" aria-selected="false" aria-controls="tab-accounts" tabindex="-1">
       <span class="tab-icon icon-accounts" aria-hidden="true"></span>账号管理
     </button>
+    <button type="button" role="tab" id="nav-feedback" data-tab="feedback" aria-selected="false" aria-controls="tab-feedback" tabindex="-1">
+      <span class="tab-icon icon-feedback" aria-hidden="true"></span>反馈
+    </button>
   </nav>
 
 <main>
@@ -192,6 +195,31 @@
       <button id="account-prev" class="ghost" type="button">上一页</button>
       <span id="account-page" class="hint"></span>
       <button id="account-next" class="ghost" type="button">下一页</button>
+    </div>
+  </section>
+
+  <section id="tab-feedback" class="panel" role="tabpanel" aria-labelledby="nav-feedback" hidden>
+    <div class="panel-head">
+      <div class="panel-intro">
+        <h1 class="panel-title">应用内反馈</h1>
+        <p class="hint">用户从应用里提交的原话，不绑定账号。打开一条反馈可以看到附带的诊断摘要；保留期到期的反馈由每日清理删除，这里的删除只在需要提前清理时使用。</p>
+        <p id="feedback-summary" class="summary" aria-live="polite"></p>
+      </div>
+      <div class="panel-actions"><button id="refresh-feedback" class="ghost" type="button">刷新</button></div>
+    </div>
+    <div class="model-tools">
+      <input id="feedback-search" type="search" placeholder="搜索编号、正文、联系邮箱、版本或平台" aria-label="搜索反馈" autocomplete="off" spellcheck="false">
+      <span id="feedback-filter-count" class="hint" aria-live="polite"></span>
+    </div>
+    <p id="feedback-status" class="hint" role="status" hidden></p>
+    <div class="list-surface"><table class="grid feedback">
+      <thead><tr><th scope="col">提交时间</th><th scope="col">正文</th><th scope="col">联系邮箱</th><th scope="col" class="ops-head">操作</th></tr></thead>
+      <tbody id="feedback-rows"></tbody>
+    </table></div>
+    <div class="account-pager">
+      <button id="feedback-prev" class="ghost" type="button">上一页</button>
+      <span id="feedback-page" class="hint"></span>
+      <button id="feedback-next" class="ghost" type="button">下一页</button>
     </div>
   </section>
 
@@ -392,6 +420,39 @@
       <button type="submit" id="account-delete-submit" class="danger-solid">注销账号</button>
     </footer>
   </form>
+</dialog>
+
+<dialog id="feedback-dialog" class="wide" closedby="none" aria-labelledby="feedback-title" aria-describedby="feedback-desc">
+  <header class="dialog-head">
+    <div class="dialog-heading">
+      <h2 id="feedback-title">一条反馈</h2>
+      <p id="feedback-desc" class="dialog-sub">正文与诊断摘要由用户提交，服务端原样保存，不解析内容。</p>
+    </div>
+    <button type="button" class="icon-button" data-close="feedback-dialog" aria-label="关闭">×</button>
+  </header>
+  <div class="dialog-body">
+    <dl class="feedback-facts">
+      <div><dt>提交时间</dt><dd id="feedback-created"></dd></div>
+      <div><dt>版本</dt><dd id="feedback-version"></dd></div>
+      <div><dt>平台</dt><dd id="feedback-platform"></dd></div>
+      <div><dt>联系邮箱</dt><dd id="feedback-contact"></dd></div>
+      <div><dt>编号</dt><dd id="feedback-id" class="mono"></dd></div>
+    </dl>
+    <section class="form-section">
+      <h3>正文</h3>
+      <p id="feedback-content" class="feedback-text"></p>
+    </section>
+    <section class="form-section">
+      <h3>诊断摘要</h3>
+      <pre id="feedback-diagnostics" class="diagnostics"></pre>
+      <p id="feedback-no-diagnostics" class="hint" hidden>这条反馈没有附带诊断摘要。</p>
+    </section>
+    <p class="form-error" id="feedback-error" role="alert" hidden></p>
+  </div>
+  <footer class="dialog-actions">
+    <button type="button" id="feedback-delete" class="danger">删除这条反馈</button>
+    <button type="button" class="ghost" data-close="feedback-dialog">关闭</button>
+  </footer>
 </dialog>
 
 <dialog id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">

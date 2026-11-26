@@ -10,6 +10,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/backup"
 	"github.com/BUPT521/zhixin/server/internal/blobs"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
+	"github.com/BUPT521/zhixin/server/internal/feedbackadmin"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
@@ -23,17 +24,19 @@ import (
 // 这里只做转发，不看请求内容、不写响应：解码、校验、problem+json 与状态码仍在
 // 各处理器里，鉴权在 auth.Middleware。契约改了而这里没跟上时编译失败。
 type routes struct {
-	auth      *auth.Handler
-	sync      *syncsvc.Handler
-	backups   *backup.Handler
-	blobs     *blobs.Handler
-	llm       *llmproxy.Proxy
-	payments  *nowpay.Handler
-	llmAdmin  *llmproxy.Admin
-	accounts  *accountadmin.Admin
-	feedback  *feedback.Handler
-	release   *release.Handler
-	retention *retention.Handler
+	auth     *auth.Handler
+	sync     *syncsvc.Handler
+	backups  *backup.Handler
+	blobs    *blobs.Handler
+	llm      *llmproxy.Proxy
+	payments *nowpay.Handler
+	llmAdmin *llmproxy.Admin
+	accounts *accountadmin.Admin
+	feedback *feedback.Handler
+	// feedbackAdmin 是后台的反馈查看与删除，与公开的提交接口分开。
+	feedbackAdmin *feedbackadmin.Admin
+	release       *release.Handler
+	retention     *retention.Handler
 
 	// cloud 清空账号的云端数据；由 server.New 注入，见 DeleteV1Cloud。
 	cloud func(w http.ResponseWriter, r *http.Request)
@@ -233,6 +236,15 @@ func (rt routes) DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Req
 
 func (rt routes) GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1KeyUsageParams) {
 	rt.llmAdmin.KeyUsage(w, r, params)
+}
+func (rt routes) GetAdminV1Feedback(w http.ResponseWriter, r *http.Request, params api.GetAdminV1FeedbackParams) {
+	rt.feedbackAdmin.List(w, r, params)
+}
+func (rt routes) GetAdminV1FeedbackId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.feedbackAdmin.Get(w, r, id)
+}
+func (rt routes) DeleteAdminV1FeedbackId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.feedbackAdmin.Delete(w, r, id)
 }
 func (rt routes) PutAdminV1ModelsName(w http.ResponseWriter, r *http.Request, name string) {
 	rt.llmAdmin.PutModel(w, r, name)

@@ -11,6 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countFeedback = `-- name: CountFeedback :one
+SELECT count(*)::bigint
+FROM feedback AS f
+WHERE $1::text = ''
+   OR position(lower($1::text) in lower(f.id)) > 0
+   OR position(lower($1::text) in lower(f.content)) > 0
+   OR position(lower($1::text) in lower(f.contact)) > 0
+   OR position(lower($1::text) in lower(f.app_version)) > 0
+   OR position(lower($1::text) in lower(f.platform)) > 0
+`
+
+// 管理后台的关键字检索：编号、正文、联系邮箱、版本与平台，空值列出全部。与
+// 账号列表一样用 position(lower(...))，管理员输入的 % 与 _ 按普通字符匹配；
+// 反馈表上限一万行，全表扫描的代价可以接受。
+func (q *Queries) CountFeedback(ctx context.Context, query string) (int64, error) {
+	row := q.db.QueryRow(ctx, countFeedback, query)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const deleteFeedbackBefore = `-- name: DeleteFeedbackBefore :execrows
 DELETE FROM feedback WHERE created_at < $1
 `
@@ -23,6 +44,39 @@ func (q *Queries) DeleteFeedbackBefore(ctx context.Context, before pgtype.Timest
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteFeedbackByID = `-- name: DeleteFeedbackByID :execrows
+DELETE FROM feedback WHERE id = $1
+`
+
+func (q *Queries) DeleteFeedbackByID(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteFeedbackByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const feedbackByID = `-- name: FeedbackByID :one
+SELECT id, content, contact, app_version, platform, diagnostics, created_at
+FROM feedback
+WHERE id = $1
+`
+
+func (q *Queries) FeedbackByID(ctx context.Context, id string) (Feedback, error) {
+	row := q.db.QueryRow(ctx, feedbackByID, id)
+	var i Feedback
+	err := row.Scan(
+		&i.ID,
+		&i.Content,
+		&i.Contact,
+		&i.AppVersion,
+		&i.Platform,
+		&i.Diagnostics,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const feedbackCount = `-- name: FeedbackCount :one
@@ -72,4 +126,63 @@ func (q *Queries) InsertFeedback(ctx context.Context, arg InsertFeedbackParams) 
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const listFeedback = `-- name: ListFeedback :many
+SELECT f.id, f.content, f.contact, f.app_version, f.platform,
+       (f.diagnostics <> '') AS has_diagnostics, f.created_at
+FROM feedback AS f
+WHERE $1::text = ''
+   OR position(lower($1::text) in lower(f.id)) > 0
+   OR position(lower($1::text) in lower(f.content)) > 0
+   OR position(lower($1::text) in lower(f.contact)) > 0
+   OR position(lower($1::text) in lower(f.app_version)) > 0
+   OR position(lower($1::text) in lower(f.platform)) > 0
+ORDER BY f.created_at DESC, f.id
+LIMIT $3::int OFFSET $2::int
+`
+
+type ListFeedbackParams struct {
+	Query     string
+	RowOffset int32
+	RowLimit  int32
+}
+
+type ListFeedbackRow struct {
+	ID             string
+	Content        string
+	Contact        string
+	AppVersion     string
+	Platform       string
+	HasDiagnostics bool
+	CreatedAt      pgtype.Timestamptz
+}
+
+// 列表只带“有没有诊断摘要”，不把每条至多 64 KiB 的诊断摘要一起读出。
+func (q *Queries) ListFeedback(ctx context.Context, arg ListFeedbackParams) ([]ListFeedbackRow, error) {
+	rows, err := q.db.Query(ctx, listFeedback, arg.Query, arg.RowOffset, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFeedbackRow{}
+	for rows.Next() {
+		var i ListFeedbackRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Content,
+			&i.Contact,
+			&i.AppVersion,
+			&i.Platform,
+			&i.HasDiagnostics,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

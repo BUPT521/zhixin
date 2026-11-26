@@ -1215,6 +1215,84 @@ func TestPostgresFeedback(t *testing.T) {
 	}
 }
 
+// TestPostgresFeedbackAdmin 核对后台反馈查询的 SQL 口径：按提交时间倒序、
+// 关键字覆盖编号与其余五个字段、列表不带诊断摘要、读取单条带全文、删除按编号
+// 生效。这些查询与内存实现的用例成对，线上走的是这里。
+func TestPostgresFeedbackAdmin(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	base := time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC)
+	items := []feedback.Item{
+		{ID: "a1", Content: "记录页点击没有反应", Contact: "first@example.test",
+			AppVersion: "0.2.0-dev+3", Platform: "android", CreatedAt: base},
+		{ID: "b2", Content: "希望增加日程导出", Contact: "second@example.test",
+			AppVersion: "0.3.0", Platform: "ios", Diagnostics: "设置页截图",
+			CreatedAt: base.Add(time.Hour)},
+		{ID: "c3", Content: "Semantic search is slow", AppVersion: "0.3.0",
+			Platform: "android", CreatedAt: base.Add(2 * time.Hour)},
+	}
+	for _, item := range items {
+		if err := st.CreateFeedback(ctx, item); err != nil {
+			t.Fatalf("seed %s: %v", item.ID, err)
+		}
+	}
+
+	listed, total, err := st.ListFeedback(ctx, "", 10, 0)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if total != 3 || len(listed) != 3 || listed[0].ID != "c3" || listed[1].ID != "b2" || listed[2].ID != "a1" {
+		t.Fatalf("list: total=%d %+v", total, listed)
+	}
+	if !listed[1].HasDiagnostics || listed[0].HasDiagnostics {
+		t.Fatalf("has_diagnostics: %+v", listed)
+	}
+
+	for _, tc := range []struct{ query, want string }{
+		{"SEMANTIC", "c3"},
+		{"second@", "b2"},
+		{"0.2.0", "a1"},
+		{"IOS", "b2"},
+		{"no-such", ""},
+	} {
+		found, count, err := st.ListFeedback(ctx, tc.query, 10, 0)
+		if err != nil {
+			t.Fatalf("search %q: %v", tc.query, err)
+		}
+		if tc.want == "" {
+			if count != 0 || len(found) != 0 {
+				t.Fatalf("search %q should match nothing: total=%d %+v", tc.query, count, found)
+			}
+			continue
+		}
+		if count != 1 || len(found) != 1 || found[0].ID != tc.want {
+			t.Fatalf("search %q: total=%d %+v", tc.query, count, found)
+		}
+	}
+
+	page, total, err := st.ListFeedback(ctx, "", 1, 1)
+	if err != nil || total != 3 || len(page) != 1 || page[0].ID != "b2" {
+		t.Fatalf("page: total=%d %+v err=%v", total, page, err)
+	}
+
+	full, err := st.FeedbackByID(ctx, "b2")
+	if err != nil || full.Diagnostics != "设置页截图" || full.Contact != "second@example.test" {
+		t.Fatalf("by id: %+v err=%v", full, err)
+	}
+	if _, err := st.FeedbackByID(ctx, "absent"); !errors.Is(err, feedback.ErrNotFound) {
+		t.Fatalf("missing feedback: %v", err)
+	}
+	if err := st.DeleteFeedback(ctx, "b2"); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := st.DeleteFeedback(ctx, "b2"); !errors.Is(err, feedback.ErrNotFound) {
+		t.Fatalf("delete twice: %v", err)
+	}
+	if _, total, err := st.ListFeedback(ctx, "", 10, 0); err != nil || total != 2 {
+		t.Fatalf("after delete: total=%d err=%v", total, err)
+	}
+}
+
 // TestPostgresRetention 核对活跃数据按天幂等、保留期之外的行会被清理，以及
 // 登录账号的活跃随删号级联删除。
 func TestPostgresRetention(t *testing.T) {

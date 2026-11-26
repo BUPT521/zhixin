@@ -464,6 +464,68 @@ type AdminAccountUsage struct {
 	EmbeddingTokens int64 `json:"embedding_tokens"`
 }
 
+// AdminFeedback 后台列表里的一条反馈；诊断摘要不在列表里返回
+type AdminFeedback struct {
+	// AppVersion 提交时的客户端版本名，可能为空
+	AppVersion string `json:"app_version"`
+
+	// Contact 可选的联系邮箱；空字符串表示用户不要求回复
+	Contact string `json:"contact"`
+
+	// Content 用户填写的正文，列表也返回全文
+	Content string `json:"content"`
+
+	// CreatedAt 提交时间
+	CreatedAt time.Time `json:"created_at"`
+
+	// HasDiagnostics 有没有附带诊断摘要；读取单条时返回全文
+	HasDiagnostics bool `json:"has_diagnostics"`
+
+	// Id 反馈编号
+	Id string `json:"id"`
+
+	// Platform 提交时的平台，可能为空
+	Platform string `json:"platform"`
+}
+
+// AdminFeedbackDetail defines model for AdminFeedbackDetail.
+type AdminFeedbackDetail struct {
+	// AppVersion 提交时的客户端版本名，可能为空
+	AppVersion string `json:"app_version"`
+
+	// Contact 可选的联系邮箱；空字符串表示用户不要求回复
+	Contact string `json:"contact"`
+
+	// Content 用户填写的正文
+	Content string `json:"content"`
+
+	// CreatedAt 提交时间
+	CreatedAt time.Time `json:"created_at"`
+
+	// Diagnostics 客户端附带的诊断摘要，可能为空
+	Diagnostics string `json:"diagnostics"`
+
+	// Id 反馈编号
+	Id string `json:"id"`
+
+	// Platform 提交时的平台，可能为空
+	Platform string `json:"platform"`
+}
+
+// AdminFeedbackList defines model for AdminFeedbackList.
+type AdminFeedbackList struct {
+	Data []AdminFeedback `json:"data"`
+
+	// Limit 这一页的条数上限
+	Limit int `json:"limit"`
+
+	// Offset 这一页的起始位置
+	Offset int `json:"offset"`
+
+	// Total 匹配查询条件的反馈总数
+	Total int64 `json:"total"`
+}
+
 // AdminHealth defines model for AdminHealth.
 type AdminHealth struct {
 	ConsecutiveFailures int              `json:"consecutive_failures"`
@@ -1358,6 +1420,14 @@ type GetAdminV1AccountsParams struct {
 	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// GetAdminV1FeedbackParams defines parameters for GetAdminV1Feedback.
+type GetAdminV1FeedbackParams struct {
+	// Query 编号、正文、联系邮箱、版本或平台的片段
+	Query  *string `form:"query,omitempty" json:"query,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // GetAdminV1KeyUsageParams defines parameters for GetAdminV1KeyUsage.
 type GetAdminV1KeyUsageParams struct {
 	// Days 包含今天，按服务端时区计算
@@ -1795,6 +1865,15 @@ type ServerInterface interface {
 	// PutAdminV1AccountsIdQuota 调整一个账号的每日模型额度
 	// (PUT /admin/v1/accounts/{id}/quota)
 	PutAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request, id string)
+	// GetAdminV1Feedback 列出与搜索应用内反馈
+	// (GET /admin/v1/feedback)
+	GetAdminV1Feedback(w http.ResponseWriter, r *http.Request, params GetAdminV1FeedbackParams)
+	// DeleteAdminV1FeedbackId 删除一条反馈
+	// (DELETE /admin/v1/feedback/{id})
+	DeleteAdminV1FeedbackId(w http.ResponseWriter, r *http.Request, id string)
+	// GetAdminV1FeedbackId 读取一条反馈与诊断摘要
+	// (GET /admin/v1/feedback/{id})
+	GetAdminV1FeedbackId(w http.ResponseWriter, r *http.Request, id string)
 	// GetAdminV1KeyUsage 按接入密钥汇总的托管用量与折算积分
 	// (GET /admin/v1/key-usage)
 	GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request, params GetAdminV1KeyUsageParams)
@@ -2134,6 +2213,117 @@ func (siw *ServerInterfaceWrapper) PutAdminV1AccountsIdQuota(w http.ResponseWrit
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutAdminV1AccountsIdQuota(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminV1Feedback operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1Feedback(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminV1FeedbackParams
+
+	// ------------- Optional query parameter "query" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "query", r.URL.Query(), &params.Query, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "query"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "query", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1Feedback(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAdminV1FeedbackId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAdminV1FeedbackId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAdminV1FeedbackId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminV1FeedbackId operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1FeedbackId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1FeedbackId(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -3816,6 +4006,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/accounts/{id}", wrapper.GetAdminV1AccountsId)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/accounts/{id}/quota", wrapper.DeleteAdminV1AccountsIdQuota)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/accounts/{id}/quota", wrapper.PutAdminV1AccountsIdQuota)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/feedback", wrapper.GetAdminV1Feedback)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/feedback/{id}", wrapper.DeleteAdminV1FeedbackId)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/feedback/{id}", wrapper.GetAdminV1FeedbackId)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/models", wrapper.GetAdminV1Models)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/models", wrapper.PostAdminV1Models)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.DeleteAdminV1ModelsName)

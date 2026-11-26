@@ -21,6 +21,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/cloudpurge"
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
+	"github.com/BUPT521/zhixin/server/internal/feedbackadmin"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
@@ -59,7 +60,7 @@ type Stores struct {
 	// Cache 保存按账号隔离的嵌入向量缓存（ADR-0030），派生数据，清空云端数据
 	// 与删号时一并删除。
 	Cache     llmproxy.EmbeddingCache
-	Feedback  feedback.Store
+	Feedback  feedback.Repository
 	Retention retention.Store
 	// Objects 与备份、附件共用同一份对象存储，清除云端数据时按账号前缀兜底
 	// 清理遗留对象。
@@ -348,6 +349,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		accounts: accountadmin.New(st.Auth, st.Quota, authSvc.DeleteAccountByID,
 			cfg.LLM.DailyTokens, cfg.LLM.EmbeddingDailyTokens, cfg.Location, log, cfg.MaxJSONBytes),
 		feedback:      feedbackHandler,
+		feedbackAdmin: feedbackadmin.New(st.Feedback, log),
 		release:       release.NewHandler(cfg.Releases),
 		retention:     retentionHandler,
 		cloud:         cloudpurge.NewHandler(purgeSvc, log).Purge,

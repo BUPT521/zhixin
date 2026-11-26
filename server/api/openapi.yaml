@@ -1368,6 +1368,65 @@ paths:
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/feedback:
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 列出与搜索应用内反馈
+      description: |
+        按提交时间倒序分页列出反馈，返回正文、联系邮箱、版本与平台。诊断摘要不在
+        列表里返回，用 `has_diagnostics` 说明有没有，读取单条时再取全文。`query`
+        为空时列出全部，否则匹配编号、正文、联系邮箱、版本与平台的子串。反馈不
+        绑定账号，按邮箱找到的是用户自己填写的联系地址。
+      parameters:
+        - name: query
+          in: query
+          description: 编号、正文、联系邮箱、版本或平台的片段
+          schema: { type: string, maxLength: 254 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 100000, default: 0 }
+      responses:
+        "200":
+          description: 当前页的反馈
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminFeedbackList" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/feedback/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 读取一条反馈与诊断摘要
+      description: |
+        返回正文、联系邮箱、版本、平台与客户端附带的诊断摘要。读取不改变任何数据；
+        反馈不存在时返回 404。
+      responses:
+        "200":
+          description: 一条反馈
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminFeedbackDetail" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 删除一条反馈
+      description: 删除之后不能恢复；保留期到期的反馈仍由每日清理删除。反馈不存在时返回 404。
+      responses:
+        "204": { description: 已删除 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /admin/v1/models:
     get:
       tags: [admin]
@@ -1848,6 +1907,39 @@ components:
       required: [user_id]
       properties:
         user_id: { type: string, minLength: 1, maxLength: 64, description: 必须与路径里的账号编号一致 }
+    AdminFeedback:
+      type: object
+      description: 后台列表里的一条反馈；诊断摘要不在列表里返回
+      required: [id, created_at, content, contact, app_version, platform, has_diagnostics]
+      properties:
+        id: { type: string, description: 反馈编号 }
+        created_at: { type: string, format: date-time, description: 提交时间 }
+        content: { type: string, description: 用户填写的正文，列表也返回全文 }
+        contact: { type: string, description: 可选的联系邮箱；空字符串表示用户不要求回复 }
+        app_version: { type: string, description: 提交时的客户端版本名，可能为空 }
+        platform: { type: string, description: 提交时的平台，可能为空 }
+        has_diagnostics: { type: boolean, description: 有没有附带诊断摘要；读取单条时返回全文 }
+    AdminFeedbackDetail:
+      type: object
+      required: [id, created_at, content, contact, app_version, platform, diagnostics]
+      properties:
+        id: { type: string, description: 反馈编号 }
+        created_at: { type: string, format: date-time, description: 提交时间 }
+        content: { type: string, description: 用户填写的正文 }
+        contact: { type: string, description: 可选的联系邮箱；空字符串表示用户不要求回复 }
+        app_version: { type: string, description: 提交时的客户端版本名，可能为空 }
+        platform: { type: string, description: 提交时的平台，可能为空 }
+        diagnostics: { type: string, description: 客户端附带的诊断摘要，可能为空 }
+    AdminFeedbackList:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/AdminFeedback" }
+        total: { type: integer, format: int64, description: 匹配查询条件的反馈总数 }
+        limit: { type: integer, description: 这一页的条数上限 }
+        offset: { type: integer, description: 这一页的起始位置 }
     AdminRoute:
       type: object
       required: [provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images, state, health]

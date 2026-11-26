@@ -242,6 +242,15 @@ func (Base) DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, _ *http.Request,
 func (Base) GetAdminV1KeyUsage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1KeyUsageParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) GetAdminV1Feedback(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1FeedbackParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) GetAdminV1FeedbackId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) DeleteAdminV1FeedbackId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) PutAdminV1ModelsName(w http.ResponseWriter, _ *http.Request, _ string) {
 	w.WriteHeader(http.StatusNotFound)
 }

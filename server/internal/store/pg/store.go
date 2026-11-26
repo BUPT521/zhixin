@@ -60,7 +60,7 @@ var (
 	_ syncsvc.Store        = (*Store)(nil)
 	_ backup.Store         = (*Store)(nil)
 	_ llmproxy.Quota       = (*Store)(nil)
-	_ feedback.Store       = (*Store)(nil)
+	_ feedback.Repository  = (*Store)(nil)
 	_ retention.Store      = (*Store)(nil)
 	_ blobs.Store          = (*BlobStore)(nil)
 	_ interface{ Close() } = (*Store)(nil)
@@ -701,7 +701,7 @@ func nullableText(value string) pgtype.Text {
 }
 
 // CreateFeedback 保存一条应用内反馈。反馈不关联账号，删号时也没有需要级联的
-// 行；管理员按 created_at 直接查表，见 server/README。
+// 行；后台按提交时间分页查看，见 server/README。
 func (s *Store) CreateFeedback(ctx context.Context, item feedback.Item) error {
 	created, err := pgTime(item.CreatedAt)
 	if err != nil {
@@ -745,6 +745,71 @@ func (s *Store) DeleteBefore(ctx context.Context, before time.Time) (int64, erro
 		return 0, err
 	}
 	return s.q.DeleteFeedbackBefore(ctx, ts)
+}
+
+// ListFeedback 按提交时间倒序返回一页反馈，并给出匹配的总条数。关键字统一转
+// 小写之后交给查询，口径与内存实现相同；列表不带诊断摘要。
+func (s *Store) ListFeedback(ctx context.Context, query string, limit, offset int) ([]feedback.ListItem, int, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	total, err := s.q.CountFeedback(ctx, query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pg: 统计反馈失败: %w", err)
+	}
+	rows, err := s.q.ListFeedback(ctx, db.ListFeedbackParams{
+		Query:     query,
+		RowLimit:  int32(limit),
+		RowOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("pg: 列出反馈失败: %w", err)
+	}
+	items := make([]feedback.ListItem, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, feedback.ListItem{
+			ID:             row.ID,
+			Content:        row.Content,
+			Contact:        row.Contact,
+			AppVersion:     row.AppVersion,
+			Platform:       row.Platform,
+			HasDiagnostics: row.HasDiagnostics,
+			CreatedAt:      row.CreatedAt.Time,
+		})
+	}
+	return items, int(total), nil
+}
+
+// FeedbackByID 读取一条反馈的全文，包括诊断摘要；编号不存在时返回
+// feedback.ErrNotFound，由管理接口转成 404。
+func (s *Store) FeedbackByID(ctx context.Context, id string) (feedback.Item, error) {
+	row, err := s.q.FeedbackByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return feedback.Item{}, feedback.ErrNotFound
+	}
+	if err != nil {
+		return feedback.Item{}, fmt.Errorf("pg: 读取反馈失败: %w", err)
+	}
+	return feedback.Item{
+		ID:          row.ID,
+		Content:     row.Content,
+		Contact:     row.Contact,
+		AppVersion:  row.AppVersion,
+		Platform:    row.Platform,
+		Diagnostics: row.Diagnostics,
+		CreatedAt:   row.CreatedAt.Time,
+	}, nil
+}
+
+// DeleteFeedback 删除一条反馈；编号不存在时返回 feedback.ErrNotFound，重试同一
+// 个请求不会得到第二次成功。
+func (s *Store) DeleteFeedback(ctx context.Context, id string) error {
+	deleted, err := s.q.DeleteFeedbackByID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("pg: 删除反馈失败: %w", err)
+	}
+	if deleted == 0 {
+		return feedback.ErrNotFound
+	}
+	return nil
 }
 
 // pgTime 把时间转成 PostgreSQL 的 timestamptz。零值说明调用方漏了赋值，直接
