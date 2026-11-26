@@ -191,10 +191,7 @@ Future<void> openAbout(BuildContext context) {
 ///
 /// 引导第一步自己带勾选框，打开文档时传 [allowAgree] 为假，避免在文档页里直接
 /// 同意；设置页与账号页的同意入口把它留作真。
-Future<void> openUserTerms(
-  BuildContext context, {
-  bool allowAgree = true,
-}) {
+Future<void> openUserTerms(BuildContext context, {bool allowAgree = true}) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(
       builder: (_) => LegalDocumentPage.terms(allowAgree: allowAgree),
@@ -210,9 +207,20 @@ Future<void> openPrivacyPolicy(BuildContext context) {
 }
 
 /// 打开账号与云同步页：服务地址、登录注册、同步状态与云端数据操作。
-Future<void> openAccount(BuildContext context) {
-  return Navigator.of(context)
-      .push(MaterialPageRoute<void>(builder: (_) => const AccountPage()));
+///
+/// [reset] 为真时直接落在找回密码的表单上，首次启动引导的“忘记密码”走这一条；
+/// [identifier] 是带过去预填的邮箱。
+Future<void> openAccount(
+  BuildContext context, {
+  bool reset = false,
+  String identifier = '',
+}) {
+  return Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) =>
+          AccountPage(initialReset: reset, initialIdentifier: identifier),
+    ),
+  );
 }
 
 /// 打开云端备份页：上传、列出、下载恢复与删除服务端保存的整库备份。

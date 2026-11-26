@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -207,14 +208,25 @@ void main() {
     await pumpUntil(tester, find.text('登录或注册'));
   }
 
+  /// 在假服务端先建好一个账号，用例用“登录”而不是“注册”走第二步。
+  Future<void> seedAccountOnServer(String email) async {
+    await server.client.post(
+      Uri.parse('$syncTestServerUrl/v1/auth/register'),
+      headers: const {'content-type': 'application/json'},
+      body: jsonEncode({
+        'identifier': email,
+        'password': syncTestPassword,
+        'device_name': 'seed',
+      }),
+    );
+  }
+
   testWidgets('未勾选同意时按钮不可点，勾选之后可以继续', (tester) async {
     await openApp(tester);
     expect(find.text('同意并继续'), findsOneWidget);
     expect(
       tester
-          .widget<forui.FButton>(
-            find.widgetWithText(forui.FButton, '同意并继续'),
-          )
+          .widget<forui.FButton>(find.widgetWithText(forui.FButton, '同意并继续'))
           .onPress,
       isNull,
       reason: '没有勾选就不同意',
@@ -224,9 +236,7 @@ void main() {
     await tester.pump();
     expect(
       tester
-          .widget<forui.FButton>(
-            find.widgetWithText(forui.FButton, '同意并继续'),
-          )
+          .widget<forui.FButton>(find.widgetWithText(forui.FButton, '同意并继续'))
           .onPress,
       isNotNull,
     );
@@ -242,10 +252,21 @@ void main() {
       final telemetry = TelemetryStore(filesDir: directory.path);
       expect(await telemetry.noticeSeen(), isTrue);
       expect(await telemetry.enabled(), isTrue);
+      expect(
+        (await OnboardingStore(directory.path).read()).stage,
+        OnboardingStage.login,
+        reason: '进入第二步之前先写盘，登录换空间之后才知道该停在哪一步',
+      );
     });
 
     await tester.tap(find.widgetWithText(forui.FButton, '先在本机用'));
     await pumpUntil(tester, find.text('选择外观'));
+    await tester.runAsync(() async {
+      expect(
+        (await OnboardingStore(directory.path).read()).stage,
+        OnboardingStage.appearance,
+      );
+    });
 
     await tester.binding.handlePopRoute();
     await settle(tester);
@@ -357,7 +378,9 @@ void main() {
   });
 
   testWidgets('登录成功之后子树重建仍停在外观，此前选的外观保留', (tester) async {
-    final spaces = AppSpaces(AppPaths(directory.path, cacheDir: directory.path));
+    final spaces = AppSpaces(
+      AppPaths(directory.path, cacheDir: directory.path),
+    );
     final localDir = spaces.pathsFor(AppSpaces.local).filesDir;
     final themeAccent = ThemeAccentController(
       store: ThemeAccentStore(localDir),
@@ -405,5 +428,81 @@ void main() {
       ZhixinAccent.moss.light,
       reason: '换空间时未登录目录整体改名，之前选的外观跟着保留',
     );
+    await tester.runAsync(() async {
+      expect(
+        (await OnboardingStore(directory.path).read()).stage,
+        OnboardingStage.appearance,
+      );
+    });
+  });
+
+  testWidgets('登录成功之后按重建后的登录态到第三步，只登录一次', (tester) async {
+    final spaces = AppSpaces(
+      AppPaths(directory.path, cacheDir: directory.path),
+    );
+    const email = 'login-onboarding@example.com';
+    await tester.runAsync(() => seedAccountOnServer(email));
+    await openApp(tester, spaces: spaces);
+    await agreeTerms(tester);
+
+    final fields = find.byType(EditableText);
+    await tester.enterText(fields.at(0), email);
+    await tester.enterText(fields.at(1), syncTestPassword);
+    await tester.tap(find.widgetWithText(forui.FButton, '登录'));
+    await pumpUntil(tester, find.text('选择外观'));
+
+    // 换空间之后的新应用根还在开库，收尾前等它就绪，tearDown 才能关干净。
+    scope = tester.state<AppScopeState>(find.byType(AppScope));
+    await waitReady(tester, scope!);
+    await settle(tester);
+
+    expect(find.text('登录或注册'), findsNothing, reason: '重建之后不再退回第二步');
+    expect(
+      find.widgetWithText(forui.FButton, '登录'),
+      findsNothing,
+      reason: '第三步没有登录表单',
+    );
+    expect(server.loginRequests, 1, reason: '登录成功之后没有再次登录');
+    await tester.runAsync(() async {
+      final record = await OnboardingStore(directory.path).read();
+      expect(record.stage, OnboardingStage.appearance);
+      expect(record.completed, isFalse, reason: '还要走完外观这一步');
+    });
+  });
+
+  testWidgets('忘记密码直接打开重设表单，返回后仍停在第二步', (tester) async {
+    await openApp(tester);
+    await agreeTerms(tester);
+
+    await tester.enterText(
+      find.byType(EditableText).at(0),
+      'forgot@example.com',
+    );
+    await tester.tap(find.widgetWithText(forui.FButton, '忘记密码'));
+    await pumpUntil(tester, find.text('发送验证码'));
+    // 页面过渡走完，下面那一层（引导第二步）才从界面上退下去。
+    await settle(tester);
+
+    expect(find.text('找回密码'), findsWidgets, reason: '直接落在找回密码形态，不用进去再点一次');
+    expect(
+      find.widgetWithText(forui.FButton, '登录'),
+      findsNothing,
+      reason: '重设表单里没有登录按钮',
+    );
+    expect(find.text('账号与云同步'), findsNothing, reason: '不显示账号页的其他区块');
+    expect(
+      tester
+          .widget<EditableText>(find.byType(EditableText).at(0))
+          .controller
+          .text,
+      'forgot@example.com',
+      reason: '第二步填过的邮箱带过去',
+    );
+
+    await tester.binding.handlePopRoute();
+    await settle(tester, rounds: 60);
+    expect(find.text('登录或注册'), findsOneWidget);
+    expect(find.text('找回密码'), findsNothing);
+    expect(server.loginRequests, 0);
   });
 }

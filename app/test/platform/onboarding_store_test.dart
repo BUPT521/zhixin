@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/platform/onboarding_store.dart';
 import 'package:zhixin/ui/onboarding_controller.dart';
 
-/// 首次启动引导的设备级状态：读写、文件缺失、内容损坏与须知版本升级。
+/// 首次启动引导的设备级状态：读写、文件缺失、内容损坏、须知版本升级与步骤续接。
 void main() {
   late Directory directory;
 
@@ -16,37 +16,39 @@ void main() {
     if (await directory.exists()) await directory.delete(recursive: true);
   });
 
-  test('没有文件时三项都是默认值', () async {
+  test('没有文件时四项都是默认值', () async {
     final record = await OnboardingStore(directory.path).read();
     expect(record.completed, isFalse);
     expect(record.termsVersion, 0);
     expect(record.agreed, isFalse);
+    expect(record.stage, OnboardingStage.terms);
     expect(record.consentCurrent, isFalse);
   });
 
-  test('写入之后能原样读回三项状态', () async {
+  test('写入之后能原样读回四项状态', () async {
     final store = OnboardingStore(directory.path);
     await store.write(
       const OnboardingRecord(
         completed: true,
         termsVersion: kTermsVersion,
         agreed: true,
+        stage: OnboardingStage.appearance,
       ),
     );
     final record = await store.read();
     expect(record.completed, isTrue);
     expect(record.termsVersion, kTermsVersion);
     expect(record.agreed, isTrue);
+    expect(record.stage, OnboardingStage.appearance);
     expect(record.consentCurrent, isTrue);
 
-    // 三项分开写：完成标记写回假时，同意的版本与是否同意不受影响。
-    await store.write(
-      record.copyWith(completed: false, agreed: false),
-    );
+    // 四项分开写：完成标记写回假时，同意的版本、是否同意与步骤不受影响。
+    await store.write(record.copyWith(completed: false, agreed: false));
     final partial = await store.read();
     expect(partial.completed, isFalse);
     expect(partial.termsVersion, kTermsVersion);
     expect(partial.agreed, isFalse);
+    expect(partial.stage, OnboardingStage.appearance);
     expect(partial.consentCurrent, isFalse);
   });
 
@@ -57,15 +59,17 @@ void main() {
     expect(record.completed, isFalse);
     expect(record.termsVersion, 0);
     expect(record.agreed, isFalse);
+    expect(record.stage, OnboardingStage.terms);
 
-    // 字段类型不对时同样回到默认值。
+    // 字段类型不对时同样回到默认值；步骤只认写过的三个名字。
     await File(store.path).writeAsString(
-      '{"completed": 1, "termsVersion": "三", "agreed": "yes"}',
+      '{"completed": 1, "termsVersion": "三", "agreed": "yes", "stage": "外观"}',
     );
     final wrongTypes = await store.read();
     expect(wrongTypes.completed, isFalse);
     expect(wrongTypes.termsVersion, 0);
     expect(wrongTypes.agreed, isFalse);
+    expect(wrongTypes.stage, OnboardingStage.terms);
   });
 
   test('须知版本升级之后需要重新同意，只补第一步', () async {
@@ -116,5 +120,91 @@ void main() {
       OnboardingController.entryFor(fresh, existingUser: false),
       OnboardingEntry.full,
     );
+  });
+
+  test('进入第二步之前先写盘，重开之后从这里继续', () async {
+    final store = OnboardingStore(directory.path);
+    final controller = OnboardingController(
+      store: store,
+      entry: OnboardingEntry.full,
+      record: const OnboardingRecord(),
+      signedIn: false,
+      telemetryEnabled: true,
+    );
+    addTearDown(controller.dispose);
+    expect(controller.stage, OnboardingStage.terms);
+
+    await controller.acceptTerms();
+    await controller.continueAfterTerms();
+    expect(controller.stage, OnboardingStage.login);
+    expect(
+      (await store.read()).stage,
+      OnboardingStage.login,
+      reason: '登录会在请求途中换空间，步骤不能等登录返回再写',
+    );
+
+    final saved = await store.read();
+    final reopened = OnboardingController(
+      store: store,
+      entry: OnboardingController.entryFor(saved, existingUser: false),
+      record: saved,
+      signedIn: false,
+      telemetryEnabled: true,
+    );
+    addTearDown(reopened.dispose);
+    expect(reopened.stage, OnboardingStage.login);
+  });
+
+  test('重建之后已经登录时从外观继续，没有登录时仍停在第二步', () async {
+    final store = OnboardingStore(directory.path);
+    final record = OnboardingRecord(
+      termsVersion: kTermsVersion,
+      agreed: true,
+      stage: OnboardingStage.login,
+    );
+
+    final signedIn = OnboardingController(
+      store: store,
+      entry: OnboardingEntry.full,
+      record: record,
+      signedIn: true,
+      telemetryEnabled: true,
+    );
+    addTearDown(signedIn.dispose);
+    expect(signedIn.stage, OnboardingStage.appearance);
+
+    final signedOut = OnboardingController(
+      store: store,
+      entry: OnboardingEntry.full,
+      record: record,
+      signedIn: false,
+      telemetryEnabled: true,
+    );
+    addTearDown(signedOut.dispose);
+    expect(signedOut.stage, OnboardingStage.login);
+  });
+
+  test('跳过登录之后重开仍在外观，选择不同意时没有登录这一步', () async {
+    final store = OnboardingStore(directory.path);
+    final skipped = OnboardingController(
+      store: store,
+      entry: OnboardingEntry.full,
+      record: OnboardingRecord(termsVersion: kTermsVersion, agreed: true),
+      signedIn: false,
+      telemetryEnabled: true,
+    );
+    addTearDown(skipped.dispose);
+    await skipped.skipLogin();
+    expect((await store.read()).stage, OnboardingStage.appearance);
+
+    final declined = OnboardingController(
+      store: store,
+      entry: OnboardingEntry.full,
+      record: OnboardingRecord(termsVersion: kTermsVersion, agreed: false),
+      signedIn: false,
+      telemetryEnabled: true,
+    );
+    addTearDown(declined.dispose);
+    expect(declined.stage, OnboardingStage.appearance);
   });
 }

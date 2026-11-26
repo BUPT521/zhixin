@@ -122,7 +122,9 @@ class _ZhixinAppState extends State<ZhixinApp> {
       telemetryEnabled: widget.telemetryEnabled,
     )..addListener(_onOnboardingChanged);
     // 引导不读数据库：首帧显示引导，原生启动图到现在就让位，开库在后台继续。
-    WidgetsBinding.instance.addPostFrameCallback((_) => FirstFrameGate.release());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => FirstFrameGate.release(),
+    );
   }
 
   @override
@@ -227,14 +229,8 @@ class _ZhixinAppState extends State<ZhixinApp> {
       if (deleteCurrent) await spaces.delete(_spaceId);
       await spaces.open(id, adoptLocal: adoptLocal, label: label);
       await _showSpace(id);
-      // 第一次登录把未登录空间改成账号空间，页面随整棵树重建；引导不放在页面
-      // 状态里，所以知道刚才在登录这一步，就接着到外观这一步。
-      final onboarding = _onboarding;
-      if (adoptLocal &&
-          onboarding != null &&
-          onboarding.stage == OnboardingStage.login) {
-        onboarding.signedIn();
-      }
+      // 第一次登录把未登录空间改成账号空间，页面随整棵树重建。引导停在哪一步
+      // 已经写进设备文件，新的页面按登录态把第二步补成已完成，这里不直接推。
     } catch (_) {
       // 文件操作失败时重新打开原目录，页面可以重试。
       await _showSpace(_spaceId);

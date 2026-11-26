@@ -38,7 +38,22 @@ typedef _AccountPrewarm = ({
 /// 账号是可选项：不登录时应用完全在本机运行；登录之后才开启云端备份、按提交
 /// 的增量同步与“知新服务”模型来源（ADR-0008）。
 class AccountPage extends StatefulWidget {
-  const AccountPage({super.key});
+  const AccountPage({
+    super.key,
+    this.initialReset = false,
+    this.initialIdentifier = '',
+  });
+
+  /// 打开时直接显示找回密码的表单，不再显示登录卡与账号页的其他区块。
+  ///
+  /// 首次启动引导的“忘记密码”走这里：用户点一次就落在重设表单上，不必进了
+  /// 账号页再找一次入口，也看不到设备名册、云端数据与退出登录这些与引导无关
+  /// 的内容。
+  final bool initialReset;
+
+  /// 找回密码表单预填的邮箱；为空时留空。引导第二步已经填过邮箱，带过来省一次
+  /// 输入。
+  final String initialIdentifier;
 
   @override
   State<AccountPage> createState() => _AccountPageState();
@@ -77,6 +92,15 @@ class _AccountPageState extends State<AccountPage> {
   String? _localDeviceId;
 
   bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _showReset = widget.initialReset;
+    if (widget.initialIdentifier.isNotEmpty) {
+      _identifier.text = widget.initialIdentifier;
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -834,7 +858,7 @@ class _AccountPageState extends State<AccountPage> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     return DetailScaffold(
-      header: const ZhixinHeader(title: Text('账号与云同步'), showBack: true),
+      header: ZhixinHeader(title: Text(_title), showBack: true),
       // 首读期间保留标题栏，内容用与卡片同高的骨架占位。
       child: _loading
           ? ListView(
@@ -845,10 +869,22 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  /// 从引导直接打开找回密码：只留这一张卡，不显示本机空间、账号状态与页尾说明。
+  bool get _focusedReset => widget.initialReset && !_isSignedIn;
+
+  bool get _isSignedIn => _snapshot?.signedIn ?? false;
+
+  /// 从引导打开时标题跟着卡片走；正常从“我的”进来仍是账号与云同步。
+  String get _title {
+    if (!widget.initialReset) return '账号与云同步';
+    return _showReset ? '找回密码' : '登录或注册';
+  }
+
   Widget _content(BuildContext context) {
     final theme = context.zhixin;
     final snapshot = _snapshot;
     final signedIn = snapshot?.signedIn ?? false;
+    final focused = _focusedReset;
     return ListView(
       padding: theme.space.pageInsets(bottom: 96),
       children: [
@@ -859,15 +895,17 @@ class _AccountPageState extends State<AccountPage> {
                   padding: EdgeInsets.only(bottom: theme.space.md),
                   child: Text(_notice!, style: theme.text.bodySmall),
                 ),
-        if (_spaces.isNotEmpty) ..._localSpaces(context),
+        if (!focused && _spaces.isNotEmpty) ..._localSpaces(context),
         if (!signedIn) ..._loggedOut(context),
         if (signedIn) ..._loggedIn(context, snapshot!),
-        SizedBox(height: theme.space.md),
-        Text(
-          '学习记录默认保存在本机，登录之后才会使用服务端的备份、同步与模型代理；'
-          '调用模型时只发送当次所需内容。令牌只保存在这台设备的 Keystore 里。',
-          style: theme.text.bodySmall,
-        ),
+        if (!focused) ...[
+          SizedBox(height: theme.space.md),
+          Text(
+            '学习记录默认保存在本机，登录之后才会使用服务端的备份、同步与模型代理；'
+            '调用模型时只发送当次所需内容。令牌只保存在这台设备的 Keystore 里。',
+            style: theme.text.bodySmall,
+          ),
+        ],
       ],
     );
   }

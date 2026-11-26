@@ -10,15 +10,22 @@ import '../data/atomic_file.dart';
 /// 存下的版本比它旧，就只重新显示引导的第一步，用户同意之后再进首页。
 const int kTermsVersion = 1;
 
-/// 设备级的引导状态：是否走完引导、同意过哪一版用户须知、是否同意。
+/// 首次启动引导停在哪一步。
 ///
-/// 三项都为空时是全新的安装；文件读不出来或内容损坏时按同样的默认值处理，
+/// 步骤写进设备文件：第一次登录会换本机空间、整棵界面子树重建，重建之后按
+/// 这个值继续；进程被杀掉之后重新打开也从这里接着走。
+enum OnboardingStage { terms, login, appearance }
+
+/// 设备级的引导状态：是否走完引导、同意过哪一版用户须知、是否同意、停在哪一步。
+///
+/// 四项都为空时是全新的安装；文件读不出来或内容损坏时按同样的默认值处理，
 /// 用户重新走一遍第一步，不会因为坏文件被当成已经同意过。
 class OnboardingRecord {
   const OnboardingRecord({
     this.completed = false,
     this.termsVersion = 0,
     this.agreed = false,
+    this.stage = OnboardingStage.terms,
   });
 
   /// 已经走完引导；之后的启动直接进入首页。
@@ -30,6 +37,9 @@ class OnboardingRecord {
   /// 是否同意用户须知与隐私政策；假表示只在本机使用。
   final bool agreed;
 
+  /// 当前停在哪一步；进入下一步之前先写盘，重建或重开之后从这里继续。
+  final OnboardingStage stage;
+
   /// 同意过的是不是当前版本。版本升级之后为假，需要重新同意。
   bool get consentCurrent => agreed && termsVersion >= kTermsVersion;
 
@@ -37,16 +47,18 @@ class OnboardingRecord {
     bool? completed,
     int? termsVersion,
     bool? agreed,
+    OnboardingStage? stage,
   }) => OnboardingRecord(
     completed: completed ?? this.completed,
     termsVersion: termsVersion ?? this.termsVersion,
     agreed: agreed ?? this.agreed,
+    stage: stage ?? this.stage,
   );
 
   @override
   String toString() =>
       'OnboardingRecord(completed: $completed, termsVersion: $termsVersion, '
-      'agreed: $agreed)';
+      'agreed: $agreed, stage: ${stage.name})';
 }
 
 /// 引导状态存在设备级位置：应用私有目录根下的小文件，不放进账号空间。
@@ -71,6 +83,7 @@ class OnboardingStore {
         completed: data['completed'] == true,
         termsVersion: _versionOf(data['termsVersion']),
         agreed: data['agreed'] == true,
+        stage: _stageOf(data['stage']),
       );
     } on FileSystemException {
       return const OnboardingRecord();
@@ -79,11 +92,12 @@ class OnboardingStore {
     }
   }
 
-  /// 整份写回：三个字段一起写，读改写走同一条写入队列，两个动作不会互相覆盖。
+  /// 整份写回：四个字段一起写，读改写走同一条写入队列，两个动作不会互相覆盖。
   Future<void> write(OnboardingRecord record) => _file.update((data) {
     data['completed'] = record.completed;
     data['termsVersion'] = record.termsVersion;
     data['agreed'] = record.agreed;
+    data['stage'] = record.stage.name;
   });
 
   static int _versionOf(Object? value) {
@@ -91,4 +105,10 @@ class OnboardingStore {
     if (value is num && value >= 0) return value.toInt();
     return 0;
   }
+
+  static OnboardingStage _stageOf(Object? value) => switch (value) {
+    'login' => OnboardingStage.login,
+    'appearance' => OnboardingStage.appearance,
+    _ => OnboardingStage.terms,
+  };
 }

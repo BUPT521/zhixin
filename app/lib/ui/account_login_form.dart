@@ -13,8 +13,8 @@ import 'workspace_widgets.dart';
 /// 登录与注册表单：账号页与首次启动引导共用这一份。
 ///
 /// 表单只做邮箱与密码的输入、校验与提交，登录成功之后由调用方决定后面的界面；
-/// 账号页用它显示登录卡，引导第二步用它登录或注册。校验口径（两项都不能为空、
-/// 密码至少 8 位）、错误说明与登录之后的同步调度都在这里，调用方不再各写一遍。
+/// 账号页用它显示登录卡，引导第二步用它登录或注册。登录之后的同步调度由换空间
+/// 之后新建的应用根在装配时安排，表单不再自己调度一次。
 class AccountLoginForm extends StatefulWidget {
   const AccountLoginForm({
     super.key,
@@ -33,7 +33,10 @@ class AccountLoginForm extends StatefulWidget {
   ///
   /// 登录会触发换空间时，整棵界面子树在调用登录的过程中重建，表单所在的页面
   /// 已经卸载，这时不再调用。
-  final Future<void> Function(AccountSnapshot snapshot, {required bool register})?
+  final Future<void> Function(
+    AccountSnapshot snapshot, {
+    required bool register,
+  })?
   onSignedIn;
 
   /// 提供时显示“忘记密码”按钮；引导里跳账号页，账号页里切到重设表单。
@@ -112,15 +115,11 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
       final result = register
           ? await account.register(identifier: identifier, password: password)
           : await account.login(identifier: identifier, password: password);
-      // 登录会换空间：换完之后整棵子树连同这一页一起重建，收尾交给应用根部与
-      // 调用方原来所在的页面，这里不再读已经卸载的界面。
+      // 登录会换空间：换完之后整棵界面子树连同这一页一起重建，收尾交给应用根部
+      // 与调用方原来所在的页面，这里不再读已经卸载的界面。同步调度由换空间之后
+      // 新建的应用根在装配时安排（`AppScope` 启动时按网络开关调度一次）。
       if (!mounted) return;
       _password.clear();
-      if (!scope.managesSpaces) {
-        await scope.accountServices.sync.schedule(
-          delay: const Duration(seconds: 1),
-        );
-      }
       await widget.onSignedIn?.call(result, register: register);
     } on FormatException catch (error) {
       if (mounted) setState(() => _error = error.message);
