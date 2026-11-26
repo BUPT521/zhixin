@@ -79,6 +79,25 @@ type Router struct {
 	warned map[string]bool
 	// shuffle 打乱同一优先级内的候选，测试里换成确定的顺序。
 	shuffle func([]liveRoute)
+	// sticky 记录故障期间接手的来源，键是调度键；超过有效期之后按会话顺序重新
+	// 分配。数量有上限，见 pruneSticky。
+	stickyMu sync.Mutex
+	sticky   map[string]stickyRoute
+	now      func() time.Time
+}
+
+// 备路由接手之后，同一条讨论在这段时间内继续从接手的路由开始，不马上回切到已经
+// 恢复的主路由。回切会把备用来源上已经热起来的前缀丢掉，下一次追问又要重新处理
+// 整段历史；时间太长又会把配置好的主路由压住，所以只覆盖恢复初期的几轮追问。
+const (
+	stickyAfterTakeover = 10 * time.Minute
+	maxStickySessions   = 4096
+)
+
+// stickyRoute 是某条讨论当前偏好的路由，until 之后失效。
+type stickyRoute struct {
+	provider, upstream string
+	until              time.Time
 }
 
 // NewRouter 建立路由器，初始快照是空的；调用方随后执行一次 Reload 读入管理
@@ -91,6 +110,7 @@ func NewRouter(catalog Catalog, box *secretbox.Box, log *slog.Logger) *Router {
 		health:  newHealthBook(time.Now),
 		shuffle: weightedShuffle,
 		warned:  map[string]bool{},
+		now:     time.Now,
 	}
 	r.snap.Store(r.build(nil, nil))
 	return r
@@ -200,7 +220,65 @@ func (r *Router) candidates(m *liveModel, session string, need capabilities) []l
 		}
 		start = end
 	}
+	r.preferSticky(session, usable)
 	return usable
+}
+
+// rememberTakeover 记下这条讨论由哪条路由接手。只在首次尝试失败、后续尝试成功时
+// 调用：按会话顺序本来就该落到的来源不需要再记。
+func (r *Router) rememberTakeover(session string, key healthKey) {
+	if session == "" {
+		return
+	}
+	r.stickyMu.Lock()
+	defer r.stickyMu.Unlock()
+	if r.sticky == nil {
+		r.sticky = make(map[string]stickyRoute)
+	}
+	if len(r.sticky) >= maxStickySessions {
+		r.pruneSticky()
+	}
+	r.sticky[session] = stickyRoute{provider: key.provider, upstream: key.upstream, until: r.now().Add(stickyAfterTakeover)}
+}
+
+// preferSticky 把这条讨论接手的路由提到候选最前面。健康状态、启用状态与本次需要
+// 的能力在进入候选时已经筛过，接手的路由不可用就仍按原顺序落到下一条。
+func (r *Router) preferSticky(session string, usable []liveRoute) {
+	if session == "" || len(usable) < 2 {
+		return
+	}
+	r.stickyMu.Lock()
+	entry, ok := r.sticky[session]
+	if ok && !r.now().Before(entry.until) {
+		delete(r.sticky, session)
+		ok = false
+	}
+	r.stickyMu.Unlock()
+	if !ok {
+		return
+	}
+	for i, rt := range usable {
+		if rt.Provider.ID != entry.provider || rt.UpstreamModel != entry.upstream {
+			continue
+		}
+		copy(usable[1:i+1], usable[:i])
+		usable[0] = rt
+		return
+	}
+}
+
+// pruneSticky 清掉过期的记录；清完仍然占满时整体放手，回到按会话顺序分配，避免
+// 长时间运行之后只增不减。
+func (r *Router) pruneSticky() {
+	now := r.now()
+	for session, entry := range r.sticky {
+		if !now.Before(entry.until) {
+			delete(r.sticky, session)
+		}
+	}
+	if len(r.sticky) >= maxStickySessions {
+		clear(r.sticky)
+	}
 }
 
 // weightedShuffle 按权重做不放回抽样（Efraimidis–Spirakis）：权重大的更常

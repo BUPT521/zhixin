@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
 )
@@ -224,4 +225,104 @@ func routeIDs(routes []liveRoute) string {
 		parts[i] = rt.Provider.ID
 	}
 	return strings.Join(parts, ",")
+}
+
+// TestSessionSticksToTakeoverRoute 核对首次尝试失败、备用来源接住之后，同一条讨论
+// 在粘滞期内继续从备用来源开始，不让恢复的主来源马上回切；粘滞期过后回到按会话
+// 顺序分配，别的讨论不受影响。
+func TestSessionSticksToTakeoverRoute(t *testing.T) {
+	var failA atomic.Bool
+	failA.Store(true)
+	var hitsA, hitsB atomic.Int64
+	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsA.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if failA.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"error":{"message":"busy"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"object":"response","status":"completed","output":[],"usage":{"total_tokens":5}}`)
+	}))
+	defer sourceA.Close()
+	sourceB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"object":"response","status":"completed","output":[],"usage":{"total_tokens":5}}`)
+	}))
+	defer sourceB.Close()
+
+	cfg := baseConfig()
+	cfg.DailyTokens = 10_000_000
+	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "a", sourceA.URL, "k1")
+		putProvider(t, c, box, "b", sourceB.URL, "k2")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{
+			{ProviderID: "a", UpstreamModel: "a", Priority: 0},
+			{ProviderID: "b", UpstreamModel: "b", Priority: 1},
+		}})
+	})
+	clock := time.Now()
+	env.proxy.router.now = func() time.Time { return clock }
+	token := signIn(t, env.authSvc, "sticky@b.cn")
+	body := chatBody(false)
+
+	ask := func(session string) {
+		t.Helper()
+		resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+			bytes.NewReader(body), sessionHeaders(session))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("请求应成功，得到 %d", resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	// 第一次：主来源 503，备用接住。
+	ask("discussion-sticky")
+	if hitsA.Load() != 1 || hitsB.Load() != 1 {
+		t.Fatalf("首次失败后应由备用接住：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+
+	// 主来源恢复：粘滞期内仍走接手的备用来源。
+	failA.Store(false)
+	ask("discussion-sticky")
+	if hitsA.Load() != 1 || hitsB.Load() != 2 {
+		t.Fatalf("粘滞期内应继续走备用：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+
+	// 另一条讨论没有接手记录，仍按优先级走主来源。
+	ask("discussion-other")
+	if hitsA.Load() != 2 || hitsB.Load() != 2 {
+		t.Fatalf("别的讨论不应受粘滞影响：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+
+	// 粘滞期过后回到主来源。
+	clock = clock.Add(stickyAfterTakeover + time.Minute)
+	ask("discussion-sticky")
+	if hitsA.Load() != 3 || hitsB.Load() != 2 {
+		t.Fatalf("粘滞期过后应回到主来源：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+}
+
+// TestStickyRoutesRespectHealthAndCapabilities 核对接手的路由不可用或缺少本次需要
+// 的能力时，粘滞不让它重新进入候选。
+func TestStickyRoutesRespectHealthAndCapabilities(t *testing.T) {
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "a", "https://a.example", "k")
+		putProvider(t, c, box, "b", "https://b.example", "k")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{
+			{ProviderID: "a", UpstreamModel: "a", Priority: 0, SupportsTools: true},
+			{ProviderID: "b", UpstreamModel: "b", Priority: 1, SupportsTools: false},
+		}})
+	})
+	router := env.proxy.router
+	m := mustModel(t, env)
+	router.rememberTakeover("s", healthKey{provider: "b", upstream: "b"})
+
+	if got := routeIDs(router.candidates(m, "s", capabilities{})); got != "b,a" {
+		t.Fatalf("接手的路由应排在最前：%s", got)
+	}
+	if got := routeIDs(router.candidates(m, "s", capabilities{tools: true})); got != "a" {
+		t.Fatalf("缺少函数调用能力的路由不应因粘滞重新进入候选：%s", got)
+	}
 }

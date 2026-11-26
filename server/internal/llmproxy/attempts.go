@@ -15,6 +15,9 @@ type attemptPlan struct {
 	reserve    attemptBudget
 	targeted   bool
 	trace      *[]api.AdminProbeAttempt
+	// session 是这条讨论的调度键；首次尝试失败、后面的来源接住时，按它记住接手的
+	// 路由，短时间内同一条讨论继续从那里开始。
+	session string
 	// background 表示这次请求可以等，只能用没有留给前台的内存与并发名额。
 	background bool
 
@@ -58,6 +61,11 @@ func (p *Proxy) attemptsRemain(plan *attemptPlan) bool {
 
 func (p *Proxy) finishAttempt(plan *attemptPlan, attempt routeAttempt, result attemptResult, status int, outcome healthOutcome) {
 	p.router.health.complete(attempt.lease, result.success, outcome)
+	if result.success && plan.started > 1 {
+		// 首次尝试失败之后的成功说明这条来源接住了这轮请求。短时间内让同一条讨论
+		// 继续从它开始，避免主来源恢复后马上回切，把备用来源上已经热起来的前缀丢掉。
+		p.router.rememberTakeover(plan.session, attempt.lease.route.key)
+	}
 	if outcome.scope == sourceFailure {
 		if plan.skipSources == nil {
 			plan.skipSources = make(map[string]bool)

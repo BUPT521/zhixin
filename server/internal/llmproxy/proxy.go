@@ -567,9 +567,11 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, capabilityDetail(need))
 		return
 	}
+	session := routingSessionKey(userID, opts.SessionID, fields["input"])
 	plan := attemptPlan{
 		model:      model,
-		candidates: p.router.candidates(model, routingSessionKey(userID, opts.SessionID, fields["input"]), need),
+		session:    session,
+		candidates: p.router.candidates(model, session, need),
 		reserve:    reserve,
 	}
 	reply, err := p.dispatch(reqCtx, &plan, fields, stream, output, deadline)
