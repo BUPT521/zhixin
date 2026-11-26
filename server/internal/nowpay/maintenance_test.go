@@ -20,7 +20,9 @@ type fakeMaintenance struct {
 	orphanDeletes   int
 	reconcileCalls  int
 	instanceTokens  int64
-	counts          map[string]int64
+	// instanceDay 是最近一次对账读实例账本时用的自然日。
+	instanceDay string
+	counts      map[string]int64
 }
 
 func (f *fakeMaintenance) UnsettledGlobal(context.Context, time.Time, int) ([]Charge, error) {
@@ -46,7 +48,8 @@ func (f *fakeMaintenance) ChargeStatusCounts(context.Context) (map[string]int64,
 	return f.counts, nil
 }
 
-func (f *fakeMaintenance) InstanceUsed(context.Context, string) (int64, error) {
+func (f *fakeMaintenance) InstanceUsed(_ context.Context, day string) (int64, error) {
+	f.instanceDay = day
 	return f.instanceTokens, nil
 }
 
@@ -73,7 +76,7 @@ func TestMaintenanceLoopReconcilesAndPrunesInBatches(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立刻结束，只跑启动那一次。
-	MaintenanceLoop(ctx, store, log)
+	MaintenanceLoop(ctx, store, time.UTC, log)
 	if store.reconcileCalls != 1 {
 		t.Fatalf("应在启动时记一次对账日志，实际 %d 次", store.reconcileCalls)
 	}
@@ -85,6 +88,21 @@ func TestMaintenanceLoopReconcilesAndPrunesInBatches(t *testing.T) {
 	}
 	if len(store.purchaseBatches) != 0 || len(store.chargeBatches) != 0 || len(store.orphanBatches) != 0 {
 		t.Fatalf("应把预设批次用完: %v %v %v", store.purchaseBatches, store.chargeBatches, store.orphanBatches)
+	}
+}
+
+// TestMaintenanceLoopReconcilesTheConfiguredDay 守住对账读的是配置时区的当天，而不是
+// 固定东八区：实例账本按 ZHIXIN_TIMEZONE 记 day，两者不一致时非东八区部署读到的
+// 是另一天的账。
+func TestMaintenanceLoopReconcilesTheConfiguredDay(t *testing.T) {
+	loc := time.FixedZone("UTC-11", -11*60*60)
+	store := &fakeMaintenance{counts: map[string]int64{}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	MaintenanceLoop(ctx, store, loc, log)
+	if want := time.Now().In(loc).Format("2006-01-02"); store.instanceDay != want {
+		t.Fatalf("对账应按配置时区取当天，want %q got %q", want, store.instanceDay)
 	}
 }
 

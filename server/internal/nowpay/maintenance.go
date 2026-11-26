@@ -78,28 +78,34 @@ func (m *Meter) Sweep(ctx context.Context, olderThan time.Time, limit int) (int,
 
 // MaintenanceLoop 每天记一次对账日志，并按保留期分批删除过期购买入口与终态流水。
 // 启动时先跑一次，之后每天一次；任何一步失败只记日志，不影响服务。与 SweepLoop
-// 一样会阻塞到 ctx 结束，调用方要用 goroutine 启动它。
-func MaintenanceLoop(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
+// 一样会阻塞到 ctx 结束，调用方要用 goroutine 启动它。loc 是配置的自然日、
+// 与实例账本记 day 用的是同一个时区（ZHIXIN_TIMEZONE）。
+func MaintenanceLoop(ctx context.Context, store MaintenanceStore, loc *time.Location, log *slog.Logger) {
 	if store == nil {
 		return
 	}
 	periodic.Run(ctx, 24*time.Hour, func() {
 		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), maintenanceLimit)
 		defer cancel()
-		reconcile(runCtx, store, log)
+		reconcile(runCtx, store, loc, log)
 		prune(runCtx, store, log)
 	})
 }
 
 // reconcile 记一条按日对账日志：核销流水按状态计数与实例账本当天的用量。它不修数据，
 // 只让积压、漏扣与实例账偏离在日志里看得见。
-func reconcile(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
+func reconcile(ctx context.Context, store MaintenanceStore, loc *time.Location, log *slog.Logger) {
 	counts, err := store.ChargeStatusCounts(ctx)
 	if err != nil {
 		log.Error("read the nowpay charge counts", "error", err)
 		return
 	}
-	day := time.Now().In(ChinaTime()).Format("2006-01-02")
+	// 实例账本按配置的时区记 day，对账必须用同一个时区取当天，否则非东八区部署时
+	// 读到的是另一天的账。没有传时区时退回即刻收一侧使用的东八区。
+	if loc == nil {
+		loc = ChinaTime()
+	}
+	day := time.Now().In(loc).Format("2006-01-02")
 	instance, err := store.InstanceUsed(ctx, day)
 	if err != nil {
 		log.Error("read the instance tokens for the reconciliation", "day", day, "error", err)

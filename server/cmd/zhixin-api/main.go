@@ -154,7 +154,7 @@ func run(log *slog.Logger) error {
 	if meter != nil {
 		meter.Start(ctx)
 		go nowpay.SweepLoop(ctx, meter, log)
-		go nowpay.MaintenanceLoop(ctx, nowpayMaintenance, log)
+		go nowpay.MaintenanceLoop(ctx, nowpayMaintenance, cfg.Location, log)
 	}
 
 	handler, _ := server.Build(ctx, cfg, stores, log)
