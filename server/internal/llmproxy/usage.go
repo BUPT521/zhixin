@@ -28,6 +28,38 @@ type UsageCounts struct {
 	// 两者都只在上游给出 usage 时记录，缺失时保持 0，缓存命中占比按有数据的
 	// 请求单独计算（方案第 7 节）。
 	InputTokens, CachedTokens int64
+	// 下面四组是同一批数字按“这次请求实际执行的第一条路由”与“此前的尝试失败后
+	// 接手的路由”拆开的两栏。换路有没有丢掉已经热起来的前缀要看这两栏的命中率，
+	// 合起来的总数会让一条高命中的路由盖住换路之后的零命中。
+	FirstInputTokens, FirstCachedTokens       int64
+	FailoverInputTokens, FailoverCachedTokens int64
+	// InputReports 是来源给出 input_tokens 的尝试数，CachedReports 是其中也给出
+	// cached_tokens 的尝试数。两者之差是上游缺报：来源在 usage 里带了输入量却没带
+	// 缓存字段时，这次尝试既不能算命中也不能算零命中，只能单独计数，否则缺报会被
+	// 读成零命中，据此调整路由权重就会调错。
+	FirstInputReports, FirstCachedReports       int64
+	FailoverInputReports, FailoverCachedReports int64
+}
+
+// recordCache 把一次尝试的缓存数据记进首次或换路那一栏。只有聊天在来源给了输入量
+// 时才有分母；嵌入没有缓存语义，失败在拿到用量之前的尝试也不记，两者都不进统计。
+func (u *UsageCounts) recordCache(kind Kind, first bool, used Usage) {
+	if kind != KindChat || used.Input <= 0 {
+		return
+	}
+	inputTokens, cachedTokens, inputReports, cachedReports := &u.FirstInputTokens, &u.FirstCachedTokens,
+		&u.FirstInputReports, &u.FirstCachedReports
+	if !first {
+		inputTokens, cachedTokens, inputReports, cachedReports = &u.FailoverInputTokens, &u.FailoverCachedTokens,
+			&u.FailoverInputReports, &u.FailoverCachedReports
+	}
+	*inputTokens += used.Input
+	*inputReports += 1
+	if !used.CachedReported {
+		return
+	}
+	*cachedTokens += used.Cached
+	*cachedReports += 1
 }
 
 func (u *UsageCounts) add(other UsageCounts) {
@@ -41,6 +73,14 @@ func (u *UsageCounts) add(other UsageCounts) {
 	u.EstimatedTokens += other.EstimatedTokens
 	u.InputTokens += other.InputTokens
 	u.CachedTokens += other.CachedTokens
+	u.FirstInputTokens += other.FirstInputTokens
+	u.FirstCachedTokens += other.FirstCachedTokens
+	u.FailoverInputTokens += other.FailoverInputTokens
+	u.FailoverCachedTokens += other.FailoverCachedTokens
+	u.FirstInputReports += other.FirstInputReports
+	u.FirstCachedReports += other.FirstCachedReports
+	u.FailoverInputReports += other.FailoverInputReports
+	u.FailoverCachedReports += other.FailoverCachedReports
 }
 
 func (u UsageCounts) view() api.AdminUsageCounts {
@@ -49,6 +89,10 @@ func (u UsageCounts) view() api.AdminUsageCounts {
 		TruncatedAttempts: u.TruncatedAttempts, CanceledAttempts: u.CanceledAttempts,
 		Successes: u.Successes, Tokens: u.Tokens, EstimatedTokens: u.EstimatedTokens,
 		InputTokens: u.InputTokens, CachedTokens: u.CachedTokens,
+		FirstInputTokens: u.FirstInputTokens, FirstCachedTokens: u.FirstCachedTokens,
+		FailoverInputTokens: u.FailoverInputTokens, FailoverCachedTokens: u.FailoverCachedTokens,
+		FirstInputReports: u.FirstInputReports, FirstCachedReports: u.FirstCachedReports,
+		FailoverInputReports: u.FailoverInputReports, FailoverCachedReports: u.FailoverCachedReports,
 	}
 }
 

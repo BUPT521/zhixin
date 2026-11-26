@@ -227,6 +227,13 @@ CREATE TABLE llm_instance_usage (
 );
 
 -- 每条模型路由的每日汇总，与账号额度各自记录。
+--
+-- input_tokens 与 cached_tokens 是合计；first_* 与 failover_* 是同一组数字按
+-- “这次请求实际执行的第一条路由”与“此前的尝试失败后接手的路由”拆开的两栏。
+-- *_reports 是上报条数：input_reports 记来源给了 input_tokens 的尝试数，
+-- cached_reports 记其中也给了 cached_tokens 的尝试数。来源报了 0 与来源没有这个
+-- 字段是两件事，前者算零命中，后者只增加两者的差额（上游缺报），因此命中率与
+-- 上报覆盖率要分开算。
 CREATE TABLE llm_route_usage (
   day               DATE NOT NULL,
   kind              TEXT NOT NULL CHECK (kind IN ('chat', 'embedding')),
@@ -243,6 +250,14 @@ CREATE TABLE llm_route_usage (
   estimated_tokens  BIGINT NOT NULL,
   input_tokens      BIGINT NOT NULL,
   cached_tokens     BIGINT NOT NULL,
+  first_input_tokens      BIGINT NOT NULL,
+  first_cached_tokens     BIGINT NOT NULL,
+  failover_input_tokens   BIGINT NOT NULL,
+  failover_cached_tokens  BIGINT NOT NULL,
+  first_input_reports     BIGINT NOT NULL,
+  first_cached_reports    BIGINT NOT NULL,
+  failover_input_reports  BIGINT NOT NULL,
+  failover_cached_reports BIGINT NOT NULL,
   PRIMARY KEY (day, kind, model, provider_id, upstream_model)
 );
 

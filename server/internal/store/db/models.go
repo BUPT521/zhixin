@@ -134,21 +134,29 @@ type LlmRoute struct {
 }
 
 type LlmRouteUsage struct {
-	Day               pgtype.Date
-	Kind              string
-	Model             string
-	ProviderID        string
-	UpstreamModel     string
-	Attempts          int64
-	FirstAttempts     int64
-	FailoverAttempts  int64
-	Successes         int64
-	TruncatedAttempts int64
-	CanceledAttempts  int64
-	Tokens            int64
-	EstimatedTokens   int64
-	InputTokens       int64
-	CachedTokens      int64
+	Day                   pgtype.Date
+	Kind                  string
+	Model                 string
+	ProviderID            string
+	UpstreamModel         string
+	Attempts              int64
+	FirstAttempts         int64
+	FailoverAttempts      int64
+	Successes             int64
+	TruncatedAttempts     int64
+	CanceledAttempts      int64
+	Tokens                int64
+	EstimatedTokens       int64
+	InputTokens           int64
+	CachedTokens          int64
+	FirstInputTokens      int64
+	FirstCachedTokens     int64
+	FailoverInputTokens   int64
+	FailoverCachedTokens  int64
+	FirstInputReports     int64
+	FirstCachedReports    int64
+	FailoverInputReports  int64
+	FailoverCachedReports int64
 }
 
 type LlmUsage struct {

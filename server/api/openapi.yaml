@@ -1578,7 +1578,7 @@ components:
         note: { type: string, maxLength: 200 }
     AdminUsageCounts:
       type: object
-      required: [attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens, input_tokens, cached_tokens]
+      required: [attempts, first_attempts, failover_attempts, successes, truncated_attempts, canceled_attempts, tokens, estimated_tokens, input_tokens, cached_tokens, first_input_tokens, first_cached_tokens, failover_input_tokens, failover_cached_tokens, first_input_reports, first_cached_reports, failover_input_reports, failover_cached_reports]
       properties:
         attempts: { type: integer, format: int64, description: 尝试路由的次数，嵌入拆批仍计一次 }
         first_attempts: { type: integer, format: int64, description: 每次请求首次执行的路由尝试 }
@@ -1590,6 +1590,14 @@ components:
         estimated_tokens: { type: integer, format: int64, description: tokens 中按估算结算的部分 }
         input_tokens: { type: integer, format: int64, description: 上游报告的输入量之和；没有报告时为 0 }
         cached_tokens: { type: integer, format: int64, description: input_tokens 中命中上游缓存的部分，用于计算缓存命中占比 }
+        first_input_tokens: { type: integer, format: int64, description: 首次尝试报告的输入量之和 }
+        first_cached_tokens: { type: integer, format: int64, description: 首次尝试的输入量中命中缓存的部分 }
+        failover_input_tokens: { type: integer, format: int64, description: 故障切换后执行的尝试报告的输入量之和 }
+        failover_cached_tokens: { type: integer, format: int64, description: 故障切换后的输入量中命中缓存的部分 }
+        first_input_reports: { type: integer, format: int64, description: 首次尝试中来源给出输入量的条数 }
+        first_cached_reports: { type: integer, format: int64, description: 首次尝试中也给出 cached_tokens 的条数，与 first_input_reports 的差是缺报条数 }
+        failover_input_reports: { type: integer, format: int64, description: 故障切换后的尝试中来源给出输入量的条数 }
+        failover_cached_reports: { type: integer, format: int64, description: 故障切换后的尝试中也给出 cached_tokens 的条数 }
     AdminUsageDay:
       type: object
       required: [day, chat, embedding]

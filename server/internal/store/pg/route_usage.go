@@ -21,6 +21,10 @@ func (s *Store) AddRouteUsage(ctx context.Context, row llmproxy.RouteUsage) erro
 		TruncatedAttempts: row.TruncatedAttempts, CanceledAttempts: row.CanceledAttempts,
 		Tokens: row.Tokens, EstimatedTokens: row.EstimatedTokens,
 		InputTokens: row.InputTokens, CachedTokens: row.CachedTokens,
+		FirstInputTokens: row.FirstInputTokens, FirstCachedTokens: row.FirstCachedTokens,
+		FailoverInputTokens: row.FailoverInputTokens, FailoverCachedTokens: row.FailoverCachedTokens,
+		FirstInputReports: row.FirstInputReports, FirstCachedReports: row.FirstCachedReports,
+		FailoverInputReports: row.FailoverInputReports, FailoverCachedReports: row.FailoverCachedReports,
 	})
 }
 
@@ -49,6 +53,10 @@ func (s *Store) RouteUsage(ctx context.Context, from, to string) ([]llmproxy.Rou
 				TruncatedAttempts: row.TruncatedAttempts, CanceledAttempts: row.CanceledAttempts,
 				Successes: row.Successes, Tokens: row.Tokens, EstimatedTokens: row.EstimatedTokens,
 				InputTokens: row.InputTokens, CachedTokens: row.CachedTokens,
+				FirstInputTokens: row.FirstInputTokens, FirstCachedTokens: row.FirstCachedTokens,
+				FailoverInputTokens: row.FailoverInputTokens, FailoverCachedTokens: row.FailoverCachedTokens,
+				FirstInputReports: row.FirstInputReports, FirstCachedReports: row.FirstCachedReports,
+				FailoverInputReports: row.FailoverInputReports, FailoverCachedReports: row.FailoverCachedReports,
 			},
 		})
 	}
