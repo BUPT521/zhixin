@@ -77,6 +77,10 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
   /// 本次打开的购买链接，用来判断回到前台时它是否还在有效期内。
   QuotaPurchaseLink? _lastLink;
 
+  /// 已经付过款的购买链接编号：余额在打开它之后增加了，这张链接不再作为“继续上次
+  /// 购买”的入口，免得把用户带回一张已经支付过的页面（ADR-0074）。
+  String? _paidRequestNo;
+
   @override
   void initState() {
     super.initState();
@@ -183,6 +187,9 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
           ? null
           : purchases.balancePoints;
       refreshed = true;
+      // 只有先前读到过余额、这次又变多了才算到账：先前读不到时没有对照，不能
+      // 直接说“已到账”。
+      final paid = before != null && balance.remaining > before;
       setState(() {
         if (purchases == null) return;
         _purchases = QuotaPurchaseOverview(
@@ -191,16 +198,19 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
           product: purchases.product,
           latestPurchase: purchases.latestPurchase,
         );
-        if (before == null || balance.remaining > before) {
+        if (paid) {
+          // 增加的积分来自刚打开的那张购买链接：它已经付过款，不再作为继续购买的
+          // 入口，否则会重新打开一张已经支付过的页面。
+          _paidRequestNo =
+              _lastLink?.outRequestNo ?? purchases.latestPurchase?.outRequestNo;
           _notice = '已到账，可用积分 ${balance.remaining} 分。';
+        } else if (before == null) {
+          _notice = '已刷新，可用积分 ${balance.remaining} 分。';
         } else if (!quiet) {
           _notice = '还没有查到新的积分，可以稍后再刷新一次。';
         }
       });
-      final current = _purchases?.balancePoints;
-      if (current != null && (before == null || current > before)) {
-        await widget.onPaid();
-      }
+      if (paid) await widget.onPaid();
     } on AccountSignedOut {
       if (mounted) {
         _awaitingReturn = false;
@@ -349,17 +359,22 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
   }
 
   /// 打开上次没有过期的购买链接；打开之前先核对有效期，过期就重新读一次概览。
+  /// 已经付过款的那一张不再提供，避免重新打开一张支付过的页面。
   Future<void> _openLatest() async {
     if (_busy) return;
-    var latest = _purchases?.latestPurchase;
-    if (latest == null) return;
-    if (!latest.expiresAt.isAfter(DateTime.now())) {
+    var purchases = _purchases;
+    if (purchases == null) return;
+    var latest = _latestLink(purchases);
+    if (latest == null) {
+      if (purchases.latestPurchase?.outRequestNo == _paidRequestNo) {
+        setState(() => _notice = '上次的购买已经到账，不再重复打开同一张购买页。');
+        return;
+      }
       await _load();
       if (!mounted) return;
-      latest = _purchases?.latestPurchase;
-      if (latest == null ||
-          !latest.expiresAt.isAfter(DateTime.now()) ||
-          latest.purchaseUrl.trim().isEmpty) {
+      purchases = _purchases;
+      latest = purchases == null ? null : _latestLink(purchases);
+      if (latest == null) {
         setState(() => _notice = '上次的购买链接已经过期，请重新选择档位购买。');
         return;
       }
@@ -434,11 +449,13 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     return null;
   }
 
-  /// 可以“继续上次购买”的入口：同一个档位、没有过期、链接非空。
+  /// 可以“继续上次购买”的入口：同一个档位、没有过期、链接非空，而且这张链接
+  /// 还没有付过款。付过款的那一张再打开只会让人以为要再付一次（ADR-0074）。
   QuotaPurchaseLink? _latestLink(QuotaPurchaseOverview purchases) {
     final latest = purchases.latestPurchase;
     if (latest == null || latest.purchaseUrl.trim().isEmpty) return null;
     if (!latest.expiresAt.isAfter(DateTime.now())) return null;
+    if (latest.outRequestNo == _paidRequestNo) return null;
     final sku = latest.skuId;
     if (sku == null) return null;
     final product = purchases.product;

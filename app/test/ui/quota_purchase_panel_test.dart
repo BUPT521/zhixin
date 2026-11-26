@@ -412,4 +412,36 @@ void main() {
     expect(find.text('继续上次购买'), findsNothing);
     await settle(tester);
   });
+
+  testWidgets('付过款的链接不再给继续上次购买，避免重开已经支付过的页面', (tester) async {
+    account.overview = _overview(latestPurchase: _link(skuId: 'sku-1'));
+    account.balance = const QuotaBalance(remaining: 160, total: 160, used: 0);
+    await pumpPanel(tester);
+
+    await tester.tap(find.text('继续上次购买'));
+    await tester.pump();
+    await tester.pump();
+    expect(launchedUrls, ['https://example.test/pay']);
+
+    // 付款之后余额变多：这张链接已经付过款，不再作为继续购买的入口。
+    await tester.tap(find.text('刷新余额'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('已到账'), findsOneWidget);
+    expect(find.text('继续上次购买'), findsNothing);
+    await settle(tester);
+  });
+
+  testWidgets('余额先前读不到时刷新只说已刷新，不说已到账', (tester) async {
+    account.overview = _overview(balancePoints: 0, balanceUnavailable: true);
+    account.balance = const QuotaBalance(remaining: 42, total: 42, used: 0);
+    await pumpPanel(tester);
+
+    await tester.tap(find.text('刷新余额'));
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('已刷新，可用积分 42 分'), findsOneWidget);
+    expect(find.textContaining('已到账'), findsNothing);
+    await settle(tester);
+  });
 }
