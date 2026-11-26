@@ -916,8 +916,9 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			return reply, err
 		}
 		var firstOutput time.Duration
+		var budgetOnly bool
 		if stream {
-			firstOutput = p.firstOutputBudget(plan, i, deadline)
+			firstOutput, budgetOnly = p.firstOutputBudget(plan, i, deadline)
 		}
 		attempt, started, err := p.beginAttempt(ctx, plan, rt, estimate)
 		if err != nil {
@@ -930,6 +931,14 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		attemptStarted := p.now()
 		resp, err := p.attempt(ctx, rt.Provider, upstreamResponsesPath, body, stream, firstOutput)
 		if err != nil {
+			if budgetOnly && errors.Is(err, errFirstOutputTimeout) {
+				// 最后一次尝试的首字时限就是这一轮剩下的时间，它到点说明预算用完；
+				// 本轮总时限的计时器与首字时限的计时器可能同时到点，谁先触发都按
+				// 预算用完结束，不算来源故障，也不让客户端收到 candidates_exhausted。
+				p.finishAttempt(plan, attempt, attemptResult{unknown: true, clientCanceled: true}, 0,
+					healthOutcome{reason: "本轮预算用完", sourceReached: true})
+				return reply, context.DeadlineExceeded
+			}
 			// 连接都没有建立时上游不可能计费，记 0；已经连上之后超时或被取消
 			// 的尝试按输入估算结算，见 billedTokens。
 			var connection sourceConnectionError
@@ -1088,20 +1097,22 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 
 // firstOutputBudget 给这一次流式尝试分到等待首个有效输出的时间：不超过
 // FirstOutputTimeout（没有配置时退回 HeaderTimeout），也不超过本轮剩余预算按
-// 还能尝试的候选数平分的份额，首发与备用因此都落在同一轮预算内。没有配置任何
-// 时限、也没有客户端预算时返回 0，表示不设这个期限；本轮预算是否已经用完由
-// dispatch 在发起尝试之前核对。
-func (p *Proxy) firstOutputBudget(plan *attemptPlan, index int, deadline time.Time) time.Duration {
+// 还能尝试的候选数平分的份额，首发与备用因此都落在同一轮预算内。返回的第二个值
+// 表示这个时限取自本轮剩余预算、而且这是最后一次允许的尝试，它到点就等于预算
+// 用完，调用方据此回 504 而不是把来源的首字超时当成来源故障。没有配置任何时限、
+// 也没有客户端预算时返回 0，表示不设这个期限；本轮预算是否已经用完由 dispatch
+// 在发起尝试之前核对。
+func (p *Proxy) firstOutputBudget(plan *attemptPlan, index int, deadline time.Time) (time.Duration, bool) {
 	limit := p.cfg.FirstOutputTimeout
 	if limit <= 0 {
 		limit = p.cfg.HeaderTimeout
 	}
 	if deadline.IsZero() {
-		return limit
+		return limit, false
 	}
 	left := deadline.Sub(p.now())
 	if left <= 0 {
-		return 0
+		return 0, false
 	}
 	remaining := len(plan.candidates) - index
 	if p.cfg.MaxAttempts > 0 {
@@ -1112,10 +1123,11 @@ func (p *Proxy) firstOutputBudget(plan *attemptPlan, index int, deadline time.Ti
 	if remaining < 1 {
 		remaining = 1
 	}
-	if share := left / time.Duration(remaining); limit <= 0 || share < limit {
-		limit = share
+	share := left / time.Duration(remaining)
+	if limit <= 0 || share < limit {
+		return share, remaining <= 1
 	}
-	return limit
+	return limit, false
 }
 
 // upstreamResponsesPath 是来源侧接收对话请求的路径。来源都是 OpenAI 兼容地址，
@@ -1154,7 +1166,7 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 			resp.Body.Close()
 		}
 		cancel()
-		resp, err = nil, fmt.Errorf("no response within %s", headerTimeout)
+		resp, err = nil, fmt.Errorf("%w (no response within %s)", errFirstOutputTimeout, headerTimeout)
 	}
 	if err != nil {
 		cancel()
@@ -1369,6 +1381,10 @@ func (end responseCompletion) outcome() healthOutcome {
 		return healthOutcome{reason: "流式响应提前结束", scope: routeFailure}
 	}
 }
+
+// errFirstOutputTimeout 表示等待来源首个有效输出（响应头）的时限到了。这个时限
+// 可能取自本轮剩余预算，调用方据此区分来源慢与这一轮没有时间了。
+var errFirstOutputTimeout = errors.New("llmproxy: 首个有效输出超时")
 
 // errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用
 // 方可以按 upstream_failed 回 problem，而不是把半截响应交给客户端。
