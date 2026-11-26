@@ -75,8 +75,9 @@ func (s *Store) SaveBalance(ctx context.Context, userID string, remaining int64,
 
 // Points 返回账号的积分视图：当天已经核销成功的积分与可用积分。没有配置即刻收、
 // 或者余额副本表还没建好时 Known 为 false，账号页不显示这两行。可用积分与预留
-// 放行用同一个口径：副本减去还没有反映的核销，再减去当天已经结算、还没有记进流水
-// 的计费量折成的积分，账号页显示的数因此不会大于实际能放行的量（ADR-0073）。
+// 放行用同一个口径：副本减去还没有反映的核销，再减去当天已经占用（已结算与在途
+// 预留）、还没有记进流水的计费量折成的积分，账号页显示的数因此不会大于实际能放行
+// 的量（ADR-0073）。
 func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points, error) {
 	if s.nowpay == nil || !s.balanceReady.Load() {
 		return llmproxy.Points{}, nil
@@ -93,7 +94,10 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 	if err != nil {
 		return llmproxy.Points{}, err
 	}
-	used, err := settledTokens(ctx, s.q, userID, date, llmproxy.KindChat)
+	// 与额度放行用同一份入参：已结算量与在途预留之和。只看已结算时，有在途请求
+	// 的账号页会显示比实际还能放行的积分更多的数，用户照它发请求会收到 points
+	// 429（ADR-0073）。
+	used, err := usedTokens(ctx, s.q, userID, date, llmproxy.KindChat)
 	if err != nil {
 		return llmproxy.Points{}, err
 	}
@@ -468,10 +472,10 @@ type balanceView struct {
 }
 
 // balancePoints 读余额副本并算出可用积分：副本减去还没有反映的核销，再减去当天
-// 已经发生、还没有记进流水的计费量折成的积分（向下取整）。known 为假表示余额表
-// 未就绪或账号还没有副本；stale 表示副本缺失或距快照超过需要重新查询的间隔，调用
-// 方据此决定是否排一次刷新。账号页的剩余积分与 paidTokens 共用这一处，显示的数
-// 因此不会大于实际能放行的量（ADR-0073）。
+// 已经占用（已结算与在途预留）、还没有记进流水的计费量折成的积分（向下取整）。
+// known 为假表示余额表未就绪或账号还没有副本；stale 表示副本缺失或距快照超过需要
+// 重新查询的间隔，调用方据此决定是否排一次刷新。账号页的剩余积分与 paidTokens
+// 共用这一处、也共用同一份入参，显示的数因此不会大于实际能放行的量（ADR-0073）。
 func (s *Store) balancePoints(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, used, limit int64, limited bool) (balanceView, error) {
 	// 副本表还没建好时只放行免费额度，不去查一张不存在的表。
 	if !s.balanceReady.Load() {
