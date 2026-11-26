@@ -1,11 +1,8 @@
-import 'dart:async';
-
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
 import '../application/account_service.dart';
-import 'account_dialogs.dart';
 import 'failure_feedback.dart';
 import 'theme.dart';
 import 'workspace_widgets.dart';
@@ -21,8 +18,6 @@ class AccountLoginForm extends StatefulWidget {
     required this.identifier,
     this.onSignedIn,
     this.onForgotPassword,
-    this.showServerAddress = false,
-    this.onSaveServerAddress,
   });
 
   /// 登录方式输入框的控制器；账号页的“忘记密码”也要用同一个邮箱，所以由页面
@@ -42,16 +37,6 @@ class AccountLoginForm extends StatefulWidget {
   /// 提供时显示“忘记密码”按钮；引导里跳账号页，账号页里切到重设表单。
   final VoidCallback? onForgotPassword;
 
-  /// 是否在表单下方折叠“使用自建服务”：引导里默认收起，账号页不显示这一块，
-  /// 服务地址仍由设置页的开发者模式调整。
-  final bool showServerAddress;
-
-  /// 保存“使用自建服务”里填的实例地址；为空时不显示这一块的修改入口。
-  ///
-  /// 首次启动引导直接选实例，不再先让用户去设置里打开开发者模式，调用方传入
-  /// 只核对实例就绪与 schema 的保存动作。
-  final Future<void> Function(String address)? onSaveServerAddress;
-
   @override
   State<AccountLoginForm> createState() => _AccountLoginFormState();
 }
@@ -61,35 +46,10 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
   bool _busy = false;
   String? _error;
 
-  /// 折叠区里显示的当前服务地址；读不到时留空，只影响这一行说明。
-  String? _serverAddress;
-  bool _addressStarted = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    if (_addressStarted) return;
-    _addressStarted = true;
-    if (widget.showServerAddress) unawaited(_loadServerAddress());
-  }
-
   @override
   void dispose() {
     _password.dispose();
     super.dispose();
-  }
-
-  Future<void> _loadServerAddress() async {
-    final scope = AppScope.of(context);
-    try {
-      // 引导显示得比开库早，服务在就绪之后才读得到；读失败只留空这一行。
-      await scope.ready;
-      final address = await scope.accountServices.account.serverBaseUrl();
-      if (!mounted) return;
-      setState(() => _serverAddress = address);
-    } catch (_) {
-      // 服务地址只用于说明与修改，读不到不影响登录。
-    }
   }
 
   Future<void> _submit({required bool register}) async {
@@ -141,17 +101,6 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
     }
   }
 
-  Future<void> _editServerAddress() async {
-    final onSave = widget.onSaveServerAddress;
-    if (onSave == null) return;
-    final saved = await editZhixinServerAddress(
-      context,
-      serverBaseUrl: _serverAddress ?? '',
-      onSave: onSave,
-    );
-    if (saved == true) await _loadServerAddress();
-  }
-
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
@@ -200,42 +149,6 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
         if (_error case final error?) ...[
           SizedBox(height: theme.space.md),
           InlineNotice(message: error),
-        ],
-        if (widget.showServerAddress) ...[
-          SizedBox(height: theme.space.md),
-          forui.FAccordion(
-            style: const .delta(
-              titlePadding: .value(EdgeInsets.symmetric(vertical: 4)),
-              childPadding: .value(EdgeInsets.only(bottom: 4)),
-              dividerStyle: .delta(color: Colors.transparent),
-            ),
-            children: [
-              forui.FAccordionItem(
-                title: Text('使用自建服务', style: theme.text.bodyMedium),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _serverAddress == null
-                          ? '正在读取当前服务地址…'
-                          : '当前实例：$_serverAddress',
-                      style: theme.text.bodySmall.copyWith(
-                        color: theme.colors.onSurfaceVariant,
-                      ),
-                    ),
-                    SizedBox(height: theme.space.sm),
-                    forui.FButton(
-                      variant: forui.FButtonVariant.outline,
-                      size: forui.FButtonSizeVariant.sm,
-                      mainAxisSize: MainAxisSize.min,
-                      onPress: _busy ? null : _editServerAddress,
-                      child: const Text('修改服务地址'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
         ],
       ],
     );

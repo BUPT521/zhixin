@@ -314,8 +314,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                 forui.FSwitch(
                   label: const Text('匿名使用统计'),
                   description: const Text(
-                    '不登录时每天最多一次向服务端上报：随机安装标识、应用版本与平台，'
-                    '不含学习内容，也不与账号关联；登录之后由服务端按请求日期统计。'
+                    '采集范围、用途与保存期限见上面《隐私政策》第二部分；'
                     '可以随时在设置里关闭。',
                   ),
                   value: _controller.telemetryEnabled,
@@ -345,7 +344,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   Widget _loginStep(BuildContext context) {
     final theme = context.zhixin;
-    final scope = AppScope.of(context);
     return _page(
       context,
       title: '登录或注册',
@@ -358,12 +356,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
             padding: EdgeInsets.all(theme.space.lg),
             child: AccountLoginForm(
               identifier: _identifier,
-              showServerAddress: true,
-              // 引导里直接选实例，不要求先去设置里打开开发者模式。
-              onSaveServerAddress: (address) => scope.configureServerBaseUrl(
-                address,
-                requireDeveloperMode: false,
-              ),
               onForgotPassword: _openForgotPassword,
               // 不换空间的装配（测试）里页面不会重建，由回调推进到下一步；
               // 换空间时回调到不了这里，推进以重建之后的登录态为准。
