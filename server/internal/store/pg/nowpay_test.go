@@ -265,6 +265,50 @@ func TestPostgresPointsView(t *testing.T) {
 	}
 }
 
+// TestPostgresPointsMatchTheAmountThatCanBeReleased 守住账号页的剩余积分与放行
+// 同口径：有在途预留时页面显示的数就是还能放行的积分。免费额度一百、副本五积分
+// （一个积分一千 token），当天已结算一百、另有一笔三千 token 在途，可用积分因此是
+// 5-3=2，放行侧也只还能放行 2,000 个 token（ADR-0073）。
+func TestPostgresPointsMatchTheAmountThatCanBeReleased(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
+	st.SetQuotaLimits(100, 0, 0)
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	// 先把免费的一百 token 用完。
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil {
+		t.Fatalf("reserve the free quota: %v", err)
+	}
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 100, 100, llmproxy.Usage{}); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	// 再发起一笔三千 token 的请求，它还留在途里没有结算。
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 3000); err != nil || got != 3000 {
+		t.Fatalf("reserve from the points: %d %v", got, err)
+	}
+	points, err := st.Points(ctx, "u1", day)
+	if err != nil {
+		t.Fatalf("points: %v", err)
+	}
+	if !points.Known || points.Remaining != 2 {
+		t.Fatalf("在途的三千 token 应占三个积分，剩余应为 2: %+v", points)
+	}
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 2000); err != nil || got != 2000 {
+		t.Fatalf("与页面一致，应还能放行 2,000 个 token: %d %v", got, err)
+	}
+	var quota *llmproxy.QuotaExceededError
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 1); !errors.As(err, &quota) || quota.Reason != llmproxy.QuotaReasonPoints {
+		t.Fatalf("页面显示的积分放行完之后应回 points，得到 %v", err)
+	}
+}
+
 // TestPostgresSaveBalanceClampsNegative 守住副本不会是负数：核销结果与查询接口都
 // 可能传来零，负数一律按零落库。
 func TestPostgresSaveBalanceClampsNegative(t *testing.T) {

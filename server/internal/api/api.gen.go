@@ -925,9 +925,9 @@ type LLMQuota struct {
 	// EmbeddingUsedTokens 嵌入当天已结算的计费 token
 	EmbeddingUsedTokens int64 `json:"embedding_used_tokens"`
 
-	// RemainingPoints 可用积分：余额副本减去还没有反映的核销，再减去当天已经结算、还没有记进流水的
-	// 计费量折成的积分（向下取整）；与额度放行用同一个口径，账号页显示的数不会大于
-	// 实际能放行的量。没有开通收款或还没有余额副本时为 null，见 ADR-0073。
+	// RemainingPoints 可用积分：余额副本减去还没有反映的核销，再减去当天已经占用（已结算与在途预留）、
+	// 还没有记进流水的计费量折成的积分（向下取整）；与额度放行共用同一个入参，账号页
+	// 显示的数不会大于实际能放行的量。没有开通收款或还没有余额副本时为 null，见 ADR-0073。
 	RemainingPoints *int64 `json:"remaining_points,omitempty"`
 
 	// TokensPerPoint 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
