@@ -77,6 +77,17 @@ func TestAdminAccountManagement(t *testing.T) {
 		detail.Usage.EmbeddingTokens != 0 || detail.Usage.Day.Time.IsZero() {
 		t.Fatalf("account detail: %+v", detail)
 	}
+	// 内存存储没有即刻收：积分一节照常返回，但只说明这个实例没有开通收款，账号
+	// 还没有积分余额；列表里不带这一节，避免一页账号逐行查询。
+	if detail.Points == nil || detail.Points.Enabled || detail.Points.ChargedToday != 0 ||
+		detail.Points.Remaining != nil || detail.Points.SyncedAt != nil || len(detail.Points.Charges) != 0 {
+		t.Fatalf("account points without nowpay: %+v", detail.Points)
+	}
+	if byID[idA].Points != nil {
+		t.Fatalf("list should omit points: %+v", byID[idA].Points)
+	}
+	admin("POST", "/admin/v1/accounts/"+idA+"/points/refresh", nil, nil, http.StatusConflict)
+	admin("POST", "/admin/v1/accounts/absent/points/refresh", nil, nil, http.StatusNotFound)
 	admin("GET", "/admin/v1/accounts/absent", nil, nil, http.StatusNotFound)
 
 	// 调整聊天额度后，账号自己的额度接口立即读到新值，嵌入仍然走实例默认值。

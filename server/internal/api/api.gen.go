@@ -43,6 +43,30 @@ func (e AdminHealthState) Valid() bool {
 	}
 }
 
+// Defines values for AdminPointChargeStatus.
+const (
+	Failed     AdminPointChargeStatus = "failed"
+	Pending    AdminPointChargeStatus = "pending"
+	Processing AdminPointChargeStatus = "processing"
+	Succeeded  AdminPointChargeStatus = "succeeded"
+)
+
+// Valid indicates whether the value is a known member of the AdminPointChargeStatus enum.
+func (e AdminPointChargeStatus) Valid() bool {
+	switch e {
+	case Failed:
+		return true
+	case Pending:
+		return true
+	case Processing:
+		return true
+	case Succeeded:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for AdminRouteState.
 const (
 	AdminRouteStateCooling          AdminRouteState = "cooling"
@@ -386,6 +410,9 @@ type AdminAccount struct {
 	// Identities 这个账号的登录方式；现在只有一条邮箱
 	Identities []AdminAccountIdentity `json:"identities"`
 
+	// Points 积分视图；只在读取单个账号时返回，列表里省略
+	Points *AdminAccountPoints `json:"points,omitempty"`
+
 	// Quota 一个账号的模型额度：覆盖值与最终生效值。没有覆盖值时覆盖项省略，表示这一项用实例默认值
 	Quota AdminAccountQuota `json:"quota"`
 
@@ -423,6 +450,24 @@ type AdminAccountList struct {
 
 	// Total 匹配查询条件的账号总数
 	Total int64 `json:"total"`
+}
+
+// AdminAccountPoints 一个账号的积分视图；真正的余额在支付宝一侧，这里读本地副本
+type AdminAccountPoints struct {
+	// ChargedToday 今天已经核销成功的积分；未开通收款时为 0
+	ChargedToday int64 `json:"charged_today"`
+
+	// Charges 最近五条核销流水，新到旧；只在读取单个账号时返回
+	Charges []AdminPointCharge `json:"charges"`
+
+	// Enabled 这个实例是否开通了积分收款
+	Enabled bool `json:"enabled"`
+
+	// Remaining 可用积分，与额度放行同一口径；余额副本不可用或还没有同步时省略
+	Remaining *int64 `json:"remaining,omitempty"`
+
+	// SyncedAt 余额副本的快照时刻；没有副本时省略
+	SyncedAt *time.Time `json:"synced_at,omitempty"`
 }
 
 // AdminAccountQuota 一个账号的模型额度：覆盖值与最终生效值。没有覆盖值时覆盖项省略，表示这一项用实例默认值
@@ -625,6 +670,29 @@ type AdminModelInput struct {
 type AdminModelList struct {
 	Data []AdminModel `json:"data"`
 }
+
+// AdminPointCharge 一笔积分核销流水；只读，后台不提供撤销或补扣
+type AdminPointCharge struct {
+	// BilledTokens 这次申请对应的计费 token 数
+	BilledTokens int64     `json:"billed_tokens"`
+	CreatedAt    time.Time `json:"created_at"`
+
+	// Day 记账自然日
+	Day openapi_types.Date `json:"day"`
+
+	// Id 流水编号，同时是提交给即刻收的请求号
+	Id string `json:"id"`
+
+	// Points 这次申请的积分
+	Points int64                  `json:"points"`
+	Status AdminPointChargeStatus `json:"status"`
+
+	// UpdatedAt 终态行的确认时间
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// AdminPointChargeStatus defines model for AdminPointCharge.Status.
+type AdminPointChargeStatus string
 
 // AdminProbe defines model for AdminProbe.
 type AdminProbe struct {
@@ -1901,9 +1969,12 @@ type ServerInterface interface {
 	// DeleteAdminV1AccountsId 注销一个账号
 	// (DELETE /admin/v1/accounts/{id})
 	DeleteAdminV1AccountsId(w http.ResponseWriter, r *http.Request, id string)
-	// GetAdminV1AccountsId 读取一个账号的额度与今日用量
+	// GetAdminV1AccountsId 读取一个账号的额度、今日用量与积分
 	// (GET /admin/v1/accounts/{id})
 	GetAdminV1AccountsId(w http.ResponseWriter, r *http.Request, id string)
+	// PostAdminV1AccountsIdPointsRefresh 立即查询一个账号的积分余额
+	// (POST /admin/v1/accounts/{id}/points/refresh)
+	PostAdminV1AccountsIdPointsRefresh(w http.ResponseWriter, r *http.Request, id string)
 	// DeleteAdminV1AccountsIdQuota 清除一个账号的额度覆盖值
 	// (DELETE /admin/v1/accounts/{id}/quota)
 	DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request, id string)
@@ -2209,6 +2280,32 @@ func (siw *ServerInterfaceWrapper) GetAdminV1AccountsId(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetAdminV1AccountsId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminV1AccountsIdPointsRefresh operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminV1AccountsIdPointsRefresh(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminV1AccountsIdPointsRefresh(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -4088,6 +4185,7 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/accounts/{id}", wrapper.GetAdminV1AccountsId)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/accounts/{id}/quota", wrapper.DeleteAdminV1AccountsIdQuota)
 	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/accounts/{id}/quota", wrapper.PutAdminV1AccountsIdQuota)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/accounts/{id}/points/refresh", wrapper.PostAdminV1AccountsIdPointsRefresh)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/feedback", wrapper.GetAdminV1Feedback)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/feedback/{id}", wrapper.DeleteAdminV1FeedbackId)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/feedback/{id}", wrapper.GetAdminV1FeedbackId)

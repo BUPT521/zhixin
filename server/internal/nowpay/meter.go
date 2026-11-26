@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -75,6 +76,10 @@ type Recorder interface {
 	// 请求，并报告这次是否真的入了队：同一个账号一分钟内已经排过时返回 false。
 	// 429 的原因据此区分“正在同步”与“确实没有积分”（ADR-0073）。
 	RefreshBalance(ctx context.Context, userID string) bool
+	// QueryBalance 同步查询一次余额并覆盖本地副本，供管理后台的“刷新余额”使用；
+	// 查询失败时返回错误，副本保持原值。它与 RefreshBalance 走同一个客户端调用，
+	// 区别只在这次要等结果。
+	QueryBalance(ctx context.Context, userID string) error
 	// TokensPerPoint 是一个积分覆盖的计费 token 数，额度预留按它把余额折成 token。
 	TokensPerPoint() int64
 }
@@ -302,18 +307,26 @@ func (m *Meter) run(parent context.Context, next job) {
 // refresh 查一次余额并覆盖本地副本。查询失败只记日志，副本停在旧值：把失败当成零
 // 余额会把还在余额内的账号挡在免费额度之外。
 func (m *Meter) refresh(ctx context.Context, userID string) {
+	if err := m.QueryBalance(ctx, userID); err != nil {
+		m.log.Warn("refresh the nowpay balance", "user_id", userID, "error", err)
+	}
+}
+
+// QueryBalance 同步查询一次余额并覆盖本地副本，供管理后台的“刷新余额”使用。余额
+// 单位不是积分时不写副本：那说明商品配置变了，按积分数写进去会让副本与实际余额
+// 对不上。查询失败原样返回，副本保持旧值。
+func (m *Meter) QueryBalance(ctx context.Context, userID string) error {
 	balance, err := m.client.Balance(ctx, userID)
 	if err != nil {
-		m.log.Warn("refresh the nowpay balance", "user_id", userID, "error", err)
-		return
+		return err
 	}
 	if balance.Unit != UnitPoints {
-		// 不是按积分卖的商品，余额数字不能写进按积分放行的副本。
-		m.log.Error("the nowpay product is not sold in points",
-			"user_id", userID, "quota_unit", balance.Unit)
-		return
+		return fmt.Errorf("nowpay: 商品额度单位不是积分（%s）", balance.Unit)
 	}
-	m.saveBalance(ctx, userID, balance.Remaining, balance.AsOf)
+	if err := m.ledger.SaveBalance(ctx, userID, balance.Remaining, balance.AsOf); err != nil {
+		return fmt.Errorf("nowpay: 保存余额副本失败: %w", err)
+	}
+	return nil
 }
 
 // saveBalance 覆盖本地余额副本。写失败只影响下一轮预留的判断，下一轮请求会再查。

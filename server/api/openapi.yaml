@@ -1319,10 +1319,11 @@ paths:
     get:
       tags: [admin]
       security: [{ admin: [] }]
-      summary: 读取一个账号的额度与今日用量
+      summary: 读取一个账号的额度、今日用量与积分
       description: |
-        返回账号的登录方式、单独调整过的额度、生效额度以及按服务端时区计算的今日
-        已结算用量。读取用量不改变任何计数，也不包含仍在途的预留。
+        返回账号的登录方式、单独调整过的额度、生效额度、按服务端时区计算的今日已
+        结算用量，以及积分视图：今天已经核销的积分、可用积分、余额副本的快照时刻
+        与最近五条核销流水。读取不改变任何计数，不包含仍在途的预留，也不调用即刻收。
       responses:
         "200":
           description: 账号详情
@@ -1387,6 +1388,29 @@ paths:
         "204": { description: 已清除 }
         "401": { $ref: "#/components/responses/Problem" }
         "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/accounts/{id}/points/refresh:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
+    post:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 立即查询一个账号的积分余额
+      description: |
+        同步调用一次即刻收的余额查询并覆盖本地副本，返回刷新后的可用积分、今天已经
+        核销的积分与最近五条流水。实例没有开通积分收款时返回 409；账号不存在时返回
+        404；即刻收不可用、商品额度单位不是积分或响应无法解析时返回 502，副本保持
+        原值。后台只能查看，不能补分、扣分或退款。
+      responses:
+        "200":
+          description: 刷新之后的积分视图
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccountPoints" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "409": { $ref: "#/components/responses/Problem" }
+        "502": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
   /admin/v1/feedback:
     get:
@@ -1916,6 +1940,39 @@ components:
         day: { type: string, format: date, description: 统计自然日 }
         chat_tokens: { type: integer, format: int64, description: 聊天当天已结算的计费 token }
         embedding_tokens: { type: integer, format: int64, description: 嵌入当天已结算的计费 token }
+    AdminPointCharge:
+      type: object
+      description: 一笔积分核销流水；只读，后台不提供撤销或补扣
+      required: [id, day, points, billed_tokens, status, created_at, updated_at]
+      properties:
+        id: { type: string, description: 流水编号，同时是提交给即刻收的请求号 }
+        day: { type: string, format: date, description: 记账自然日 }
+        points: { type: integer, format: int64, description: 这次申请的积分 }
+        billed_tokens: { type: integer, format: int64, description: 这次申请对应的计费 token 数 }
+        status: { type: string, enum: [pending, processing, succeeded, failed] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time, description: 终态行的确认时间 }
+    AdminAccountPoints:
+      type: object
+      description: 一个账号的积分视图；真正的余额在支付宝一侧，这里读本地副本
+      required: [enabled, charged_today, charges]
+      properties:
+        enabled: { type: boolean, description: 这个实例是否开通了积分收款 }
+        charged_today: { type: integer, format: int64, description: 今天已经核销成功的积分；未开通收款时为 0 }
+        remaining:
+          type: integer
+          format: int64
+          nullable: true
+          description: 可用积分，与额度放行同一口径；余额副本不可用或还没有同步时省略
+        synced_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: 余额副本的快照时刻；没有副本时省略
+        charges:
+          type: array
+          description: 最近五条核销流水，新到旧；只在读取单个账号时返回
+          items: { $ref: "#/components/schemas/AdminPointCharge" }
     AdminAccount:
       type: object
       required: [id, created_at, identities, quota]
@@ -1930,6 +1987,9 @@ components:
         usage:
           description: 今日已结算用量；只在读取单个账号时返回，列表里省略
           $ref: "#/components/schemas/AdminAccountUsage"
+        points:
+          description: 积分视图；只在读取单个账号时返回，列表里省略
+          $ref: "#/components/schemas/AdminAccountPoints"
     AdminAccountList:
       type: object
       required: [data, total, limit, offset]

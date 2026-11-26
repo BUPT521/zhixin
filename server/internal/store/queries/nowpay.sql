@@ -15,6 +15,15 @@ WHERE user_id = sqlc.arg(user_id) AND status IN ('pending', 'processing')
 ORDER BY created_at, id
 LIMIT sqlc.arg(max_rows);
 
+-- 管理后台查看一个账号最近的核销流水，新到旧；删号之后 user_id 被置空的行不取，
+-- 它们已经不属于任何账号。只读，不改变流水状态。
+-- name: RecentChargesByUser :many
+SELECT id, day, points, billed_tokens, status, created_at, updated_at
+FROM nowpay_charge
+WHERE user_id = sqlc.arg(user_id)
+ORDER BY created_at DESC, id DESC
+LIMIT sqlc.arg(max_rows);
+
 -- 全局补查：创建超过宽限期仍未终结的流水，不按账号过滤。核销队列满或进程退出时
 -- 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。删号之后 user_id 被置空的行
 -- 不再取：即刻收的核销与补查都要带买家标识，没有买家标识的行无论补查多少次都只会
