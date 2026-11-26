@@ -243,3 +243,20 @@ func TestRouteUsageSplitsCacheByAttemptOrder(t *testing.T) {
 		t.Fatalf("合计应等于换路栏：%+v", total)
 	}
 }
+
+// TestUsageCountsViewMapsCacheFields 核对缓存分项原样交到后台接口：八列各自落到
+// 对应的字段，折算与展示拿到的就是记录下来的数字。
+func TestUsageCountsViewMapsCacheFields(t *testing.T) {
+	counts := UsageCounts{
+		FirstInputTokens: 11, FirstCachedTokens: 12, FailoverInputTokens: 13, FailoverCachedTokens: 14,
+		FirstInputReports: 15, FirstCachedReports: 16, FailoverInputReports: 17, FailoverCachedReports: 18,
+	}
+	view := counts.view()
+	got := [8]int64{
+		view.FirstInputTokens, view.FirstCachedTokens, view.FailoverInputTokens, view.FailoverCachedTokens,
+		view.FirstInputReports, view.FirstCachedReports, view.FailoverInputReports, view.FailoverCachedReports,
+	}
+	if want := [8]int64{11, 12, 13, 14, 15, 16, 17, 18}; got != want {
+		t.Fatalf("缓存分项映射不对：%v, 期望 %v", got, want)
+	}
+}
