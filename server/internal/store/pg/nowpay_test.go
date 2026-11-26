@@ -224,9 +224,9 @@ func TestPostgresPointsView(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	const day = "2026-11-25"
-	// 没有配置即刻收时不返回积分。
+	// 没有配置即刻收时两个数都不返回。
 	points, err := st.Points(ctx, "u1", day)
-	if err != nil || points.Known {
+	if err != nil || points.ChargedKnown || points.RemainingKnown {
 		t.Fatalf("未开通收款时不应返回积分: %+v %v", points, err)
 	}
 
@@ -256,7 +256,7 @@ func TestPostgresPointsView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("points: %v", err)
 	}
-	if !points.Known || points.Charged != 2 {
+	if !points.ChargedKnown || !points.RemainingKnown || points.Charged != 2 {
 		t.Fatalf("当天已核销应为 2 个积分: %+v", points)
 	}
 	// 5 个积分减去还在途的 1 个；已经成功的那 2 个也在副本同步之后，一并扣掉。
@@ -297,7 +297,7 @@ func TestPostgresPointsMatchTheAmountThatCanBeReleased(t *testing.T) {
 	if err != nil {
 		t.Fatalf("points: %v", err)
 	}
-	if !points.Known || points.Remaining != 2 {
+	if !points.RemainingKnown || points.Remaining != 2 {
 		t.Fatalf("在途的三千 token 应占三个积分，剩余应为 2: %+v", points)
 	}
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 2000); err != nil || got != 2000 {
@@ -306,6 +306,35 @@ func TestPostgresPointsMatchTheAmountThatCanBeReleased(t *testing.T) {
 	var quota *llmproxy.QuotaExceededError
 	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 1); !errors.As(err, &quota) || quota.Reason != llmproxy.QuotaReasonPoints {
 		t.Fatalf("页面显示的积分放行完之后应回 points，得到 %v", err)
+	}
+}
+
+// TestPostgresPointsKeepTheChargedTotalWithoutABalanceCopy 守住副本缺失时已核销积分
+// 照常返回：契约里 charged_points 只在没有开通收款时为 null，账号还没有副本时不该
+// 把已经扣掉的积分一起藏掉（ADR-0071）。
+func TestPostgresPointsKeepTheChargedTotalWithoutABalanceCopy(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status)
+		 VALUES ('nc_1', 'u1', $1::date, 2, 2000, 'succeeded')`, day); err != nil {
+		t.Fatalf("insert charge: %v", err)
+	}
+	points, err := st.Points(ctx, "u1", day)
+	if err != nil {
+		t.Fatalf("points: %v", err)
+	}
+	if !points.ChargedKnown || points.Charged != 2 {
+		t.Fatalf("没有副本时已核销的两个积分仍应返回: %+v", points)
+	}
+	if points.RemainingKnown {
+		t.Fatalf("没有副本时不应给出剩余积分: %+v", points)
 	}
 }
 

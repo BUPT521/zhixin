@@ -888,7 +888,8 @@ type IdentityKind string
 
 // LLMQuota defines model for LLMQuota.
 type LLMQuota struct {
-	// ChargedPoints 当天已经核销成功的积分；没有开通收款时为 null，见 ADR-0071
+	// ChargedPoints 当天已经核销成功的积分；没有开通收款时为 null。开通收款之后即使余额副本
+	// 还没有建好或账号还没有副本，这一项也照常返回，见 ADR-0071。
 	ChargedPoints *int64 `json:"charged_points,omitempty"`
 
 	// DailyTokens 聊天每日额度

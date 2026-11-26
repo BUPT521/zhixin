@@ -73,13 +73,14 @@ func (s *Store) SaveBalance(ctx context.Context, userID string, remaining int64,
 	})
 }
 
-// Points 返回账号的积分视图：当天已经核销成功的积分与可用积分。没有配置即刻收、
-// 或者余额副本表还没建好时 Known 为 false，账号页不显示这两行。可用积分与预留
-// 放行用同一个口径：副本减去还没有反映的核销，再减去当天已经占用（已结算与在途
-// 预留）、还没有记进流水的计费量折成的积分，账号页显示的数因此不会大于实际能放行
-// 的量（ADR-0073）。
+// Points 返回账号的积分视图：当天已经核销成功的积分与可用积分。没有配置即刻收时
+// 两个数都不给；配置了收款但余额副本表还没建好、或者账号还没有副本时只给已核销
+// 积分，可用积分等副本可用之后再给，契约里两个字段各按自己的条件给 null。可用积分
+// 与预留放行用同一个口径：副本减去还没有反映的核销，再减去当天已经占用（已结算与
+// 在途预留）、还没有记进流水的计费量折成的积分，账号页显示的数因此不会大于实际能
+// 放行的量（ADR-0073）。
 func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points, error) {
-	if s.nowpay == nil || !s.balanceReady.Load() {
+	if s.nowpay == nil {
 		return llmproxy.Points{}, nil
 	}
 	date, err := pgDate(day)
@@ -89,6 +90,12 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 	charged, err := s.q.ChargedPoints(ctx, db.ChargedPointsParams{UserID: text(userID), Day: date})
 	if err != nil {
 		return llmproxy.Points{}, fmt.Errorf("pg: 读取当天已核销积分失败: %w", err)
+	}
+	// 已核销积分只看 nowpay_charge，副本表没建好也能查；它因此先立住，不被可用积分
+	// 的缺失一起藏掉。
+	points := llmproxy.Points{Charged: charged, ChargedKnown: true}
+	if !s.balanceReady.Load() {
+		return points, nil
 	}
 	limit, limited, err := s.accountLimit(ctx, s.q, userID, llmproxy.KindChat)
 	if err != nil {
@@ -106,9 +113,10 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 		return llmproxy.Points{}, err
 	}
 	if !view.known {
-		return llmproxy.Points{Charged: charged}, nil
+		return points, nil
 	}
-	return llmproxy.Points{Charged: charged, Remaining: view.points, Known: true}, nil
+	points.Remaining, points.RemainingKnown = view.points, true
+	return points, nil
 }
 
 // ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。同一天同一账号

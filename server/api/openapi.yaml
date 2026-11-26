@@ -1923,7 +1923,9 @@ components:
           type: integer
           format: int64
           nullable: true
-          description: 当天已经核销成功的积分；没有开通收款时为 null，见 ADR-0071
+          description: |
+            当天已经核销成功的积分；没有开通收款时为 null。开通收款之后即使余额副本
+            还没有建好或账号还没有副本，这一项也照常返回，见 ADR-0071。
         remaining_points:
           type: integer
           format: int64
