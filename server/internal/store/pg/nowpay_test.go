@@ -313,7 +313,7 @@ func TestPostgresReservePointsCapsAtTheBalanceCopy(t *testing.T) {
 }
 
 // TestPostgresReservePointsSubtractsUnreflectedCharges 守住副本之外还没有反映的核销
-// 也占着余额：副本五积分、两积分待确认时，当天合计最多申请三积分，这次只补一积分
+// 也占着余额：副本五积分、两积分待确认时，当天合计最多申请五积分，这次补三积分
 // （ADR-0073）。
 func TestPostgresReservePointsSubtractsUnreflectedCharges(t *testing.T) {
 	st := newTestStore(t)
@@ -333,8 +333,97 @@ func TestPostgresReservePointsSubtractsUnreflectedCharges(t *testing.T) {
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
 	}, 20)
+	if err != nil || !ok || charge.Points != 3 {
+		t.Fatalf("当天合计应只申请五积分，这次补三积分: %+v %v %v", charge, ok, err)
+	}
+}
+
+// TestPostgresReservePointsKeepsApplyingAfterTheDayTotalExceedsTheCopy 守住收口只截
+// 差额：当天已经申请的四积分还在待确认、副本五积分时，可用积分只剩一积分，应扣十
+// 积分仍然要申请这一积分。把已经申请的量从可用积分里再减一次时，这里会因为
+// “已申请四积分不小于可用一积分”直接跳过，当天剩下的积分白白放行（ADR-0073）。
+func TestPostgresReservePointsKeepsApplyingAfterTheDayTotalExceedsTheCopy(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status)
+		 VALUES ('nc_old', 'u1', '2026-11-25'::date, 4, 40000, 'pending')`); err != nil {
+		t.Fatalf("insert charge: %v", err)
+	}
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 100000,
+	}, 10)
 	if err != nil || !ok || charge.Points != 1 {
-		t.Fatalf("当天合计应只申请三积分，这次补一积分: %+v %v %v", charge, ok, err)
+		t.Fatalf("可用积分只剩一积分时应再申请一积分: %+v %v %v", charge, ok, err)
+	}
+	var total int64
+	if err := st.pool.QueryRow(ctx,
+		`SELECT COALESCE(sum(points), 0) FROM nowpay_charge WHERE user_id = 'u1'`).Scan(&total); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if total != 5 {
+		t.Fatalf("当天合计应与副本的五积分相等，得到 %d", total)
+	}
+}
+
+// TestChargeDeltaCapsTheDifference 守住收口公式：先算当天还没有申请的差额，再按可用
+// 积分截断这个差额，可用积分为负表示副本未知、整额申请差额。公式单独可测，因为
+// PostgreSQL 用例在没有测试库的机器上会跳过，收口这里不能再没有用例（ADR-0073）。
+func TestChargeDeltaCapsTheDifference(t *testing.T) {
+	cases := []struct {
+		name                         string
+		required, applied, available int64
+		want                         int64
+	}{
+		{"副本小于应扣时只申请副本", 20, 0, 5, 5},
+		{"待确认的核销占用可用积分", 20, 2, 3, 3},
+		{"已申请超过可用积分时仍申请剩余差额", 10, 4, 1, 1},
+		{"成功并已反映的核销不再从可用积分里减", 150, 40, 100, 100},
+		{"可用积分为零时不申请", 20, 5, 0, 0},
+		{"副本未知时只申请差额", 150, 40, -1, 110},
+		{"当天已经申请够时不申请", 20, 20, 5, 0},
+		{"已申请超过应扣时不申请", 20, 25, 5, 0},
+	}
+	for _, c := range cases {
+		if got := chargeDelta(c.required, c.applied, c.available); got != c.want {
+			t.Errorf("%s: 应申请 %d，得到 %d", c.name, c.want, got)
+		}
+	}
+}
+
+// TestPostgresReservePointsCapsTheDifferenceNotTheDayTotal 守住已经成功、已经反映在
+// 副本里的核销不会被从可用积分里再减一次：副本一百积分、当天已有四十积分核销成功，
+// 应扣一百五十积分时这次应申请一百积分（当天合计一百四十），而不是把四十从一百里
+// 减掉、只申请六十积分（ADR-0073）。
+func TestPostgresReservePointsCapsTheDifferenceNotTheDayTotal(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	// 这笔核销在副本的快照之前已经成功，副本里的一百积分是扣过它之后的值。
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
+		 VALUES ('nc_old', 'u1', '2026-11-25'::date, 40, 400000, 'succeeded',
+		         now() - interval '10 minutes', now() - interval '10 minutes')`); err != nil {
+		t.Fatalf("insert charge: %v", err)
+	}
+	if err := st.SaveBalance(ctx, "u1", 100, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 1500000,
+	}, 150)
+	if err != nil || !ok || charge.Points != 100 {
+		t.Fatalf("应只按副本剩余的一百积分收口: %+v %v %v", charge, ok, err)
 	}
 }
 

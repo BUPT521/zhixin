@@ -111,10 +111,13 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 // 的申请用事务级 advisory lock 排队：并发结算是不同请求，行锁管不到还没有的行，
 // 只看一次已申请量会让两笔各自再扣一次。
 //
-// 余额副本也在同一个事务与同一把锁里读，按可用积分收口申请量（ADR-0073）：可用
-// 积分为零时不写流水、不调用即刻收；副本小于应扣积分时只申请副本里的那一部分，
-// 差额等余额补上之后的下一次结算再算。副本行不存在、余额表未就绪或读取失败时保持
-// 整额申请，一次读取失败不会少记账。
+// 余额副本也在同一个事务与同一把锁里读，按可用积分收口申请量（ADR-0073）：先算当天
+// 还没有申请的差额（累计应扣减去已经申请的积分），再按可用积分截断这个差额。已经申请
+// 的积分有一部分已经成功、体现在副本里，另一部分待确认、计入了可用积分的扣减，所以
+// 截断的对象只能是差额，不能再拿已经申请的量去减一次可用积分。可用积分为零时不写
+// 流水、不调用即刻收；差额大于可用积分时只申请可用积分的那一部分，差额等余额补上之后
+// 的下一次结算再算。副本行不存在、余额表未就绪或读取失败时保持整额申请，一次读取
+// 失败不会少记账。
 func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, required int64) (nowpay.Charge, bool, error) {
 	if required <= 0 || charge.UserID == "" || charge.ID == "" {
 		return nowpay.Charge{}, false, nil
@@ -133,6 +136,8 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 		return nowpay.Charge{}, false, fmt.Errorf("pg: 锁定当日积分核销失败: %w", err)
 	}
 	q := db.New(tx)
+	// available 为负表示副本未知，按整额申请处理。
+	available := int64(-1)
 	if s.balanceReady.Load() {
 		balance, err := q.BalanceForReserve(ctx, charge.UserID)
 		switch {
@@ -149,11 +154,7 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 				s.log.Error("read the unreflected nowpay charges",
 					"user_id", charge.UserID, "error", err)
 			} else {
-				available := max(balance.RemainingPoints-unreflected, 0)
-				if available <= 0 {
-					return nowpay.Charge{}, false, nil
-				}
-				required = min(required, available)
+				available = max(balance.RemainingPoints-unreflected, 0)
 			}
 		}
 	}
@@ -161,10 +162,11 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 	if err != nil {
 		return nowpay.Charge{}, false, fmt.Errorf("pg: 读取当日已申请积分失败: %w", err)
 	}
-	if applied >= required {
+	points := chargeDelta(required, applied, available)
+	if points <= 0 {
 		return nowpay.Charge{}, false, nil
 	}
-	charge.Points = required - applied
+	charge.Points = points
 	if err := q.InsertCharge(ctx, db.InsertChargeParams{
 		ID: charge.ID, UserID: text(charge.UserID), Day: date,
 		Points: charge.Points, BilledTokens: charge.Tokens,
@@ -175,6 +177,18 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 		return nowpay.Charge{}, false, fmt.Errorf("pg: 提交积分核销流水失败: %w", err)
 	}
 	return charge, true, nil
+}
+
+// chargeDelta 算出这次要写进流水的积分：当天还没有申请的差额（累计应扣减去已经申请
+// 的积分），再按可用积分截断，截断之后不为负。available 为负表示余额副本未知，按整额
+// 申请。已经申请的量不能再从 available 里减一次，因为成功的部分已经反映在副本里、
+// 待确认的部分已经计入 available 的扣减，再从差额上减一遍会少申请（ADR-0073）。
+func chargeDelta(required, applied, available int64) int64 {
+	points := required - applied
+	if available >= 0 {
+		points = min(points, available)
+	}
+	return max(points, 0)
 }
 
 // Unsettled 取账号还没有确认结果的流水，供下一轮对话开工前补查。
