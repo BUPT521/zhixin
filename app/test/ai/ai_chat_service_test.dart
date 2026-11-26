@@ -350,7 +350,9 @@ void main() {
         expect(user, hasLength(3));
         expect(user.take(2).map((item) => item['content']), ['同样的问题', '同样的问题']);
         final content = (user.last['content'] as List).cast<Map>();
-        expect(content.first['text'], '当前问题');
+        final currentText = content.first['text'] as String;
+        expect(currentText, endsWith('当前问题'));
+        expect(currentText, contains('当前时间：'));
         expect(
           content.where((part) => part['type'] == 'input_image'),
           hasLength(2),
@@ -1134,12 +1136,54 @@ void main() {
     await service.ask(context: context(), history: history, text: '继续');
 
     final items = inputOf(captured!);
-    // 系统提示放在 instructions，input 里是 30 条历史与本次提问。
+    // 稳定指令放在 instructions，本轮上下文随最后一条用户消息发；input 里是
+    // 30 条历史与本次提问。
     expect(items, hasLength(31));
     expect(captured!['instructions'], isNotEmpty);
+    expect(captured!['instructions'], isNot(contains('当前时间：')));
     expect(items[0]['content'], '第 0 条消息');
     expect(items[29]['content'], '第 29 条消息');
-    expect(items.last['content'], '继续');
+    expect(items.last['content'], endsWith('继续'));
+    expect(items.last['content'], contains('当前时间：'));
+  });
+
+  test('追问时只追加本轮内容，instructions 与已发送的历史逐字不变', () async {
+    final bodies = <Map<String, Object?>>[];
+    final service = await serviceWith(
+      MockClient((request) async {
+        bodies.add(jsonDecode(request.body) as Map<String, Object?>);
+        return _chatReply(text: '收到');
+      }),
+    );
+    const asked = ChatMessage(
+      id: 'msg-a',
+      conversationId: 'conv-1',
+      role: MessageRole.user,
+      content: '第一问',
+    );
+    const answered = ChatMessage(
+      id: 'msg-b',
+      conversationId: 'conv-1',
+      role: MessageRole.assistant,
+      content: '收到',
+    );
+
+    await service.ask(context: context(), history: const [], text: '第一问');
+    await service.ask(
+      context: context(),
+      history: const [asked, answered],
+      text: '第二问',
+    );
+
+    expect(bodies, hasLength(2));
+    // 上游按前缀复用：两次请求的 instructions 逐字相同，历史按原样重发，只有
+    // 最后一条用户消息带着这一轮的时间与检索结果。
+    expect(bodies[1]['instructions'], bodies[0]['instructions']);
+    final second = inputOf(bodies[1]);
+    expect(second[0]['content'], '第一问');
+    expect(second[1]['content'], '收到');
+    expect(second.last['content'], endsWith('第二问'));
+    expect(second.last['content'], contains('当前时间：'));
   });
 
   test('讨论历史超出字数预算时保留最近消息和第一条用户消息', () async {
@@ -1316,6 +1360,7 @@ void main() {
   test('模型拒绝工具声明时用首轮证据普通请求回答', () async {
     var plainRequests = 0;
     final client = MockClient((request) async {
+      expect(request.headers['X-Zhixin-Session-Id'], 'discussion-7');
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       final tools = body['tools'];
       if (tools is List && tools.isNotEmpty) {
@@ -1334,6 +1379,7 @@ void main() {
     final reply = await service.ask(
       context: BuddyContext(
         now: DateTime(2026, 11, 7, 20),
+        sessionId: 'discussion-7',
         evidence: [
           EvidenceHit(
             kind: EvidenceKind.materialPage,

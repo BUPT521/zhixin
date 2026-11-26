@@ -299,7 +299,7 @@ class ContextService {
       evidence: evidenceHits,
       crossSessionNotes: crossSessionNotes,
       conversationFocus: conversationFocus,
-      sessionId: conversationId,
+      sessionId: conversationId ?? request.routingSessionId,
       sourceSearch: evidenceService == null
           ? null
           : (query, limit) async {

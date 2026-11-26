@@ -43,6 +43,7 @@ class _FakeAi implements BuddyAi {
   final List<BuddyReply> replies;
   final int? failAtCall;
   int calls = 0;
+  final sessionIds = <String?>[];
   BuddyContext? lastContext;
   String lastText = '';
 
@@ -61,6 +62,7 @@ class _FakeAi implements BuddyAi {
     LlmConfigSnapshot? configSnapshot,
   }) async {
     lastContext = context;
+    sessionIds.add(context.sessionId);
     lastText = text;
     calls++;
     if (failAtCall != null && calls == failAtCall) {
@@ -409,6 +411,9 @@ void main() {
     expect(proposal.source, StudyPlanSource.model);
     expect(h.ai.lastText, contains('前面批次已经给出的步骤'));
     expect(h.ai.lastText, contains('模型覆盖第 1–6 页'));
+    expect(h.ai.sessionIds, hasLength(2));
+    expect(h.ai.sessionIds.first, isNotNull);
+    expect(h.ai.sessionIds.last, h.ai.sessionIds.first);
   });
 
   test('V4：保存计划时拒绝没有覆盖所选页码的顺序', () async {

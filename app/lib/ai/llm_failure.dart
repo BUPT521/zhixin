@@ -166,8 +166,7 @@ class LlmRequestBudget {
   final Duration idleTimeout;
   final LlmCancelToken? cancelToken;
 
-  /// 这条讨论的稳定标识；不为空时随请求带给服务端，同一讨论的追问与工具步骤
-  /// 因此落到同一条模型来源。没有归属的请求为空。
+  /// 讨论或同一次批量调用的路由标识，随模型请求发给服务端。
   final String? sessionId;
 
   final Stopwatch _clock = Stopwatch()..start();

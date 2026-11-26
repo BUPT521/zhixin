@@ -18,6 +18,7 @@ class ContextRequest {
     this.pageFrom,
     this.pageTo,
     this.conversationId,
+    this.routingSessionId,
     this.query = '',
     this.broughtIdentities = const {},
     this.reusedPageKeys = const [],
@@ -35,6 +36,9 @@ class ContextRequest {
   final int? pageFrom;
   final int? pageTo;
   final String? conversationId;
+
+  /// 尚未建立讨论时，用于同一组模型请求的路由标识。
+  final String? routingSessionId;
   final String query;
   final Set<String> broughtIdentities;
 

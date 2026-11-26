@@ -13,7 +13,12 @@ import '../domain/rules/text.dart';
 /// 提示与讲解不要建议，检查只要判断，系统学习只要步骤，避免每次问答都携带
 /// 用不上的工具说明与整份安排。规则与上下文说明的文案在
 /// `assets/prompts/buddy_system.md`，这里只按条件选取并替换占位符。
-String buildBuddySystemPrompt(BuddyContext context) {
+///
+/// 返回值分成两段：`instructions` 是同一讨论里每轮与每个工具步骤都相同的前缀，
+/// 放在请求的 `instructions` 里；`turn` 是本轮的时间、检索、记忆与题目，随这一轮
+/// 的用户消息一起发。上游按前缀复用缓存，本轮内容不进入 instructions，历史消息
+/// 才能和上一轮逐字相同（ADR-0061）。
+BuddyPrompt buildBuddyPrompt(BuddyContext context) {
   final text = PromptText.instance;
   final mode = context.mode;
   final withMemories = mode != BuddyMode.plan;
@@ -42,14 +47,16 @@ String buildBuddySystemPrompt(BuddyContext context) {
     text['system.rule.markdown'],
     if (!withStudySteps) text['system.rule.tools'],
     if (withMemories) text['system.rule.memories'],
-    if (withMemories && context.memories.isNotEmpty)
-      text['system.rule.memory_use'],
+    // 这两条只在有记忆时才用得上，但它们属于稳定前缀：按“本轮有没有检索到记忆”
+    // 增删会让同一讨论的 instructions 在轮与轮之间改变，整段历史随之命中不了缓存。
+    // 没有记忆时提示词后面会写明“本轮没有记得的事”，规则留着不会误导。
+    if (withMemories) text['system.rule.memory_use'],
     if (canReadMaterial(context))
       text.format('system.rule.read_material', {'tool': readMaterialPageTool}),
     if (canSearchSources(context))
       text.format('system.rule.search_sources', {'tool': searchSourcesTool}),
     if (withMemories) text['system.rule.memory_scope'],
-    if (context.memories.isNotEmpty) text['system.rule.memory_conflict'],
+    if (withMemories) text['system.rule.memory_conflict'],
     if (withNextSteps) text['system.rule.next_steps'],
     text['system.rule.no_goal'],
     if (withCitations) text['system.rule.citations'],
@@ -134,8 +141,9 @@ String buildBuddySystemPrompt(BuddyContext context) {
 
   // 稳定前缀到这里结束：指令、人格、讨论归属与本次材料都不随每次请求变化，
   // 同一讨论的追问与工具步骤因此能复用上游已经处理过的这段前缀。当前时间与
-  // 之后的内容每次请求都可能不同，放在后面，前缀不受它们影响；划分见
-  // docs/模型调度与回答恢复实施方案.md 第 5 节。
+  // 之后的内容每次请求都可能不同，属于本轮追加的部分，和这一轮的用户消息一起
+  // 发出去；划分见 ADR-0061 与 docs/模型调度与回答恢复实施方案.md 第 5 节。
+  final splitAt = lines.length;
   lines
     ..add('')
     ..add(text.format('system.time', {'time': formatDateTime(context.now)}));
@@ -385,7 +393,25 @@ String buildBuddySystemPrompt(BuddyContext context) {
     }
   }
 
-  return lines.join('\n');
+  return BuddyPrompt(
+    instructions: lines.sublist(0, splitAt).join('\n'),
+    turn: lines.sublist(splitAt + 1).join('\n'),
+  );
+}
+
+/// 两段拼在一起的完整提示：本地兜底、提示词对照与既有用例仍按整段读。
+String buildBuddySystemPrompt(BuddyContext context) =>
+    buildBuddyPrompt(context).text;
+
+/// 一轮回答的两段提示。`instructions` 进请求的 `instructions`，`turn` 随本轮用户
+/// 消息发出；`text` 是两段按原顺序拼起来的完整文本。
+class BuddyPrompt {
+  const BuddyPrompt({required this.instructions, required this.turn});
+
+  final String instructions;
+  final String turn;
+
+  String get text => turn.isEmpty ? instructions : '$instructions\n\n$turn';
 }
 
 /// 单条记忆进入提示词时最多 [memoryContentLimit] 字；超出部分截断，避免一条

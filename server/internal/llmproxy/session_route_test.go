@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
 )
@@ -106,8 +107,42 @@ func TestSessionKeyScopesAccount(t *testing.T) {
 	}
 }
 
-// TestSessionHeaderKeepsOneRoute 核对带讨论标识的几次请求都落到同一条来源并
-// 只记这一个来源的用量；不带标识时仍按权重分散到两条来源。
+func TestRoutingSessionKeyFallsBackToFirstUserMessage(t *testing.T) {
+	initial := []byte(`[{"role":"developer","content":"规则"},{"role":"user","content":[{"type":"input_text","text":"第一问"}]}]`)
+	followup := []byte(`[{"role":"developer","content":"更新后的规则"},{"role":"user","content":[ { "type":"input_text", "text":"第一问" } ]},{"role":"assistant","content":"上次回答"},{"role":"user","content":"追问"}]`)
+	key := routingSessionKey("u1", nil, initial)
+	if key == "" || routingSessionKey("u1", nil, followup) != key {
+		t.Fatal("追加消息、更新开发者指令或改变 JSON 空白时应复用首条用户消息的调度键")
+	}
+	blank, long := "  ", strings.Repeat("x", maxSessionIDBytes+1)
+	for _, id := range []*string{&blank, &long} {
+		if routingSessionKey("u1", id, initial) != key {
+			t.Fatal("无效标识应按首条用户消息调度")
+		}
+	}
+	explicit := "discussion-7"
+	if routingSessionKey("u1", &explicit, initial) != sessionKey("u1", &explicit) {
+		t.Fatal("显式讨论标识应优先")
+	}
+	if routingSessionKey("u2", nil, initial) == key {
+		t.Fatal("不同账号的相同消息不应共用调度键")
+	}
+	if other := routingSessionKey("u1", nil, []byte(`[{"role":"user","content":"另一条讨论"}]`)); other == "" || other == key {
+		t.Fatal("首条消息不同应得到不同的键")
+	}
+	for _, input := range []string{
+		`[]`,
+		`[{"role":"developer","content":"只有指令"}]`,
+		`[{"role":"user","content":"   "}]`,
+		`[{"role":"user","content":[]}]`,
+	} {
+		if routingSessionKey("u1", nil, []byte(input)) != "" {
+			t.Fatalf("没有可用首条用户消息时应保持随机路由：%s", input)
+		}
+	}
+}
+
+// TestSessionHeaderKeepsOneRoute 核对显式标识和首条用户消息都能稳定选择来源。
 func TestSessionHeaderKeepsOneRoute(t *testing.T) {
 	var hitsA, hitsB atomic.Int64
 	reply := func(hits *atomic.Int64) http.HandlerFunc {
@@ -134,9 +169,11 @@ func TestSessionHeaderKeepsOneRoute(t *testing.T) {
 	})
 	usage := NewMemoryUsage()
 	env.proxy.SetUsageStore(usage)
-	// 测试装配默认关掉随机头部次序，这里恢复按权重随机，才看得到不带标识时的
-	// 分散效果。
-	env.proxy.router.shuffle = weightedShuffle
+	var shuffled atomic.Int64
+	env.proxy.router.shuffle = func(routes []liveRoute) {
+		shuffled.Add(1)
+		weightedShuffle(routes)
+	}
 	token := signIn(t, env.authSvc, "session@b.cn")
 	body := chatBody(false)
 
@@ -156,17 +193,28 @@ func TestSessionHeaderKeepsOneRoute(t *testing.T) {
 		t.Fatalf("应共发出 4 次上游调用，得到 %d", total)
 	}
 
-	// 不带标识时按权重重新随机：二十次请求里两条来源都应当被用到。
-	for range 20 {
+	beforeA, beforeB := hitsA.Load(), hitsB.Load()
+	for _, requestBody := range [][]byte{
+		body,
+		[]byte(`{"model":"m","instructions":"本轮新指令","input":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"},{"role":"user","content":"追问"}]}`),
+	} {
 		resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
-			bytes.NewReader(body), roundBudgetHeaders(5000))
+			bytes.NewReader(requestBody), roundBudgetHeaders(5000))
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("不带标识的请求应成功，得到 %d", resp.StatusCode)
 		}
 		resp.Body.Close()
 	}
-	if hitsA.Load() == 4 || hitsB.Load() == 0 {
-		t.Fatalf("不带标识时应分散到两条来源，得到 a=%d b=%d", hitsA.Load(), hitsB.Load())
+	afterA, afterB := hitsA.Load()-beforeA, hitsB.Load()-beforeB
+	if shuffled.Load() != 0 || afterA+afterB != 2 || (afterA != 0 && afterB != 0) {
+		t.Fatalf("带同一首条消息的无标识请求应复用首选来源，得到 a=%d b=%d，随机次数 %d", afterA, afterB, shuffled.Load())
+	}
+
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+		strings.NewReader(`{"model":"m","instructions":"仅有指令","input":[]}`), roundBudgetHeaders(5000))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || shuffled.Load() != 1 {
+		t.Fatalf("没有首条用户消息时应按原有方式随机，得到状态 %d，随机次数 %d", resp.StatusCode, shuffled.Load())
 	}
 }
 
@@ -177,4 +225,104 @@ func routeIDs(routes []liveRoute) string {
 		parts[i] = rt.Provider.ID
 	}
 	return strings.Join(parts, ",")
+}
+
+// TestSessionSticksToTakeoverRoute 核对首次尝试失败、备用来源接住之后，同一条讨论
+// 在粘滞期内继续从备用来源开始，不让恢复的主来源马上回切；粘滞期过后回到按会话
+// 顺序分配，别的讨论不受影响。
+func TestSessionSticksToTakeoverRoute(t *testing.T) {
+	var failA atomic.Bool
+	failA.Store(true)
+	var hitsA, hitsB atomic.Int64
+	sourceA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsA.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		if failA.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, `{"error":{"message":"busy"}}`)
+			return
+		}
+		fmt.Fprint(w, `{"object":"response","status":"completed","output":[],"usage":{"total_tokens":5}}`)
+	}))
+	defer sourceA.Close()
+	sourceB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hitsB.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"object":"response","status":"completed","output":[],"usage":{"total_tokens":5}}`)
+	}))
+	defer sourceB.Close()
+
+	cfg := baseConfig()
+	cfg.DailyTokens = 10_000_000
+	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "a", sourceA.URL, "k1")
+		putProvider(t, c, box, "b", sourceB.URL, "k2")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{
+			{ProviderID: "a", UpstreamModel: "a", Priority: 0},
+			{ProviderID: "b", UpstreamModel: "b", Priority: 1},
+		}})
+	})
+	clock := time.Now()
+	env.proxy.router.now = func() time.Time { return clock }
+	token := signIn(t, env.authSvc, "sticky@b.cn")
+	body := chatBody(false)
+
+	ask := func(session string) {
+		t.Helper()
+		resp := env.c.Do(http.MethodPost, "/v1/llm/responses", token,
+			bytes.NewReader(body), sessionHeaders(session))
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("请求应成功，得到 %d", resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	// 第一次：主来源 503，备用接住。
+	ask("discussion-sticky")
+	if hitsA.Load() != 1 || hitsB.Load() != 1 {
+		t.Fatalf("首次失败后应由备用接住：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+
+	// 主来源恢复：粘滞期内仍走接手的备用来源。
+	failA.Store(false)
+	ask("discussion-sticky")
+	if hitsA.Load() != 1 || hitsB.Load() != 2 {
+		t.Fatalf("粘滞期内应继续走备用：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+
+	// 另一条讨论没有接手记录，仍按优先级走主来源。
+	ask("discussion-other")
+	if hitsA.Load() != 2 || hitsB.Load() != 2 {
+		t.Fatalf("别的讨论不应受粘滞影响：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+
+	// 粘滞期过后回到主来源。
+	clock = clock.Add(stickyAfterTakeover + time.Minute)
+	ask("discussion-sticky")
+	if hitsA.Load() != 3 || hitsB.Load() != 2 {
+		t.Fatalf("粘滞期过后应回到主来源：a=%d b=%d", hitsA.Load(), hitsB.Load())
+	}
+}
+
+// TestStickyRoutesRespectHealthAndCapabilities 核对接手的路由不可用或缺少本次需要
+// 的能力时，粘滞不让它重新进入候选。
+func TestStickyRoutesRespectHealthAndCapabilities(t *testing.T) {
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "a", "https://a.example", "k")
+		putProvider(t, c, box, "b", "https://b.example", "k")
+		putModel(t, c, ModelRecord{Name: "m", Kind: KindChat, Routes: []Route{
+			{ProviderID: "a", UpstreamModel: "a", Priority: 0, SupportsTools: true},
+			{ProviderID: "b", UpstreamModel: "b", Priority: 1, SupportsTools: false},
+		}})
+	})
+	router := env.proxy.router
+	m := mustModel(t, env)
+	router.rememberTakeover("s", healthKey{provider: "b", upstream: "b"})
+
+	if got := routeIDs(router.candidates(m, "s", capabilities{})); got != "b,a" {
+		t.Fatalf("接手的路由应排在最前：%s", got)
+	}
+	if got := routeIDs(router.candidates(m, "s", capabilities{tools: true})); got != "a" {
+		t.Fatalf("缺少函数调用能力的路由不应因粘滞重新进入候选：%s", got)
+	}
 }

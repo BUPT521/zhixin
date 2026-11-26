@@ -1353,10 +1353,11 @@ type PostV1LlmResponsesParams struct {
 	// 时限执行。值 0 表示这一轮预算已经用完，服务端不再发起上游尝试。
 	XZhixinRoundBudgetMs *int64 `json:"X-Zhixin-Round-Budget-Ms,omitempty"`
 
-	// XZhixinSessionId 客户端为一条讨论生成的稳定标识，最长 64 个字符，只参与主用组内的路由
-	// 选择：同一讨论的追问与工具步骤因此落到同一条来源，复用上游已经处理过
-	// 的前缀。服务端按账号再散列一次，日志与上游都不携带原值；省略、空白或
-	// 超过 64 个字符时按没有标识处理，每次请求按权重重新随机。
+	// XZhixinSessionId 客户端为一条讨论或同一次批量模型调用生成的稳定标识，最长 64 字节，
+	// 只参与同优先级组内的路由排列。同一讨论的追问、工具步骤和重试应复用此标识，
+	// 让上游有机会复用已经处理过的前缀。服务端按账号散列标识，仅在代理内使用。
+	// 标识缺失、空白或超长时按账号和首条用户消息分配路由，没有可用的首条用户
+	// 消息时按权重随机排列。
 	XZhixinSessionId *string `json:"X-Zhixin-Session-Id,omitempty"`
 }
 
