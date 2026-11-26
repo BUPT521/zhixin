@@ -612,8 +612,14 @@ type AdminKeyUsage struct {
 
 // AdminKeyUsageCounts defines model for AdminKeyUsageCounts.
 type AdminKeyUsageCounts struct {
+	// Attempts 尝试次数，含失败；失败按 0 结算，只有它有记录才看得出调用发生过
+	Attempts int64 `json:"attempts"`
+
 	// CachedTokens input_tokens 中命中上游缓存的部分
 	CachedTokens int64 `json:"cached_tokens"`
+
+	// Failures attempts 中失败、按 0 结算的次数
+	Failures int64 `json:"failures"`
 
 	// InputTokens 上游报告的输入量；内存存储下不累计，保持 0
 	InputTokens int64 `json:"input_tokens"`

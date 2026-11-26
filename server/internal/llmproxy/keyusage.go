@@ -19,12 +19,16 @@ import (
 
 // KeyUsageCounts 是一把密钥在一天里的用量。Tokens 是已结算的计费 token，
 // ReservedTokens 是还没有结算的在途预留；InputTokens 与 CachedTokens 是上游
-// 报告的原始输入量与其中命中缓存的部分，只用于核对缓存命中比例。
+// 报告的原始输入量与其中命中缓存的部分，只用于核对缓存命中比例。Attempts 是这
+// 一天的尝试次数，Failures 是其中失败、按 0 结算的次数：失败不产生 token，后台
+// 要看见“一直在失败”只能看这两项（ADR-0083）。
 type KeyUsageCounts struct {
 	Tokens         int64
 	ReservedTokens int64
 	InputTokens    int64
 	CachedTokens   int64
+	Attempts       int64
+	Failures       int64
 }
 
 func (c *KeyUsageCounts) add(other KeyUsageCounts) {
@@ -32,12 +36,15 @@ func (c *KeyUsageCounts) add(other KeyUsageCounts) {
 	c.ReservedTokens += other.ReservedTokens
 	c.InputTokens += other.InputTokens
 	c.CachedTokens += other.CachedTokens
+	c.Attempts += other.Attempts
+	c.Failures += other.Failures
 }
 
 func (c KeyUsageCounts) view() api.AdminKeyUsageCounts {
 	return api.AdminKeyUsageCounts{
 		Tokens: c.Tokens, ReservedTokens: c.ReservedTokens,
 		InputTokens: c.InputTokens, CachedTokens: c.CachedTokens,
+		Attempts: c.Attempts, Failures: c.Failures,
 	}
 }
 
@@ -157,9 +164,11 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// KeyUsage 在内存实现里从已结算与在途预留两张表拼出对账视图。缓存命中的原始输入
-// 只在最近一次结算里留了一份（Split），这里不拿它冒充累计值，InputTokens 与
-// CachedTokens 保持 0；本地联调看到的趋势与总量仍然与额度判定一致。
+// KeyUsage 在内存实现里从已结算、在途预留与尝试计数三张表拼出对账视图。缓存命中
+// 的原始输入只在最近一次结算里留了一份（Split），这里不拿它冒充累计值，
+// InputTokens 与 CachedTokens 保持 0；本地联调看到的趋势与总量仍然与额度判定一致。
+// 只有尝试记录、token 与预留都是 0 的行也返回：那正是一次失败的调用，过滤掉它
+// 之后一把一直在失败的密钥在后台看起来与没有用过的一样（ADR-0083）。
 func (m *MemoryQuota) KeyUsage(_ context.Context, from, to string) ([]KeyUsage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -186,11 +195,20 @@ func (m *MemoryQuota) KeyUsage(_ context.Context, from, to string) ([]KeyUsage, 
 		}
 		get(k).ReservedTokens += reserved
 	}
-	out := make([]KeyUsage, 0, len(rows))
-	for _, row := range rows {
-		if row.Tokens == 0 && row.ReservedTokens == 0 {
+	for k, attempts := range m.attempts {
+		if k[1] < from || k[1] > to {
 			continue
 		}
+		get(k).Attempts += attempts
+	}
+	for k, failures := range m.failures {
+		if k[1] < from || k[1] > to {
+			continue
+		}
+		get(k).Failures += failures
+	}
+	out := make([]KeyUsage, 0, len(rows))
+	for _, row := range rows {
 		out = append(out, *row)
 	}
 	slices.SortFunc(out, func(a, b KeyUsage) int {

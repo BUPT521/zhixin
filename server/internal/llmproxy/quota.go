@@ -29,8 +29,9 @@ type Quota interface {
 	// 结算用量。keyID 必须与这次预留相同，结算才会落到同一行。reserved 与 actual
 	// 都是计费 token（见 Usage.Billed）；usage 是来源报告的原始拆分，只为统计缓存
 	// 命中，不参与扣减。实例账本只调整免费额度内的那一段，超出部分由积分承担
-	// （ADR-0070）。
-	Settle(ctx context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage) error
+	// （ADR-0070）。失败按 0 结算时 actual 是 0，token 两列都不变，所以另外传一次
+	// 尝试与它失败与否，让后台看得见失败的调用（ADR-0083）。
+	Settle(ctx context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) error
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
@@ -63,6 +64,26 @@ type QuotaOverride struct {
 	EmbeddingDailyTokens *int64
 	Note                 string
 	UpdatedAt            time.Time
+}
+
+// SettleAttempt 是这次结算对应的尝试与它的结果。失败的尝试按 ADR-0070 记 0，
+// tokens 与 reserved_tokens 都不留痕迹，后台因此要靠这两个计数才看得见一直在
+// 失败的密钥（ADR-0083）。两者只进 llm_usage 的两列统计，不参与额度判定、预留
+// 与核销，也不改变已有的 token 数字。
+type SettleAttempt struct {
+	// Attempts 是这一次结算对应的尝试次数，通常是 1。
+	Attempts int64
+	// Failures 是其中失败、按 0 结算的次数，通常是 0 或 1。
+	Failures int64
+}
+
+// attemptOf 返回一次尝试、失败的记一次失败。
+func attemptOf(failed bool) SettleAttempt {
+	out := SettleAttempt{Attempts: 1}
+	if failed {
+		out.Failures = 1
+	}
+	return out
 }
 
 // Points 是账号的积分视图，用于账号页与管理后台展示。Charged 是当天已经落库成功
@@ -139,6 +160,11 @@ type MemoryQuota struct {
 	reserved map[[4]string]int64
 	// split 记最近一次结算的原始用量，与 used 同键；只用于核对缓存命中统计。
 	split map[[4]string]Usage
+	// attempts 与 failures 记已结算的尝试次数与其中失败、按 0 结算的次数，与
+	// used 同键。失败的尝试在 used 里不留痕迹，后台看得见与否只看这两个计数
+	// （ADR-0083）；它们不参与额度判定。
+	attempts map[[4]string]int64
+	failures map[[4]string]int64
 	// limits 是管理后台调整过的额度覆盖值；quotaNotes 与 quotaUpdated 跟着覆盖行
 	// 一起保存，供后台列表显示备注与保存时间。
 	limits       map[[2]string]int64
@@ -160,6 +186,8 @@ func NewMemoryQuota() *MemoryQuota {
 		used:         map[[4]string]int64{},
 		reserved:     map[[4]string]int64{},
 		split:        map[[4]string]Usage{},
+		attempts:     map[[4]string]int64{},
+		failures:     map[[4]string]int64{},
 		limits:       map[[2]string]int64{},
 		quotaNotes:   map[string]string{},
 		quotaUpdated: map[string]time.Time{},
@@ -242,16 +270,20 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	return want, nil
 }
 
-func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage) error {
+func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// 缓存命中的拆分与 PostgreSQL 的 llm_usage 一样按密钥分行记，内存实现里
 	// 单独存一份，供本地联调与测试核对；额度判定只看计费后的总量。
-	m.split[[4]string{userID, day, string(kind), keyID}] = usage
+	key := [4]string{userID, day, string(kind), keyID}
+	m.split[key] = usage
+	// 尝试次数先记，再判断这一笔有没有 token：失败按 0 结算，token 两列都不变，
+	// 后台正是靠这两个计数才看得见失败的调用（ADR-0083）。
+	m.attempts[key] += max(0, attempt.Attempts)
+	m.failures[key] += max(0, attempt.Failures)
 	if actual == 0 && reserved == 0 && usage.Total() == 0 {
 		return nil
 	}
-	key := [4]string{userID, day, string(kind), keyID}
 	// 实例账本只加减免费额度内的部分。结算前的账号合计含这次预留，先减掉它
 	// 才知道这次请求开始时已经用掉多少免费额度。
 	instance := actual - reserved

@@ -22,6 +22,8 @@ SELECT
   u.reserved_tokens,
   u.input_tokens,
   u.cached_tokens,
+  u.attempts,
+  u.failures,
   COALESCE(k.name, '')::text AS key_name,
   COALESCE(k.prefix, '')::text AS key_prefix,
   (k.revoked_at IS NOT NULL)::boolean AS revoked,

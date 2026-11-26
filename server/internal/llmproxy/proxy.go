@@ -416,7 +416,7 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 			// 计费量只在这里算一次：账号账本、实例账本、已购余额与路由统计都用
 			// 它，四处的数字因此不会各算一套。
 			billed := billedTokens(model.Kind, estimate, result)
-			p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage)
+			p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage, attemptOf(!result.success))
 			if p.usage != nil && !result.notSent {
 				counts := UsageCounts{
 					Attempts: 1, InputTokens: result.usage.Input, CachedTokens: result.usage.Cached,
@@ -482,11 +482,12 @@ func (p *Proxy) recordRouteUsage(ctx context.Context, row RouteUsage, success bo
 }
 
 // settle 即使客户端断开也结算本次预留。reserved 与 actual 都是计费 token，
-// usage 是来源报告的原始用量，只用于统计缓存命中，不参与扣减。
-func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage) {
+// usage 是来源报告的原始用量，只用于统计缓存命中，不参与扣减；attempt 是这次
+// 尝试与它是否失败，只进 llm_usage 的尝试统计，让后台看得见按 0 结算的调用。
+func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 	defer cancel()
-	if err := p.quota.Settle(ctx, userID, day, kind, keyID, reserved, actual, usage); err != nil {
+	if err := p.quota.Settle(ctx, userID, day, kind, keyID, reserved, actual, usage, attempt); err != nil {
 		p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
 	}
 }

@@ -1524,6 +1524,15 @@ function shortAccount(id) {
   return id.length <= 12 ? id : id.slice(0, 8) + '…';
 }
 
+// keyCalls 合计一把密钥的尝试与失败次数。失败按 0 结算，不产生 token，只记在
+// 这两个计数上，所以一把一直在失败的密钥在后台只有这一栏能看出来（ADR-0083）。
+function keyCalls(usage) {
+  return {
+    attempts: usage.chat.attempts + usage.embedding.attempts,
+    failures: usage.chat.failures + usage.embedding.failures,
+  };
+}
+
 function renderKeyUsage() {
   const report = state.keyUsage;
   if (!report) return;
@@ -1562,6 +1571,8 @@ function renderKeyUsage() {
       el('td', { class: 'numeric' }, number.format(usage.chat.tokens)),
       el('td', { class: 'numeric' }, keyUsagePoints(usage.chat.tokens, perPoint)),
       el('td', { class: 'numeric' }, number.format(usage.embedding.tokens)),
+      el('td', { class: 'numeric' }, number.format(keyCalls(usage).attempts)),
+      el('td', { class: 'numeric' }, number.format(keyCalls(usage).failures)),
       el('td', { class: 'numeric' }, number.format(usage.chat.reserved_tokens + usage.embedding.reserved_tokens)),
       el('td', { class: 'numeric' }, spark),
       el('td', { class: 'nowrap' }, key.last_used_at ? moment(key.last_used_at) : '—'),

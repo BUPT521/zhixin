@@ -36,13 +36,13 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	}
 
 	// 结算把预留转成已结算：对外的用量这时才增加，多退少补。
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 40, 30, Usage{}); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 40, 30, Usage{}, attemptOf(false)); err != nil {
 		t.Fatalf("settle 退回: %v", err)
 	}
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 30 {
 		t.Fatalf("结算之后已结算用量应为 30，得到 %d", used)
 	}
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 60, 70, Usage{}); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 60, 70, Usage{}, attemptOf(false)); err != nil {
 		t.Fatalf("settle 补记: %v", err)
 	}
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 100 {
@@ -64,7 +64,7 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	}
 
 	// 没有预留行时结算异常参数不会写出负用量。
-	if err := q.Settle(ctx, "u3", day, KindChat, "", 5, 0, Usage{}); err != nil {
+	if err := q.Settle(ctx, "u3", day, KindChat, "", 5, 0, Usage{}, attemptOf(false)); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, _ := q.Used(ctx, "u3", day, KindChat); used != 0 {
@@ -128,10 +128,10 @@ func TestMemoryQuotaInstanceBudget(t *testing.T) {
 	}
 
 	// 结算退回 30，实例预算重新有 30 可用。
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 200, 170, Usage{}); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 200, 170, Usage{}, attemptOf(false)); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 50, 50, Usage{}); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 50, 50, Usage{}, attemptOf(false)); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, _ := q.InstanceUsed(ctx, day); used != 220 {
@@ -177,7 +177,7 @@ func TestMemoryQuotaAttributesUsageToKey(t *testing.T) {
 		keyID string
 		want  int64
 	}{{"key-a", 100}, {"key-b", 50}, {"", 20}} {
-		if err := q.Settle(ctx, "u1", day, KindChat, call.keyID, call.want, call.want, Usage{}); err != nil {
+		if err := q.Settle(ctx, "u1", day, KindChat, call.keyID, call.want, call.want, Usage{}, attemptOf(false)); err != nil {
 			t.Fatalf("settle %q: %v", call.keyID, err)
 		}
 	}

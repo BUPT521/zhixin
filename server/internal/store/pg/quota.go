@@ -244,8 +244,12 @@ func pgInt8(value *int64) pgtype.Int8 {
 // 任何一步失败都整体回滚，两边的数字不会各写一半。reserved 与 actual 是计费
 // token，usage 是上游报告的原始拆分。实例账本只加减免费额度内的那一段，超出
 // 部分由积分承担（ADR-0070）。
-func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, reserved, actual int64, usage llmproxy.Usage) error {
-	if reserved == 0 && actual == 0 && usage.Total() == 0 {
+//
+// attempt 记这次尝试与它是否失败，与 token 两列一起写进同一行：失败按 0 结算时
+// token 与预留都回到 0，后台只能靠这两个计数看见失败的调用（ADR-0083）。它们不
+// 参与额度判定、预留与核销，判定用的仍是 UsedTokens 的两列。
+func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, reserved, actual int64, usage llmproxy.Usage, attempt llmproxy.SettleAttempt) error {
+	if reserved == 0 && actual == 0 && usage.Total() == 0 && attempt.Attempts == 0 {
 		return nil
 	}
 	date, err := pgDate(day)
@@ -279,6 +283,7 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	if err := q.SettleTokens(ctx, db.SettleTokensParams{
 		UserID: userID, Day: date, Kind: string(kind), ApiKeyID: keyID,
 		Reserved: reserved, Actual: actual, InputTokens: usage.Input, CachedTokens: usage.Cached,
+		Attempts: attempt.Attempts, Failures: attempt.Failures,
 	}); err != nil {
 		return fmt.Errorf("pg: 结算额度失败: %w", err)
 	}

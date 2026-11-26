@@ -30,9 +30,11 @@ DO UPDATE SET tokens = GREATEST(llm_instance_usage.tokens + sqlc.arg(delta)::big
 --
 -- tokens 是已结算的计费 token，reserved_tokens 是在途预留：额度判定看两者之和，
 -- 核销只看 tokens（ADR-0071）。input_tokens 与 cached_tokens 是上游报告的原始输入
--- 量与其中命中缓存的部分，只为统计命中率，按差额累加。
+-- 量与其中命中缓存的部分，只为统计命中率，按差额累加。attempts 与 failures 记录
+-- 这一次尝试与它是否失败：失败的尝试按 0 结算，token 两列都不增加，要让后台看得
+-- 见失败就只能靠这两个计数（ADR-0083）。
 -- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, input_tokens, cached_tokens)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, input_tokens, cached_tokens, attempts, failures)
 VALUES (
   sqlc.arg(user_id),
   sqlc.arg(day)::date,
@@ -41,11 +43,15 @@ VALUES (
   GREATEST(sqlc.arg(actual)::bigint, 0),
   0,
   GREATEST(sqlc.arg(input_tokens)::bigint, 0),
-  GREATEST(sqlc.arg(cached_tokens)::bigint, 0)
+  GREATEST(sqlc.arg(cached_tokens)::bigint, 0),
+  GREATEST(sqlc.arg(attempts)::bigint, 0),
+  GREATEST(sqlc.arg(failures)::bigint, 0)
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
 DO UPDATE SET
   tokens = GREATEST(llm_usage.tokens + sqlc.arg(actual)::bigint, 0),
   reserved_tokens = GREATEST(llm_usage.reserved_tokens - sqlc.arg(reserved)::bigint, 0),
   input_tokens = GREATEST(llm_usage.input_tokens + sqlc.arg(input_tokens)::bigint, 0),
-  cached_tokens = GREATEST(llm_usage.cached_tokens + sqlc.arg(cached_tokens)::bigint, 0);
+  cached_tokens = GREATEST(llm_usage.cached_tokens + sqlc.arg(cached_tokens)::bigint, 0),
+  attempts = GREATEST(llm_usage.attempts + sqlc.arg(attempts)::bigint, 0),
+  failures = GREATEST(llm_usage.failures + sqlc.arg(failures)::bigint, 0);

@@ -206,6 +206,11 @@ CREATE INDEX backup_user_created ON backup(user_id, created_at DESC);
 -- 额度判定与已购余额都按它扣；input_tokens 与 cached_tokens 是上游报告的原始
 -- 输入量与其中命中缓存的部分，只用于统计命中率，不参与扣减。嵌入没有缓存语义，
 -- 三个数一致累加。折算口径见 server/internal/llmproxy/billing.go。
+--
+-- attempts 是这一天这个账号用这把密钥发出的尝试次数，failures 是其中失败、按 0
+-- 结算的次数。两者只为让后台看见失败的调用：失败按 ADR-0070 记 0，tokens 与
+-- reserved_tokens 都回到 0，只看 token 的话一把一直在失败的密钥与没有用过的密钥
+-- 分不出来。它们不参与额度判定、预留与核销（ADR-0083）。
 CREATE TABLE llm_usage (
   user_id       TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
   day           DATE NOT NULL,                  -- ZHIXIN_TIMEZONE 下的自然日
@@ -215,6 +220,8 @@ CREATE TABLE llm_usage (
   reserved_tokens BIGINT NOT NULL DEFAULT 0,    -- 在途预留，结算时转进 tokens
   input_tokens  BIGINT NOT NULL DEFAULT 0,      -- 上游报告的输入量
   cached_tokens BIGINT NOT NULL DEFAULT 0,      -- 其中命中缓存的部分
+  attempts      BIGINT NOT NULL DEFAULT 0,      -- 尝试次数，含失败
+  failures      BIGINT NOT NULL DEFAULT 0,      -- 其中失败、按 0 结算的次数
   PRIMARY KEY (user_id, day, kind, api_key_id)
 );
 

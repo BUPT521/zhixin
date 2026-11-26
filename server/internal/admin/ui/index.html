@@ -168,10 +168,10 @@
         </div>
         <p id="key-usage-status" class="empty" role="status" hidden></p>
         <div class="scroll" role="region" aria-labelledby="key-usage-title" tabindex="0"><table class="grid usage-table key-usage-table">
-          <thead><tr><th scope="col">密钥</th><th scope="col">账号</th><th scope="col">对话 Token</th><th scope="col">约合积分</th><th scope="col">嵌入 Token</th><th scope="col">在途</th><th scope="col">每日趋势</th><th scope="col">最近使用</th><th scope="col">状态</th></tr></thead>
+          <thead><tr><th scope="col">密钥</th><th scope="col">账号</th><th scope="col">对话 Token</th><th scope="col">约合积分</th><th scope="col">嵌入 Token</th><th scope="col">尝试</th><th scope="col">未成功</th><th scope="col">在途</th><th scope="col">每日趋势</th><th scope="col">最近使用</th><th scope="col">状态</th></tr></thead>
           <tbody id="key-usage-rows"></tbody>
         </table></div>
-        <p class="hint usage-note">对话的计费 token 是上游报告用量按缓存命中折算之后的数量；约合积分按核销同一比例折算并向上取整，没有扣当天的免费额度，只作对账参考，嵌入只占每日免费额度，不计入积分。在途是还没有结算的预留，撤销超过保留期的密钥显示为已清理。</p>
+        <p class="hint usage-note">对话的计费 token 是上游报告用量按缓存命中折算之后的数量；约合积分按核销同一比例折算并向上取整，没有扣当天的免费额度，只作对账参考，嵌入只占每日免费额度，不计入积分。尝试与未成功是调用次数：失败按 0 结算，不产生 token，只看 token 分不出一直在失败的密钥与没有用过的密钥。在途是还没有结算的预留，撤销超过保留期的密钥显示为已清理。</p>
       </section>
     </div>
   </section>

@@ -213,7 +213,7 @@ func TestPostgresChargePayUsesSettledUsageOnly(t *testing.T) {
 		t.Fatalf("B 应预留 2,000，得到 %d %v", got, err)
 	}
 	// B 实际用了 1,500：当天已结算 1,500，另有一笔 400 还在途。
-	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 2000, 1500, llmproxy.Usage{}); err != nil {
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 2000, 1500, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if len(recorder.charged) != 1 {
@@ -372,7 +372,7 @@ func TestPostgresPointsMatchTheAmountThatCanBeReleased(t *testing.T) {
 	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil {
 		t.Fatalf("reserve the free quota: %v", err)
 	}
-	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 100, 100, llmproxy.Usage{}); err != nil {
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 100, 100, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	// 再发起一笔三千 token 的请求，它还留在途里没有结算。
@@ -704,7 +704,7 @@ func TestPostgresConcurrentReserveAndSettleKeepTheInstanceLedger(t *testing.T) {
 			if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 150); err != nil {
 				return
 			}
-			_ = st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 150, 150, llmproxy.Usage{Input: 150})
+			_ = st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 150, 150, llmproxy.Usage{Input: 150}, llmproxy.SettleAttempt{Attempts: 1})
 		}()
 	}
 	wg.Wait()

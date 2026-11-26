@@ -1849,12 +1849,14 @@ components:
           items: { $ref: "#/components/schemas/AdminUsageRoute" }
     AdminKeyUsageCounts:
       type: object
-      required: [tokens, reserved_tokens, input_tokens, cached_tokens]
+      required: [tokens, reserved_tokens, input_tokens, cached_tokens, attempts, failures]
       properties:
         tokens: { type: integer, format: int64, description: 已结算的计费 token }
         reserved_tokens: { type: integer, format: int64, description: 尚未结算的在途预留 }
         input_tokens: { type: integer, format: int64, description: 上游报告的输入量；内存存储下不累计，保持 0 }
         cached_tokens: { type: integer, format: int64, description: input_tokens 中命中上游缓存的部分 }
+        attempts: { type: integer, format: int64, description: 尝试次数，含失败；失败按 0 结算，只有它有记录才看得出调用发生过 }
+        failures: { type: integer, format: int64, description: attempts 中失败、按 0 结算的次数 }
     AdminKeyUsageDay:
       type: object
       required: [chat, embedding]

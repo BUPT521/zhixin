@@ -22,6 +22,8 @@ SELECT
   u.reserved_tokens,
   u.input_tokens,
   u.cached_tokens,
+  u.attempts,
+  u.failures,
   COALESCE(k.name, '')::text AS key_name,
   COALESCE(k.prefix, '')::text AS key_prefix,
   (k.revoked_at IS NOT NULL)::boolean AS revoked,
@@ -47,6 +49,8 @@ type ListKeyUsageRow struct {
 	ReservedTokens int64
 	InputTokens    int64
 	CachedTokens   int64
+	Attempts       int64
+	Failures       int64
 	KeyName        string
 	KeyPrefix      string
 	Revoked        bool
@@ -85,6 +89,8 @@ func (q *Queries) ListKeyUsage(ctx context.Context, arg ListKeyUsageParams) ([]L
 			&i.ReservedTokens,
 			&i.InputTokens,
 			&i.CachedTokens,
+			&i.Attempts,
+			&i.Failures,
 			&i.KeyName,
 			&i.KeyPrefix,
 			&i.Revoked,

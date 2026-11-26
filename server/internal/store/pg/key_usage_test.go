@@ -27,16 +27,16 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 	}
 
 	const day1, day2, day3 = "2026-11-18", "2026-11-19", "2026-11-20"
-	if err := st.Settle(ctx, user.ID, day1, llmproxy.KindChat, key.ID, 0, 120, llmproxy.Usage{Input: 300, Cached: 200}); err != nil {
+	if err := st.Settle(ctx, user.ID, day1, llmproxy.KindChat, key.ID, 0, 120, llmproxy.Usage{Input: 300, Cached: 200}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle chat: %v", err)
 	}
-	if err := st.Settle(ctx, user.ID, day1, llmproxy.KindEmbedding, key.ID, 0, 5, llmproxy.Usage{}); err != nil {
+	if err := st.Settle(ctx, user.ID, day1, llmproxy.KindEmbedding, key.ID, 0, 5, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle embedding: %v", err)
 	}
-	if err := st.Settle(ctx, user.ID, day1, llmproxy.KindChat, "", 0, 40, llmproxy.Usage{}); err != nil {
+	if err := st.Settle(ctx, user.ID, day1, llmproxy.KindChat, "", 0, 40, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle access token: %v", err)
 	}
-	if err := st.Settle(ctx, user.ID, day2, llmproxy.KindChat, key.ID, 0, 60, llmproxy.Usage{}); err != nil {
+	if err := st.Settle(ctx, user.ID, day2, llmproxy.KindChat, key.ID, 0, 60, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle next day: %v", err)
 	}
 	// 在途预留也要在视图里看得到，否则对账只看到已结算量，解释不了当天的额度占用。
@@ -95,7 +95,7 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 	if err := st.CreateKey(ctx, blank, "hash-usage-2", 20); err != nil {
 		t.Fatalf("create the blank key: %v", err)
 	}
-	if err := st.Settle(ctx, user.ID, day2, llmproxy.KindChat, blank.ID, 0, 30, llmproxy.Usage{}); err != nil {
+	if err := st.Settle(ctx, user.ID, day2, llmproxy.KindChat, blank.ID, 0, 30, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle with the blank key: %v", err)
 	}
 	rows, err = st.KeyUsage(ctx, day2, day2)
@@ -110,6 +110,37 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 	}
 	if blankRow.Tokens != 30 || blankRow.Name != "" || !blankRow.KeyPresent || blankRow.Revoked {
 		t.Fatalf("名字为空的密钥应仍算在用：%+v", blankRow)
+	}
+
+	// 失败的调用同样留在视图里：预留之后按 0 结算，token 与预留都回到 0，只剩
+	// 尝试与失败两个计数。没有它们时这一行与没有用过完全一样（ADR-0083）。
+	failed := auth.APIKey{ID: "key-usage-3", UserID: user.ID, Name: "失败的脚本", Prefix: "zx_Failed000"}
+	if err := st.CreateKey(ctx, failed, "hash-usage-3", 20); err != nil {
+		t.Fatalf("create the failing key: %v", err)
+	}
+	reserved, err := st.Reserve(ctx, user.ID, day2, llmproxy.KindChat, failed.ID, 200)
+	if err != nil || reserved != 200 {
+		t.Fatalf("reserve for the failing key: %d %v", reserved, err)
+	}
+	if err := st.Settle(ctx, user.ID, day2, llmproxy.KindChat, failed.ID, reserved, 0, llmproxy.Usage{},
+		llmproxy.SettleAttempt{Attempts: 1, Failures: 1}); err != nil {
+		t.Fatalf("settle the failed call: %v", err)
+	}
+	rows, err = st.KeyUsage(ctx, day2, day2)
+	if err != nil {
+		t.Fatalf("key usage for the failed call: %v", err)
+	}
+	var failedRow llmproxy.KeyUsage
+	for _, row := range rows {
+		if row.KeyID == failed.ID {
+			failedRow = row
+		}
+	}
+	if failedRow.KeyID == "" {
+		t.Fatalf("失败的调用应留下一条记录：%+v", rows)
+	}
+	if failedRow.Tokens != 0 || failedRow.ReservedTokens != 0 || failedRow.Attempts != 1 || failedRow.Failures != 1 {
+		t.Fatalf("失败按 0 结算，token 与预留都不增，尝试与失败各记一次：%+v", failedRow)
 	}
 
 	// 密钥行清理之后用量还在：左连接读不到名字，页面按“已清理的密钥”展示；

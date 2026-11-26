@@ -56,7 +56,7 @@ func (q *Queries) InstanceTokens(ctx context.Context, day pgtype.Date) (int64, e
 }
 
 const settleTokens = `-- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, input_tokens, cached_tokens)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, input_tokens, cached_tokens, attempts, failures)
 VALUES (
   $1,
   $2::date,
@@ -65,14 +65,18 @@ VALUES (
   GREATEST($5::bigint, 0),
   0,
   GREATEST($6::bigint, 0),
-  GREATEST($7::bigint, 0)
+  GREATEST($7::bigint, 0),
+  GREATEST($8::bigint, 0),
+  GREATEST($9::bigint, 0)
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
 DO UPDATE SET
   tokens = GREATEST(llm_usage.tokens + $5::bigint, 0),
-  reserved_tokens = GREATEST(llm_usage.reserved_tokens - $8::bigint, 0),
+  reserved_tokens = GREATEST(llm_usage.reserved_tokens - $10::bigint, 0),
   input_tokens = GREATEST(llm_usage.input_tokens + $6::bigint, 0),
-  cached_tokens = GREATEST(llm_usage.cached_tokens + $7::bigint, 0)
+  cached_tokens = GREATEST(llm_usage.cached_tokens + $7::bigint, 0),
+  attempts = GREATEST(llm_usage.attempts + $8::bigint, 0),
+  failures = GREATEST(llm_usage.failures + $9::bigint, 0)
 `
 
 type SettleTokensParams struct {
@@ -83,6 +87,8 @@ type SettleTokensParams struct {
 	Actual       int64
 	InputTokens  int64
 	CachedTokens int64
+	Attempts     int64
+	Failures     int64
 	Reserved     int64
 }
 
@@ -93,7 +99,9 @@ type SettleTokensParams struct {
 //
 // tokens 是已结算的计费 token，reserved_tokens 是在途预留：额度判定看两者之和，
 // 核销只看 tokens（ADR-0071）。input_tokens 与 cached_tokens 是上游报告的原始输入
-// 量与其中命中缓存的部分，只为统计命中率，按差额累加。
+// 量与其中命中缓存的部分，只为统计命中率，按差额累加。attempts 与 failures 记录
+// 这一次尝试与它是否失败：失败的尝试按 0 结算，token 两列都不增加，要让后台看得
+// 见失败就只能靠这两个计数（ADR-0083）。
 func (q *Queries) SettleTokens(ctx context.Context, arg SettleTokensParams) error {
 	_, err := q.db.Exec(ctx, settleTokens,
 		arg.UserID,
@@ -103,6 +111,8 @@ func (q *Queries) SettleTokens(ctx context.Context, arg SettleTokensParams) erro
 		arg.Actual,
 		arg.InputTokens,
 		arg.CachedTokens,
+		arg.Attempts,
+		arg.Failures,
 		arg.Reserved,
 	)
 	return err

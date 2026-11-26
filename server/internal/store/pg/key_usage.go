@@ -34,6 +34,7 @@ func (s *Store) KeyUsage(ctx context.Context, from, to string) ([]llmproxy.KeyUs
 			KeyUsageCounts: llmproxy.KeyUsageCounts{
 				Tokens: row.Tokens, ReservedTokens: row.ReservedTokens,
 				InputTokens: row.InputTokens, CachedTokens: row.CachedTokens,
+				Attempts: row.Attempts, Failures: row.Failures,
 			},
 		}
 		if row.LastUsedAt.Valid {

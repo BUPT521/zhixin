@@ -252,7 +252,7 @@ func TestMemoryQuotaInstanceCountsFreePortionOnly(t *testing.T) {
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 100); err != nil || got != 100 {
 		t.Fatalf("第一次预留应为 100，得到 %d %v", got, err)
 	}
-	if err := q.Settle(ctx, "u1", day, KindChat, "", 100, 250, Usage{}); err != nil {
+	if err := q.Settle(ctx, "u1", day, KindChat, "", 100, 250, Usage{}, attemptOf(false)); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
 	if used, _ := q.Used(ctx, "u1", day, KindChat); used != 250 {

@@ -168,6 +168,8 @@ type LlmUsage struct {
 	ReservedTokens int64
 	InputTokens    int64
 	CachedTokens   int64
+	Attempts       int64
+	Failures       int64
 }
 
 type NowpayBalance struct {
