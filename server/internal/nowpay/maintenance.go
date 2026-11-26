@@ -17,6 +17,8 @@ type MaintenanceStore interface {
 	DeleteExpiredPurchases(ctx context.Context, before time.Time, limit int) (int64, error)
 	// DeleteTerminalCharges 分批删除终态且更新时间早于 before 的流水，返回删除行数。
 	DeleteTerminalCharges(ctx context.Context, before time.Time, limit int) (int64, error)
+	// DeleteOrphanCharges 分批删除删号之后失去归属、仍然没有结论的流水，返回删除行数。
+	DeleteOrphanCharges(ctx context.Context, before time.Time, limit int) (int64, error)
 	// ChargeStatusCounts 返回核销流水按状态的计数。
 	ChargeStatusCounts(ctx context.Context) (map[string]int64, error)
 	// InstanceUsed 返回实例账本当天的用量。
@@ -113,7 +115,8 @@ func reconcile(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 }
 
 // prune 按保留期分批删除：购买入口按有效期过期 30 天，核销流水按终态更新时间 180 天。
-// pending 与 processing 不删，它们还没有结论。
+// pending 与 processing 不删，它们还没有结论；只有删号之后失去归属、再也补查不到结果
+// 的流水按创建时间例外清理，否则它们会一直积在 pending 上。
 func prune(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 	now := time.Now()
 	purchases := deleteInBatches(ctx, log, "nowpay_purchase", func(batchCtx context.Context, limit int) (int64, error) {
@@ -122,7 +125,10 @@ func prune(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 	charges := deleteInBatches(ctx, log, "nowpay_charge", func(batchCtx context.Context, limit int) (int64, error) {
 		return store.DeleteTerminalCharges(batchCtx, now.AddDate(0, 0, -chargeKeepDays), limit)
 	})
-	log.Info("pruned the nowpay rows", "purchases", purchases, "charges", charges)
+	orphans := deleteInBatches(ctx, log, "nowpay_charge", func(batchCtx context.Context, limit int) (int64, error) {
+		return store.DeleteOrphanCharges(batchCtx, now.AddDate(0, 0, -chargeKeepDays), limit)
+	})
+	log.Info("pruned the nowpay rows", "purchases", purchases, "charges", charges, "orphan_charges", orphans)
 }
 
 // deleteInBatches 一批删除 limit 行，删满一批就继续，直到某一批少于 limit 或出错。

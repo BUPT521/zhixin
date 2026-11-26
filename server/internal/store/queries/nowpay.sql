@@ -16,12 +16,26 @@ ORDER BY created_at, id
 LIMIT sqlc.arg(max_rows);
 
 -- 全局补查：创建超过宽限期仍未终结的流水，不按账号过滤。核销队列满或进程退出时
--- 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。
+-- 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。删号之后 user_id 被置空的行
+-- 不再取：即刻收的核销与补查都要带买家标识，没有买家标识的行无论补查多少次都只会
+-- 失败，留在结果里还会把更晚的流水挤出这一批。这类行由保留期按创建时间删除。
 -- name: UnsettledChargesGlobal :many
 SELECT * FROM nowpay_charge
-WHERE status IN ('pending', 'processing') AND created_at < sqlc.arg(before)
+WHERE user_id IS NOT NULL AND status IN ('pending', 'processing') AND created_at < sqlc.arg(before)
 ORDER BY created_at, id
 LIMIT sqlc.arg(max_rows);
+
+-- 保留期：删号之后 user_id 被置空、又一直没有结论的流水分批删除。它们补查不到
+-- 结果，也不会再属于任何账号，只能按创建时间清掉，否则会一直积在 pending 上。
+-- name: DeleteOrphanCharges :execrows
+DELETE FROM nowpay_charge
+WHERE id IN (
+  SELECT nowpay_charge.id FROM nowpay_charge
+  WHERE nowpay_charge.user_id IS NULL AND nowpay_charge.status IN ('pending', 'processing')
+    AND nowpay_charge.created_at < sqlc.arg(before)
+  ORDER BY nowpay_charge.created_at
+  LIMIT sqlc.arg(max_rows)
+);
 
 -- 保留期：过期超过 30 天的购买入口分批删除。
 -- name: DeleteExpiredPurchases :execrows

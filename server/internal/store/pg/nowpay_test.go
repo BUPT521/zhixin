@@ -309,6 +309,62 @@ func TestPostgresPointsMatchTheAmountThatCanBeReleased(t *testing.T) {
 	}
 }
 
+// TestPostgresUnsettledGlobalSkipsChargesWithoutAnOwner 守住全局补查不取删号之后
+// 失去归属的流水：即刻收的补查要带买家标识，user_id 为空的行永远补不到结果，留在
+// 这一批里还会把更晚的流水挤出去。
+func TestPostgresUnsettledGlobalSkipsChargesWithoutAnOwner(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at)
+		 VALUES ('nc_owner', 'u1', current_date, 1, 1000, 'pending', now() - interval '1 hour'),
+		        ('nc_orphan', NULL, current_date, 1, 1000, 'pending', now() - interval '1 hour')`); err != nil {
+		t.Fatalf("insert charges: %v", err)
+	}
+	charges, err := st.UnsettledGlobal(ctx, time.Now().Add(-5*time.Minute), 50)
+	if err != nil {
+		t.Fatalf("unsettled: %v", err)
+	}
+	if len(charges) != 1 || charges[0].ID != "nc_owner" {
+		t.Fatalf("只应取有归属的流水: %+v", charges)
+	}
+}
+
+// TestPostgresDeleteOrphanCharges 守住失去归属的流水按保留期清理：只删创建时间早于
+// 保留期、又没有结论的那几行，有归属的流水与还没有到期的行都留下。
+func TestPostgresDeleteOrphanCharges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at)
+		 VALUES ('nc_orphan_old', NULL, current_date, 1, 1000, 'pending', now() - interval '200 days'),
+		        ('nc_orphan_new', NULL, current_date, 1, 1000, 'pending', now() - interval '10 days'),
+		        ('nc_orphan_done', NULL, current_date, 1, 1000, 'succeeded', now() - interval '200 days'),
+		        ('nc_owner_old', 'u1', current_date, 1, 1000, 'pending', now() - interval '200 days')`); err != nil {
+		t.Fatalf("insert charges: %v", err)
+	}
+	deleted, err := st.DeleteOrphanCharges(ctx, time.Now().AddDate(0, 0, -180), 1000)
+	if err != nil || deleted != 1 {
+		t.Fatalf("应只删掉一条失去归属又没有结论的旧流水: %d %v", deleted, err)
+	}
+	var left int64
+	if err := st.pool.QueryRow(ctx,
+		`SELECT count(*) FROM nowpay_charge WHERE id = 'nc_orphan_old'`).Scan(&left); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if left != 0 {
+		t.Fatalf("失去归属的旧流水应已删除，剩下 %d 行", left)
+	}
+}
+
 // TestPostgresSaveBalanceClampsNegative 守住副本不会是负数：核销结果与查询接口都
 // 可能传来零，负数一律按零落库。
 func TestPostgresSaveBalanceClampsNegative(t *testing.T) {

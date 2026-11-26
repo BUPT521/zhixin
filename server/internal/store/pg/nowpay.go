@@ -267,6 +267,22 @@ func (s *Store) DeleteTerminalCharges(ctx context.Context, before time.Time, lim
 	})
 }
 
+// DeleteOrphanCharges 分批删除删号之后失去归属、一直没有结论的核销流水：即刻收的
+// 核销与补查都要带买家标识，user_id 被置空的行补查不到结果，只能按创建时间清掉。
+// 返回这一批删除的行数。
+func (s *Store) DeleteOrphanCharges(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if limit < 1 {
+		return 0, nil
+	}
+	at, err := pgTime(before)
+	if err != nil {
+		return 0, err
+	}
+	return s.q.DeleteOrphanCharges(ctx, db.DeleteOrphanChargesParams{
+		Before: at, MaxRows: int32(limit),
+	})
+}
+
 // ChargeStatusCounts 按状态统计核销流水，供每日对账日志发现积压。
 func (s *Store) ChargeStatusCounts(ctx context.Context) (map[string]int64, error) {
 	rows, err := s.q.ChargeStatusCounts(ctx)
