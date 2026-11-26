@@ -64,14 +64,16 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 	}
 	chat := got[rowKey{day1, key.ID, "chat"}]
 	if chat.Tokens != 120 || chat.InputTokens != 300 || chat.CachedTokens != 200 ||
-		chat.Name != "脚本" || chat.Prefix != "zx_Usage0000" || !chat.Revoked || chat.LastUsedAt.IsZero() {
+		chat.Name != "脚本" || chat.Prefix != "zx_Usage0000" || !chat.KeyPresent ||
+		!chat.Revoked || chat.LastUsedAt.IsZero() {
 		t.Fatalf("密钥的对话用量不对：%+v", chat)
 	}
 	if embedding := got[rowKey{day1, key.ID, "embedding"}]; embedding.Tokens != 5 {
 		t.Fatalf("嵌入用量不对：%+v", embedding)
 	}
 	token := got[rowKey{day1, "", "chat"}]
-	if token.Tokens != 40 || token.Name != "" || token.Prefix != "" || token.Revoked || !token.LastUsedAt.IsZero() {
+	if token.Tokens != 40 || token.Name != "" || token.Prefix != "" || token.KeyPresent ||
+		token.Revoked || !token.LastUsedAt.IsZero() {
 		t.Fatalf("访问令牌的用量不对：%+v", token)
 	}
 	if next := got[rowKey{day2, key.ID, "chat"}]; next.Tokens != 60 {
@@ -87,7 +89,32 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 		t.Fatalf("按区间过滤：%+v %v", rows, err)
 	}
 
-	// 密钥行清理之后用量还在：左连接读不到名字，页面按“已清理的密钥”展示。
+	// 名字为空的密钥仍然是在用的：客户端允许名字留空，名字空、key_present 真，
+	// 页面不能按“已清理”展示。
+	blank := auth.APIKey{ID: "key-usage-2", UserID: user.ID, Name: "", Prefix: "zx_Blank0000"}
+	if err := st.CreateKey(ctx, blank, "hash-usage-2", 20); err != nil {
+		t.Fatalf("create the blank key: %v", err)
+	}
+	if err := st.Settle(ctx, user.ID, day2, llmproxy.KindChat, blank.ID, 0, 30, llmproxy.Usage{}); err != nil {
+		t.Fatalf("settle with the blank key: %v", err)
+	}
+	rows, err = st.KeyUsage(ctx, day2, day2)
+	if err != nil {
+		t.Fatalf("key usage for the blank key: %v", err)
+	}
+	var blankRow llmproxy.KeyUsage
+	for _, row := range rows {
+		if row.KeyID == blank.ID {
+			blankRow = row
+		}
+	}
+	if blankRow.Tokens != 30 || blankRow.Name != "" || !blankRow.KeyPresent || blankRow.Revoked {
+		t.Fatalf("名字为空的密钥应仍算在用：%+v", blankRow)
+	}
+
+	// 密钥行清理之后用量还在：左连接读不到名字，页面按“已清理的密钥”展示；
+	// key_present 为假才是“行已经不在”的证据，名字为空分不出这种情况与没有填
+	// 名字的在用密钥。
 	if _, err := st.pool.Exec(ctx, `DELETE FROM api_key WHERE id = $1`, key.ID); err != nil {
 		t.Fatalf("delete key: %v", err)
 	}
@@ -96,8 +123,8 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 		t.Fatalf("key usage after prune: %v", err)
 	}
 	for _, row := range rows {
-		if row.KeyID == key.ID && row.Name != "" {
-			t.Fatalf("清理之后不应再读到名字：%+v", row)
+		if row.KeyID == key.ID && (row.Name != "" || row.KeyPresent) {
+			t.Fatalf("清理之后不应再读到名字，也不应报告密钥行还在：%+v", row)
 		}
 	}
 }

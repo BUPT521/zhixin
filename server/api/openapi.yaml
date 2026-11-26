@@ -1637,12 +1637,13 @@ components:
         embedding: { $ref: "#/components/schemas/AdminKeyUsageCounts" }
     AdminKeyUsage:
       type: object
-      required: [key_id, user_id, name, prefix, revoked, chat, embedding, daily]
+      required: [key_id, user_id, name, prefix, key_present, revoked, chat, embedding, daily]
       properties:
         key_id: { type: string, description: 接入密钥编号；空字符串表示访问令牌发起的调用 }
         user_id: { type: string }
-        name: { type: string, description: 密钥名字；撤销超过保留期被清理后为空字符串 }
+        name: { type: string, description: 密钥名字；撤销超过保留期被清理后为空字符串，名字为空的密钥同样为空 }
         prefix: { type: string, description: 密钥前缀，用于辨认 }
+        key_present: { type: boolean, description: api_key 行是否还在；false 表示撤销超过保留期已被清理，不能用名字区分这种情况与没有填名字的密钥 }
         revoked: { type: boolean }
         last_used_at: { type: string, format: date-time, description: 最近使用时间，按十分钟粒度更新；访问令牌与已清理的密钥没有 }
         chat: { $ref: "#/components/schemas/AdminKeyUsageCounts" }

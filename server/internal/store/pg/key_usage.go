@@ -29,7 +29,8 @@ func (s *Store) KeyUsage(ctx context.Context, from, to string) ([]llmproxy.KeyUs
 	for _, row := range rows {
 		usage := llmproxy.KeyUsage{
 			Day: row.Day.Time.Format("2006-01-02"), UserID: row.UserID, KeyID: row.ApiKeyID,
-			Name: row.KeyName, Prefix: row.KeyPrefix, Revoked: row.Revoked, Kind: llmproxy.Kind(row.Kind),
+			Name: row.KeyName, Prefix: row.KeyPrefix, KeyPresent: row.KeyPresent,
+			Revoked: row.Revoked, Kind: llmproxy.Kind(row.Kind),
 			KeyUsageCounts: llmproxy.KeyUsageCounts{
 				Tokens: row.Tokens, ReservedTokens: row.ReservedTokens,
 				InputTokens: row.InputTokens, CachedTokens: row.CachedTokens,
