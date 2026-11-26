@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show kReleaseMode;
+import 'package:flutter/foundation.dart' show ValueListenable, kReleaseMode;
 import 'package:flutter/services.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
@@ -104,6 +104,10 @@ class AppScope extends StatefulWidget {
     this.changeSpace,
     required this.themeMode,
     required this.themeAccent,
+    this.networkAllowed,
+    this.onAgreeTerms,
+    this.updates,
+    this.waitForData = true,
   });
 
   final Widget child;
@@ -130,6 +134,20 @@ class AppScope extends StatefulWidget {
   /// 主题色与深浅色放在一起，同样由应用根部持有，改完立即生效。
   final ThemeAccentController themeAccent;
 
+  /// 联网功能是否可用：首次启动引导里同意用户须知之前为假，匿名上报与启动时
+  /// 的更新检查都不执行；为空表示这条链路上没有引导，始终可用。
+  final ValueListenable<bool>? networkAllowed;
+
+  /// 在设置页或账号页同意用户须知；由应用根部写引导状态并打开联网。
+  final Future<void> Function()? onAgreeTerms;
+
+  /// 更新检查服务；测试注入计数用的替身，为空时按当前服务地址新建。
+  final UpdateCheckService? updates;
+
+  /// 引导期间为假：页面不用先等数据库打开，先显示引导。首屏数据仍然在后台
+  /// 装配，引导结束之后再把页面守到就绪状态上。
+  final bool waitForData;
+
   /// 时间来源；为空时取系统时钟，测试传固定时钟让当天窗口不随运行时刻变化。
   final Clock? clock;
 
@@ -152,8 +170,26 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   AppSpaces? get spaces => widget.spaces;
   bool get managesSpaces => widget.changeSpace != null;
 
-  Future<void> configureServerBaseUrl(String address) => _account
-      .configureServerBaseUrl(address, schemaVersion: zhixinSchemaVersion);
+  /// 联网功能是否可用；没有引导的装配（测试）始终可用。
+  bool get networkAllowed => widget.networkAllowed?.value ?? true;
+
+  /// 首屏装配是否已经成功完成；引导页据此判断账号服务能不能用。
+  bool get dataReady => _initDone && _initError == null;
+
+  /// 同意用户须知与隐私政策：写引导状态，并立即打开联网功能。
+  Future<void> agreeToTerms() async {
+    final agree = widget.onAgreeTerms;
+    if (agree != null) await agree();
+  }
+
+  Future<void> configureServerBaseUrl(
+    String address, {
+    bool requireDeveloperMode = true,
+  }) => _account.configureServerBaseUrl(
+    address,
+    schemaVersion: zhixinSchemaVersion,
+    requireDeveloperMode: requireDeveloperMode,
+  );
 
   Future<void> _changeSpace(
     String id, {
@@ -785,14 +821,27 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   /// Future，失败页的“重试”不必重启应用；重建之前先把已经打开的连接关掉。
   late Future<void> ready;
 
+  /// 首屏装配是否已经结束（成功或失败）。结束时页面不再等 Future，直接按结果
+  /// 渲染；引导期间 [AppScope.waitForData] 为假，可以不等它先把引导显示出来。
+  bool _initDone = false;
+  Object? _initError;
+  StackTrace? _initStack;
+
   Future<void> _initTracked() async {
+    _initDone = false;
+    _initError = null;
+    _initStack = null;
     try {
       await _init();
     } catch (error, stack) {
       _startupFailure = error;
       _startupStack = stack;
+      _initError = error;
+      _initStack = stack;
+      _initDone = true;
       rethrow;
     }
+    _initDone = true;
   }
 
   /// 失败页的重试：关掉可能已经打开的旧连接，重新执行一次启动装配。
@@ -923,17 +972,20 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
       serverBaseUrl: _account.serverBaseUrl,
       crashLog: crashLog,
       appVersion: appVersion,
+      clientFactory: widget.serverClientFactory,
     );
     _feedbackService = FeedbackService(serverBaseUrl: _account.serverBaseUrl);
-    _updateCheckService = UpdateCheckService(
-      serverBaseUrl: _account.serverBaseUrl,
-      appVersion: appVersion,
-      publicKeyPem: releasePublicKeyPem,
-      // 检查失败的常见原因是清单与安装包还没对齐，不是崩溃；只留本机诊断，
-      // 不交给 Sentry，也不打扰用户。
-      recordFailure: (error, stack, {required kind}) =>
-          crashLog.record(error, stack, kind: kind, report: false),
-    );
+    _updateCheckService =
+        widget.updates ??
+        UpdateCheckService(
+          serverBaseUrl: _account.serverBaseUrl,
+          appVersion: appVersion,
+          publicKeyPem: releasePublicKeyPem,
+          // 检查失败的常见原因是清单与安装包还没对齐，不是崩溃；只留本机诊断，
+          // 不交给 Sentry，也不打扰用户。
+          recordFailure: (error, stack, {required kind}) =>
+              crashLog.record(error, stack, kind: kind, report: false),
+        );
     _configuredAi = AiChatService(
       store: _llmStore,
       configSource: _configuredModelConfig,
@@ -1011,17 +1063,21 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     // 附件清理与缓存补建跟首屏无关，而且耗时随数据量增长：放到首帧之后在
     // 后台做，首屏不再等它们，启动速度也不再取决于用久了攒下的图片数量。
     _scheduleAttachmentMaintenance();
-    // 登录状态下启动之后自动同步一次；未登录时这一步什么都不做。
-    unawaited(_sync.schedule());
+    // 登录状态下启动之后自动同步一次；未登录时这一步什么都不做。首次启动
+    // 引导里同意用户须知之前不发请求，同意之后由应用根部补一次同步调度。
+    if (networkAllowed) unawaited(_sync.schedule());
     _scheduleActiveReport();
     _servicesInitialized = true;
   }
 
   /// 首帧之后在空闲里尝试一次匿名活跃上报（ADR-0019）：不等待、不阻塞启动，
   /// 失败只写诊断记录；登录用户由服务端按请求日期统计，这一步会直接跳过。
+  ///
+  /// 首次启动引导里同意用户须知之前不上报：老用户可能已经看过匿名统计说明，
+  /// 只看说明这一层拦不住，这里再按联网开关确认一次。
   void _scheduleActiveReport() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
+      if (!mounted || !networkAllowed) return;
       unawaited(_activeReportService?.reportIfDue() ?? Future<void>.value());
     });
   }
@@ -1227,47 +1283,85 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final allowed = widget.networkAllowed;
+    if (allowed == null) return _content(allowNetwork: true);
+    return ValueListenableBuilder<bool>(
+      valueListenable: allowed,
+      builder: (context, value, _) => _content(allowNetwork: value),
+    );
+  }
+
+  Widget _content({required bool allowNetwork}) {
+    // 首次启动引导不读数据库：先把引导显示出来，首屏数据在后台继续装配，
+    // 引导结束之后再把首页守到就绪状态上。
+    if (!widget.waitForData) {
+      return _AppScopeData(
+        state: this,
+        networkAllowed: allowNetwork,
+        child: widget.child,
+      );
+    }
+    if (_initDone) {
+      if (_initError case final error?) return _failure(error, _initStack);
+      return _AppScopeData(
+        state: this,
+        networkAllowed: allowNetwork,
+        child: widget.child,
+      );
+    }
     return FutureBuilder<void>(
       future: ready,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          try {
-            crashLog.record(
-              snapshot.error!,
-              snapshot.stackTrace,
-              kind: 'database_open',
-            );
-          } catch (_) {
-            // 诊断记录本身不可用时仍要显示可行动说明。
-          }
-          return _StartupFailureView(
-            error: snapshot.error!,
-            stack: snapshot.stackTrace,
-            retrying: _retryingStartup,
-            onRetry: _retryStartup,
-            diagnostics: _startupDiagnostics(
-              snapshot.error!,
-              snapshot.stackTrace,
-            ),
+          return _failure(snapshot.error!, snapshot.stackTrace);
+        }
+        if (snapshot.connectionState == ConnectionState.done) {
+          return _AppScopeData(
+            state: this,
+            networkAllowed: allowNetwork,
+            child: widget.child,
           );
         }
-        if (snapshot.connectionState != ConnectionState.done) {
-          // 启动时还没有页面可以摆骨架，用整屏等待的圈；尺寸只在 PageLoading 里定。
-          return const forui.FScaffold(child: PageLoading());
-        }
-        return _AppScopeData(state: this, child: widget.child);
+        // 启动时还没有页面可以摆骨架，用整屏等待的圈；尺寸只在 PageLoading 里定。
+        return const forui.FScaffold(child: PageLoading());
       },
+    );
+  }
+
+  /// 启动失败时的页面；失败原因写进本机诊断记录，同一次失败可能因重画多次进入，
+  /// 记录本身可以重复。
+  Widget _failure(Object error, StackTrace? stack) {
+    try {
+      crashLog.record(error, stack, kind: 'database_open');
+    } catch (_) {
+      // 诊断记录本身不可用时仍要显示可行动说明。
+    }
+    return _StartupFailureView(
+      error: error,
+      stack: stack,
+      retrying: _retryingStartup,
+      onRetry: _retryStartup,
+      diagnostics: _startupDiagnostics(error, stack),
     );
   }
 }
 
 class _AppScopeData extends InheritedWidget {
-  const _AppScopeData({required this.state, required super.child});
+  const _AppScopeData({
+    required this.state,
+    required this.networkAllowed,
+    required super.child,
+  });
 
   final AppScopeState state;
 
+  /// 联网开关的当前值；变化时依赖应用作用域的页面重画，例如本机模式下账号页
+  /// 换成同意入口、同意之后换回登录卡。
+  final bool networkAllowed;
+
   @override
-  bool updateShouldNotify(_AppScopeData oldWidget) => false;
+  bool updateShouldNotify(_AppScopeData oldWidget) =>
+      oldWidget.state != state || oldWidget.networkAllowed != networkAllowed;
 }
 
 /// 测试装配入口：库连接、独占写入区与仓库只在这里露出。
