@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 	"time"
 )
@@ -13,7 +14,12 @@ type statusChange struct {
 	id, status, note string
 }
 
+// fakeLedger 是核销流水的测试替身。mu 保护下面全部字段：核销队列与余额刷新队列
+// 各有一个协程，两者都会调用 SaveBalance（ADR-0073 把余额查询拆出去正是为了让它们
+// 互不阻塞），生产实现由数据库事务与快照下限保证并发安全，替身自己也要加锁，否则
+// go test -race 会在这种并发写入上失败。
 type fakeLedger struct {
+	mu        sync.Mutex
 	applied   int64
 	created   []Charge
 	unsettled []Charge
@@ -37,6 +43,8 @@ type fakeLedger struct {
 }
 
 func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required int64) (Charge, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.reserveErr != nil {
 		return Charge{}, false, f.reserveErr
 	}
@@ -56,6 +64,8 @@ func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required in
 }
 
 func (f *fakeLedger) SaveBalance(_ context.Context, userID string, remaining int64, asOf time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if f.balances == nil {
 		f.balances = map[string]int64{}
 	}
@@ -68,23 +78,33 @@ func (f *fakeLedger) SaveBalance(_ context.Context, userID string, remaining int
 }
 
 func (f *fakeLedger) Unsettled(context.Context, string, int) ([]Charge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.unsettled, nil
 }
 
 func (f *fakeLedger) UnsettledGlobal(context.Context, time.Time, int) ([]Charge, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.unsettledGlobal, nil
 }
 
 func (f *fakeLedger) SetStatus(_ context.Context, id, status, note string) (time.Time, error) {
 	change := statusChange{id: id, status: status, note: note}
+	f.mu.Lock()
 	f.statuses = append(f.statuses, change)
-	if f.statusEvents != nil {
-		f.statusEvents <- change
+	confirmAt, events := f.confirmAt, f.statusEvents
+	f.mu.Unlock()
+	// 事件在锁外发送：通道满了要等用例读取，持锁等待会把下一次 SetStatus 卡住。
+	if events != nil {
+		events <- change
 	}
-	return f.confirmAt, nil
+	return confirmAt, nil
 }
 
 func (f *fakeLedger) last() statusChange {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if len(f.statuses) == 0 {
 		return statusChange{}
 	}
