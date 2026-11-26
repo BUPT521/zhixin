@@ -17,6 +17,8 @@ type MaintenanceStore interface {
 	DeleteExpiredPurchases(ctx context.Context, before time.Time, limit int) (int64, error)
 	// DeleteTerminalCharges 分批删除终态且更新时间早于 before 的流水，返回删除行数。
 	DeleteTerminalCharges(ctx context.Context, before time.Time, limit int) (int64, error)
+	// DeleteOrphanCharges 分批删除删号之后失去归属、仍然没有结论的流水，返回删除行数。
+	DeleteOrphanCharges(ctx context.Context, before time.Time, limit int) (int64, error)
 	// ChargeStatusCounts 返回核销流水按状态的计数。
 	ChargeStatusCounts(ctx context.Context) (map[string]int64, error)
 	// InstanceUsed 返回实例账本当天的用量。
@@ -76,28 +78,34 @@ func (m *Meter) Sweep(ctx context.Context, olderThan time.Time, limit int) (int,
 
 // MaintenanceLoop 每天记一次对账日志，并按保留期分批删除过期购买入口与终态流水。
 // 启动时先跑一次，之后每天一次；任何一步失败只记日志，不影响服务。与 SweepLoop
-// 一样会阻塞到 ctx 结束，调用方要用 goroutine 启动它。
-func MaintenanceLoop(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
+// 一样会阻塞到 ctx 结束，调用方要用 goroutine 启动它。loc 是配置的自然日、
+// 与实例账本记 day 用的是同一个时区（ZHIXIN_TIMEZONE）。
+func MaintenanceLoop(ctx context.Context, store MaintenanceStore, loc *time.Location, log *slog.Logger) {
 	if store == nil {
 		return
 	}
 	periodic.Run(ctx, 24*time.Hour, func() {
 		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), maintenanceLimit)
 		defer cancel()
-		reconcile(runCtx, store, log)
+		reconcile(runCtx, store, loc, log)
 		prune(runCtx, store, log)
 	})
 }
 
 // reconcile 记一条按日对账日志：核销流水按状态计数与实例账本当天的用量。它不修数据，
 // 只让积压、漏扣与实例账偏离在日志里看得见。
-func reconcile(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
+func reconcile(ctx context.Context, store MaintenanceStore, loc *time.Location, log *slog.Logger) {
 	counts, err := store.ChargeStatusCounts(ctx)
 	if err != nil {
 		log.Error("read the nowpay charge counts", "error", err)
 		return
 	}
-	day := time.Now().In(ChinaTime()).Format("2006-01-02")
+	// 实例账本按配置的时区记 day，对账必须用同一个时区取当天，否则非东八区部署时
+	// 读到的是另一天的账。没有传时区时退回即刻收一侧使用的东八区。
+	if loc == nil {
+		loc = ChinaTime()
+	}
+	day := time.Now().In(loc).Format("2006-01-02")
 	instance, err := store.InstanceUsed(ctx, day)
 	if err != nil {
 		log.Error("read the instance tokens for the reconciliation", "day", day, "error", err)
@@ -113,7 +121,8 @@ func reconcile(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 }
 
 // prune 按保留期分批删除：购买入口按有效期过期 30 天，核销流水按终态更新时间 180 天。
-// pending 与 processing 不删，它们还没有结论。
+// pending 与 processing 不删，它们还没有结论；只有删号之后失去归属、再也补查不到结果
+// 的流水按创建时间例外清理，否则它们会一直积在 pending 上。
 func prune(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 	now := time.Now()
 	purchases := deleteInBatches(ctx, log, "nowpay_purchase", func(batchCtx context.Context, limit int) (int64, error) {
@@ -122,7 +131,10 @@ func prune(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 	charges := deleteInBatches(ctx, log, "nowpay_charge", func(batchCtx context.Context, limit int) (int64, error) {
 		return store.DeleteTerminalCharges(batchCtx, now.AddDate(0, 0, -chargeKeepDays), limit)
 	})
-	log.Info("pruned the nowpay rows", "purchases", purchases, "charges", charges)
+	orphans := deleteInBatches(ctx, log, "nowpay_charge", func(batchCtx context.Context, limit int) (int64, error) {
+		return store.DeleteOrphanCharges(batchCtx, now.AddDate(0, 0, -chargeKeepDays), limit)
+	})
+	log.Info("pruned the nowpay rows", "purchases", purchases, "charges", charges, "orphan_charges", orphans)
 }
 
 // deleteInBatches 一批删除 limit 行，删满一批就继续，直到某一批少于 limit 或出错。

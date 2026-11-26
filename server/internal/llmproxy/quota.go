@@ -34,17 +34,20 @@ type Quota interface {
 	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
 	// Points 返回账号的积分视图：当天已经核销成功的积分与可用积分（余额副本减去
-	// 没有反映的核销与当天已结算未记流水的计费量）。没有开通收款时 Known 为 false，
-	// 接口据此不回这两个数，见 ADR-0073。
+	// 没有反映的核销、再减去当天已占用未记流水的计费量）。两个数各自有一个“已知”
+	// 标记：没有开通收款时都给不出，余额副本还没建好或账号还没有副本时只给已核销
+	// 积分，接口据此分别决定哪个字段回 null，见 ADR-0073。
 	Points(ctx context.Context, userID, day string) (Points, error)
 }
 
 // Points 是账号的积分视图，用于账号页展示。Charged 是当天已经落库成功的核销，
-// Remaining 是可用积分，与额度放行用同一个口径。
+// Remaining 是可用积分，与额度放行用同一个口径。ChargedKnown 为真表示收款已经
+// 开通、Charged 有效；RemainingKnown 为真表示余额副本可用、Remaining 有效。
 type Points struct {
-	Charged   int64
-	Remaining int64
-	Known     bool
+	Charged        int64
+	Remaining      int64
+	ChargedKnown   bool
+	RemainingKnown bool
 }
 
 // ErrQuotaExceeded 表示账号当日额度或实例总预算不足；代理据此回 429

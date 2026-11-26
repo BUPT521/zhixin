@@ -230,15 +230,20 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// 积分只在开通收款的实例上有：当天已核销多少、副本里还剩多少，账号页按这两个
-	// 数写“免费额度用完之后今天用了多少、还剩多少”（ADR-0069）。
+	// 数写“免费额度用完之后今天用了多少、还剩多少”（ADR-0069）。两个字段各按自己
+	// 的数据是否可用决定返回与否：副本缺失时已核销积分照常返回，不跟着一起变 null。
 	points, err := p.quota.Points(r.Context(), pr.UserID, day)
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
-	if points.Known {
-		charged, remaining := points.Charged, points.Remaining
-		out.ChargedPoints, out.RemainingPoints = &charged, &remaining
+	if points.ChargedKnown {
+		charged := points.Charged
+		out.ChargedPoints = &charged
+	}
+	if points.RemainingKnown {
+		remaining := points.Remaining
+		out.RemainingPoints = &remaining
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

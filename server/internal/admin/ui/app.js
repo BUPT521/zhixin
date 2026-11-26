@@ -1202,7 +1202,8 @@ function successRate(u) {
   return u.attempts ? percent.format(u.successes / u.attempts) : '—';
 }
 
-// cacheHitRate 是来源报告的输入里命中缓存的比例；没有输入量时不显示。
+// cacheHitRate 是来源报告的输入里命中缓存的比例；没有输入量时不显示。嵌入没有
+// 缓存语义，它的输入不参与这个比例，调用方只传对话那一份用量。
 function cacheHitRate(u) {
   return u.input_tokens > 0 ? routeShare(u.cached_tokens / u.input_tokens) : '';
 }
@@ -1285,25 +1286,35 @@ async function loadUsage() {
     $('#usage-report').hidden = false;
     await loadKeyUsage(current.signal);
   } catch (err) {
-    if (!current.signal.aborted) status.textContent = '读取用量失败。' + err.message;
+    if (!current.signal.aborted) {
+      status.textContent = '读取用量失败。' + err.message;
+      // 新区间没有读成功，按密钥的表不能继续留着上一个区间的数字。
+      resetKeyUsage('读取用量失败，密钥用量未更新。');
+    }
   }
+}
+
+// resetKeyUsage 清空按密钥的表并停在提示文案上。读取用量失败或换区间时都要调用，
+// 旧区间的表留着会被当成新区间的结果。
+function resetKeyUsage(message) {
+  state.keyUsage = null;
+  $('#key-usage-rows').replaceChildren();
+  const status = $('#key-usage-status');
+  status.textContent = message;
+  status.hidden = false;
 }
 
 // 按密钥的对账视图单独读一次：它比路由汇总多一层账号维度，失败时只关掉这张
 // 表，上面的路由用量照常显示。
 async function loadKeyUsage(signal) {
-  state.keyUsage = null;
-  const status = $('#key-usage-status');
-  status.textContent = '正在读取密钥用量…';
-  status.hidden = false;
-  $('#key-usage-rows').replaceChildren();
+  resetKeyUsage('正在读取密钥用量…');
   try {
     const report = await api('GET', '/key-usage?days=' + $('#usage-days').value, null, signal);
     if (signal?.aborted) return;
     state.keyUsage = report;
     renderKeyUsage();
   } catch (err) {
-    if (!signal?.aborted) status.textContent = '读取密钥用量失败。' + err.message;
+    if (!signal?.aborted) resetKeyUsage('读取密钥用量失败。' + err.message);
   }
 }
 
@@ -1326,11 +1337,17 @@ function renderUsage() {
   for (const day of days) {
     for (const kind of kinds) addUsage(totals, day[kind]);
   }
+  // 缓存命中只看对话：嵌入的输入没有缓存语义，混进分母会把比例压下去，“全部用途”
+  // 与按用途分别看因此对不上。
+  const chatTotals = usagePart();
+  for (const day of days) {
+    if (kinds.includes('chat')) addUsage(chatTotals, day.chat);
+  }
   $('#usage-period').textContent = `${days[0].day} 至 ${days.at(-1).day} · ${report.timezone}`;
   $('#usage-tokens').textContent = number.format(totals.tokens);
-  const hitRate = cacheHitRate(totals);
+  const hitRate = cacheHitRate(chatTotals);
   $('#usage-estimate').textContent = hitRate
-    ? `含估算 ${number.format(totals.estimated_tokens)} · 输入缓存命中 ${hitRate}（${number.format(totals.cached_tokens)}/${number.format(totals.input_tokens)}）`
+    ? `含估算 ${number.format(totals.estimated_tokens)} · 输入缓存命中 ${hitRate}（${number.format(chatTotals.cached_tokens)}/${number.format(chatTotals.input_tokens)}）`
     : `含估算 ${number.format(totals.estimated_tokens)}`;
   $('#usage-attempts').textContent = number.format(totals.attempts);
   $('#usage-attempt-detail').textContent = `${number.format(totals.first_attempts)} 次首次 · ${number.format(totals.failover_attempts)} 次故障切换`;
@@ -1416,7 +1433,9 @@ function renderUsageTable(routes, date) {
     target.append(el('tr', {}, el('td', {}, el('span', { class: 'mono' }, label), sub ? el('div', { class: 'sub mono' }, sub) : null),
       el('td', { class: 'nowrap' }, kindName[kind]),
       el('td', { class: 'numeric' }, number.format(u.tokens),
-        u.input_tokens > 0 ? el('div', { class: 'sub' }, `输入 ${number.format(u.input_tokens)} · 命中 ${cacheHitRate(u)}`) : null),
+        u.input_tokens > 0 && kind === 'chat'
+          ? el('div', { class: 'sub' }, `输入 ${number.format(u.input_tokens)} · 命中 ${cacheHitRate(u)}`)
+          : null),
       [u.estimated_tokens, u.attempts, u.first_attempts, u.failover_attempts]
         .map((n) => el('td', { class: 'numeric' }, number.format(n))),
       el('td', { class: 'numeric' }, number.format(u.attempts - u.successes), incomplete ? el('div', { class: 'sub' }, incomplete) : null),
@@ -1426,11 +1445,19 @@ function renderUsageTable(routes, date) {
 
 // ---- 按密钥计费 ----
 // 金额只由对话的计费 token 折算：嵌入不参与积分核销，折进金额会让人以为嵌入也
-// 能用积分支付。趋势条按整个区间的峰值缩放，横向比较同一张表里的密钥。
+// 能用积分支付。趋势条按整个区间的峰值缩放，横向比较同一张表里的密钥。核销按
+// 向上取整折积分，这里同样向上取整，数字才对得上；没有扣当天的免费额度，只是
+// 对账参考，不代表实际核销。
 function keyUsagePoints(tokens, perPoint) {
   if (!perPoint || perPoint <= 0) return '—';
-  const points = tokens / perPoint;
-  return '≈' + points.toLocaleString('zh-CN', { maximumFractionDigits: points < 10 ? 2 : 0 });
+  return '≈' + number.format(Math.ceil(tokens / perPoint));
+}
+
+// keyStatus 说明这把密钥现在还能不能用。api_key 行被每日清理删除之后既没有名字，
+// 撤销状态也是 false，只看这两项会把它显示成“在用”。
+function keyStatus(key) {
+  if (!key.key_present) return '已清理';
+  return key.revoked ? '已撤销' : '在用';
 }
 
 function shortAccount(id) {
@@ -1458,7 +1485,8 @@ function renderKeyUsage() {
     const usage = scope ? key.daily[scope] : { chat: key.chat, embedding: key.embedding };
     if (!usage) continue;
     const tokenRow = key.key_id === '';
-    const name = tokenRow ? '访问令牌' : (key.name || '已清理的密钥');
+    const name = tokenRow ? '访问令牌'
+      : (key.key_present ? (key.name || '未命名密钥') : '已清理的密钥');
     const sub = tokenRow ? '客户端调用' : key.prefix || key.key_id;
     const spark = el('span', { class: 'key-spark' });
     for (const date of dates) {
@@ -1477,7 +1505,7 @@ function renderKeyUsage() {
       el('td', { class: 'numeric' }, number.format(usage.chat.reserved_tokens + usage.embedding.reserved_tokens)),
       el('td', { class: 'numeric' }, spark),
       el('td', { class: 'nowrap' }, key.last_used_at ? moment(key.last_used_at) : '—'),
-      el('td', {}, tokenRow ? '—' : (key.revoked ? '已撤销' : '在用'))));
+      el('td', {}, tokenRow ? '—' : keyStatus(key))));
   }
   const status = $('#key-usage-status');
   for (const row of shown) body.append(row);

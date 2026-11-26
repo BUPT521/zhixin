@@ -11,13 +11,18 @@ import (
 // fakeMaintenance 记录补查与保留期的调用，并按预设的批次返回删除行数。
 type fakeMaintenance struct {
 	unsettled []Charge
-	// purchaseBatches 与 chargeBatches 依次作为每一批的删除行数返回，用完之后返回 0。
+	// purchaseBatches、chargeBatches 与 orphanBatches 依次作为每一批的删除行数返回，
+	// 用完之后返回 0。
 	purchaseBatches []int64
 	chargeBatches   []int64
+	orphanBatches   []int64
 	pruneCalls      int
+	orphanDeletes   int
 	reconcileCalls  int
 	instanceTokens  int64
-	counts          map[string]int64
+	// instanceDay 是最近一次对账读实例账本时用的自然日。
+	instanceDay string
+	counts      map[string]int64
 }
 
 func (f *fakeMaintenance) UnsettledGlobal(context.Context, time.Time, int) ([]Charge, error) {
@@ -33,12 +38,18 @@ func (f *fakeMaintenance) DeleteTerminalCharges(_ context.Context, _ time.Time, 
 	return popBatch(&f.chargeBatches), nil
 }
 
+func (f *fakeMaintenance) DeleteOrphanCharges(_ context.Context, _ time.Time, _ int) (int64, error) {
+	f.orphanDeletes++
+	return popBatch(&f.orphanBatches), nil
+}
+
 func (f *fakeMaintenance) ChargeStatusCounts(context.Context) (map[string]int64, error) {
 	f.reconcileCalls++
 	return f.counts, nil
 }
 
-func (f *fakeMaintenance) InstanceUsed(context.Context, string) (int64, error) {
+func (f *fakeMaintenance) InstanceUsed(_ context.Context, day string) (int64, error) {
+	f.instanceDay = day
 	return f.instanceTokens, nil
 }
 
@@ -52,26 +63,46 @@ func popBatch(batches *[]int64) int64 {
 }
 
 // TestMaintenanceLoopReconcilesAndPrunesInBatches 守住每日维护：先记一次对账日志，再
-// 按 1000 行一批删购买入口与终态流水，删满一批继续，不满一批就停。
+// 按 1000 行一批删购买入口与终态流水，删满一批继续，不满一批就停；删号之后失去归属
+// 的流水按同一批大小清理，它们再也补查不到结果。
 func TestMaintenanceLoopReconcilesAndPrunesInBatches(t *testing.T) {
 	store := &fakeMaintenance{
 		purchaseBatches: []int64{1000, 10},
 		chargeBatches:   []int64{3},
+		orphanBatches:   []int64{1000},
 		counts:          map[string]int64{StatusPending: 2, StatusSucceeded: 7},
 		instanceTokens:  42,
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立刻结束，只跑启动那一次。
-	MaintenanceLoop(ctx, store, log)
+	MaintenanceLoop(ctx, store, time.UTC, log)
 	if store.reconcileCalls != 1 {
 		t.Fatalf("应在启动时记一次对账日志，实际 %d 次", store.reconcileCalls)
 	}
 	if store.pruneCalls != 2 {
 		t.Fatalf("购买入口应删两批（第一批满 1000），实际 %d 批", store.pruneCalls)
 	}
-	if len(store.purchaseBatches) != 0 || len(store.chargeBatches) != 0 {
-		t.Fatalf("应把预设批次用完: %v %v", store.purchaseBatches, store.chargeBatches)
+	if store.orphanDeletes != 2 {
+		t.Fatalf("失去归属的流水应删两批（第一批满 1000），实际 %d 批", store.orphanDeletes)
+	}
+	if len(store.purchaseBatches) != 0 || len(store.chargeBatches) != 0 || len(store.orphanBatches) != 0 {
+		t.Fatalf("应把预设批次用完: %v %v %v", store.purchaseBatches, store.chargeBatches, store.orphanBatches)
+	}
+}
+
+// TestMaintenanceLoopReconcilesTheConfiguredDay 守住对账读的是配置时区的当天，而不是
+// 固定东八区：实例账本按 ZHIXIN_TIMEZONE 记 day，两者不一致时非东八区部署读到的
+// 是另一天的账。
+func TestMaintenanceLoopReconcilesTheConfiguredDay(t *testing.T) {
+	loc := time.FixedZone("UTC-11", -11*60*60)
+	store := &fakeMaintenance{counts: map[string]int64{}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	MaintenanceLoop(ctx, store, loc, log)
+	if want := time.Now().In(loc).Format("2006-01-02"); store.instanceDay != want {
+		t.Fatalf("对账应按配置时区取当天，want %q got %q", want, store.instanceDay)
 	}
 }
 

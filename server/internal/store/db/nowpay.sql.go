@@ -140,6 +140,32 @@ func (q *Queries) DeleteExpiredPurchases(ctx context.Context, arg DeleteExpiredP
 	return result.RowsAffected(), nil
 }
 
+const deleteOrphanCharges = `-- name: DeleteOrphanCharges :execrows
+DELETE FROM nowpay_charge
+WHERE id IN (
+  SELECT nowpay_charge.id FROM nowpay_charge
+  WHERE nowpay_charge.user_id IS NULL AND nowpay_charge.status IN ('pending', 'processing')
+    AND nowpay_charge.created_at < $1
+  ORDER BY nowpay_charge.created_at
+  LIMIT $2
+)
+`
+
+type DeleteOrphanChargesParams struct {
+	Before  pgtype.Timestamptz
+	MaxRows int32
+}
+
+// 保留期：删号之后 user_id 被置空、又一直没有结论的流水分批删除。它们补查不到
+// 结果，也不会再属于任何账号，只能按创建时间清掉，否则会一直积在 pending 上。
+func (q *Queries) DeleteOrphanCharges(ctx context.Context, arg DeleteOrphanChargesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOrphanCharges, arg.Before, arg.MaxRows)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTerminalCharges = `-- name: DeleteTerminalCharges :execrows
 DELETE FROM nowpay_charge
 WHERE id IN (
@@ -366,12 +392,13 @@ func (q *Queries) SaveBalance(ctx context.Context, arg SaveBalanceParams) error 
 	return err
 }
 
-const setChargeStatus = `-- name: SetChargeStatus :exec
+const setChargeStatus = `-- name: SetChargeStatus :one
 UPDATE nowpay_charge
 SET status = COALESCE($1, status),
     note = $2,
     updated_at = now()
 WHERE id = $3
+RETURNING updated_at
 `
 
 type SetChargeStatusParams struct {
@@ -380,9 +407,13 @@ type SetChargeStatusParams struct {
 	ID     string
 }
 
-func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams) error {
-	_, err := q.db.Exec(ctx, setChargeStatus, arg.Status, arg.Note, arg.ID)
-	return err
+// 落核销状态并返回这次的确认时刻。终态行的 updated_at 就是确认时间，核销成功之后
+// 写副本用它做快照的下限，这一笔才不会被算成“快照之后才确认”（ADR-0073）。
+func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, setChargeStatus, arg.Status, arg.Note, arg.ID)
+	var updated_at pgtype.Timestamptz
+	err := row.Scan(&updated_at)
+	return updated_at, err
 }
 
 const unreflectedChargePoints = `-- name: UnreflectedChargePoints :one
@@ -452,7 +483,7 @@ func (q *Queries) UnsettledCharges(ctx context.Context, arg UnsettledChargesPara
 
 const unsettledChargesGlobal = `-- name: UnsettledChargesGlobal :many
 SELECT id, user_id, day, points, billed_tokens, status, note, created_at, updated_at FROM nowpay_charge
-WHERE status IN ('pending', 'processing') AND created_at < $1
+WHERE user_id IS NOT NULL AND status IN ('pending', 'processing') AND created_at < $1
 ORDER BY created_at, id
 LIMIT $2
 `
@@ -463,7 +494,9 @@ type UnsettledChargesGlobalParams struct {
 }
 
 // 全局补查：创建超过宽限期仍未终结的流水，不按账号过滤。核销队列满或进程退出时
-// 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。
+// 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。删号之后 user_id 被置空的行
+// 不再取：即刻收的核销与补查都要带买家标识，没有买家标识的行无论补查多少次都只会
+// 失败，留在结果里还会把更晚的流水挤出这一批。这类行由保留期按创建时间删除。
 func (q *Queries) UnsettledChargesGlobal(ctx context.Context, arg UnsettledChargesGlobalParams) ([]NowpayCharge, error) {
 	rows, err := q.db.Query(ctx, unsettledChargesGlobal, arg.Before, arg.MaxRows)
 	if err != nil {

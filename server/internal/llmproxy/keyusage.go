@@ -42,12 +42,14 @@ func (c KeyUsageCounts) view() api.AdminKeyUsageCounts {
 }
 
 // KeyUsage 是一行按账号、密钥、自然日与用途分开记的用量。KeyID 为空字符串表示
-// 这次调用用的是访问令牌；Name 为空而 KeyID 不为空表示密钥行已经被每日清理删除，
-// 用量行仍然保留。
+// 这次调用用的是访问令牌；KeyPresent 为假表示 api_key 行已经被每日清理删除，用量
+// 行仍然保留，名字为空。名字为空的在用密钥与已清理的密钥只能靠 KeyPresent 区分，
+// 不能只看名字。
 type KeyUsage struct {
 	Day           string
 	UserID, KeyID string
 	Name, Prefix  string
+	KeyPresent    bool
 	Revoked       bool
 	LastUsedAt    time.Time
 	Kind          Kind
@@ -88,11 +90,11 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 	type keyID struct{ userID, keyID string }
 	type dayCounts struct{ chat, embedding KeyUsageCounts }
 	type aggregate struct {
-		chat, embedding KeyUsageCounts
-		daily           map[string]dayCounts
-		name, prefix    string
-		revoked         bool
-		lastUsed        time.Time
+		chat, embedding  KeyUsageCounts
+		daily            map[string]dayCounts
+		name, prefix     string
+		present, revoked bool
+		lastUsed         time.Time
 	}
 	byKey := make(map[keyID]*aggregate)
 	for _, row := range rows {
@@ -103,10 +105,12 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 			byKey[id] = agg
 		}
 		// 名字与撤销状态来自同一条 api_key 行；已清理的密钥没有名字，保留空字符串
-		// 让页面显示“已清理”，不要拿密钥编号冒充名字。
+		// 让页面显示“已清理”，不要拿密钥编号冒充名字。行是否还在单独记在
+		// key_present 上：名字为空的在用密钥同样不带名字，只看名字分不出两者。
 		if row.Name != "" {
 			agg.name, agg.prefix = row.Name, row.Prefix
 		}
+		agg.present = agg.present || row.KeyPresent
 		agg.revoked = agg.revoked || row.Revoked
 		if row.LastUsedAt.After(agg.lastUsed) {
 			agg.lastUsed = row.LastUsedAt
@@ -130,7 +134,7 @@ func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetA
 	for id, agg := range byKey {
 		view := api.AdminKeyUsage{
 			KeyId: id.keyID, UserId: id.userID, Name: agg.name, Prefix: agg.prefix,
-			Revoked: agg.revoked, Chat: agg.chat.view(), Embedding: agg.embedding.view(),
+			KeyPresent: agg.present, Revoked: agg.revoked, Chat: agg.chat.view(), Embedding: agg.embedding.view(),
 			Daily: make(map[string]api.AdminKeyUsageDay, len(agg.daily)),
 		}
 		if !agg.lastUsed.IsZero() {

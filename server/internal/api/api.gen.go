@@ -400,10 +400,13 @@ type AdminKeyUsage struct {
 	// KeyId 接入密钥编号；空字符串表示访问令牌发起的调用
 	KeyId string `json:"key_id"`
 
+	// KeyPresent api_key 行是否还在；false 表示撤销超过保留期已被清理，不能用名字区分这种情况与没有填名字的密钥
+	KeyPresent bool `json:"key_present"`
+
 	// LastUsedAt 最近使用时间，按十分钟粒度更新；访问令牌与已清理的密钥没有
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
 
-	// Name 密钥名字；撤销超过保留期被清理后为空字符串
+	// Name 密钥名字；撤销超过保留期被清理后为空字符串，名字为空的密钥同样为空
 	Name string `json:"name"`
 
 	// Prefix 密钥前缀，用于辨认
@@ -888,7 +891,8 @@ type IdentityKind string
 
 // LLMQuota defines model for LLMQuota.
 type LLMQuota struct {
-	// ChargedPoints 当天已经核销成功的积分；没有开通收款时为 null，见 ADR-0071
+	// ChargedPoints 当天已经核销成功的积分；没有开通收款时为 null。开通收款之后即使余额副本
+	// 还没有建好或账号还没有副本，这一项也照常返回，见 ADR-0071。
 	ChargedPoints *int64 `json:"charged_points,omitempty"`
 
 	// DailyTokens 聊天每日额度

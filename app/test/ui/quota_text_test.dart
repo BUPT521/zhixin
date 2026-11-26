@@ -54,9 +54,22 @@ void main() {
     );
   });
 
-  test('没有开通收款或只给一个积分数字时不显示积分视图', () {
+  test('只给一个数字时只写那一项，不整行藏掉', () {
+    expect(
+      pointsQuotaText(chargedPoints: 5, remainingPoints: null),
+      '今天已从积分扣除 5 分。',
+    );
+    expect(
+      pointsQuotaText(chargedPoints: 0, remainingPoints: null),
+      '今天还没有从积分扣除。',
+    );
+    expect(
+      pointsQuotaText(chargedPoints: null, remainingPoints: 27),
+      '剩余 27 分。',
+    );
+  });
+
+  test('没有开通收款时两个数字都是 null，不显示积分视图', () {
     expect(pointsQuotaText(chargedPoints: null, remainingPoints: null), '');
-    expect(pointsQuotaText(chargedPoints: 5, remainingPoints: null), '');
-    expect(pointsQuotaText(chargedPoints: null, remainingPoints: 27), '');
   });
 }
