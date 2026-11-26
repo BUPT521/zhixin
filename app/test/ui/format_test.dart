@@ -33,6 +33,17 @@ void main() {
     expect(quotaPoints(1000, 0), 0);
   });
 
+  test('免费额度折成积分向下取整，用量向上取整', () {
+    // 额度不是比例整数倍时，向上取整会把额度写成 3 积分、同时又说已扣 1 分。
+    expect(quotaPoints(25000, 10000), 3);
+    expect(freeQuotaPoints(25000, 10000), 2);
+    expect(freeQuotaPoints(9999, 10000), 0);
+    expect(freeQuotaPoints(10000, 10000), 1);
+    expect(freeQuotaPoints(30000, 10000), 3);
+    expect(freeQuotaPoints(0, 10000), 0);
+    expect(freeQuotaPoints(25000, null), 0);
+  });
+
   test('等待时长按时长换单位并向上取整', () {
     expect(waitText(30), '30 秒');
     expect(waitText(60), '60 秒');

@@ -135,7 +135,9 @@ class _AccountPageState extends State<AccountPage> {
         _spaces = spaces;
         _snapshot = snapshot;
         _sync = sync;
-        _quota = quota;
+        // 这一次没读到额度时保留上一次的数字：瞬时失败不该把已经读到的额度清空，
+        // 否则页面看起来像额度没了。
+        _quota = quota ?? _quota;
         _localDeviceId = localDeviceId;
         _loading = false;
       });
@@ -853,7 +855,7 @@ class _AccountPageState extends State<AccountPage> {
           '每日免费额度 ${quota.dailyTokens} token';
     }
     return '聊天今日已用 ${quotaPoints(quota.usedTokens, ratio)} 积分 · '
-        '每日免费额度 ${quotaPoints(quota.dailyTokens, ratio)} 积分';
+        '每日免费额度 ${freeQuotaPoints(quota.dailyTokens, ratio)} 积分';
   }
 
   String _quotaDetailText() {

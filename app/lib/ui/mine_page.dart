@@ -584,7 +584,7 @@ class _AccountCard extends StatelessWidget {
       return '${quota.usedTokens} / ${quota.dailyTokens} token';
     }
     return '${quotaPoints(quota.usedTokens, ratio)} / '
-        '${quotaPoints(quota.dailyTokens, ratio)} 积分';
+        '${freeQuotaPoints(quota.dailyTokens, ratio)} 积分';
   }
 }
 

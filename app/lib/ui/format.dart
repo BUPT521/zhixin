@@ -74,6 +74,15 @@ int quotaPoints(int tokens, int? tokensPerPoint) {
   return (tokens + tokensPerPoint - 1) ~/ tokensPerPoint;
 }
 
+/// 把每日免费额度换算成积分，向下取整：额度只有凑满一整份积分才算数，向上取整会
+/// 和核销对不上——额度 25,000、一个积分 10,000 计费 token 时，当天用满 25,000 只
+/// 扣两个积分，页面却把额度写成 3 积分，同时又说“已扣 1 分”。用量一侧仍按向上
+/// 取整，见 [quotaPoints]。
+int freeQuotaPoints(int tokens, int? tokensPerPoint) {
+  if (tokens <= 0 || tokensPerPoint == null || tokensPerPoint <= 0) return 0;
+  return tokens ~/ tokensPerPoint;
+}
+
 String _trimZero(double value) {
   final text = value.toStringAsFixed(1);
   return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
