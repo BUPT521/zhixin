@@ -64,6 +64,10 @@ class _HomeShellState extends State<HomeShell> {
   /// 首次说明与更新检查只安排一次，didChangeDependencies 会因主题、语言等变化被多次调用。
   bool _startupChecksScheduled = false;
 
+  /// 联网相关的启动检查是否已经安排：首次启动引导里同意用户须知之前不安排，
+  /// 同意之后再从这里开始，匿名统计说明与更新检查都随这一条走。
+  bool _networkChecksStarted = false;
+
   @override
   void initState() {
     super.initState();
@@ -77,15 +81,23 @@ class _HomeShellState extends State<HomeShell> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final scope = AppScope.of(context);
     if (!_startupChecksScheduled) {
       _startupChecksScheduled = true;
-      final services = AppScope.of(context).accountServices;
-      final report = services.activeReport;
-      final updates = services.updates;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _preloadTimer = Timer(preloadDelay, _releasePreload);
+      });
+    }
+    // 引导里同意用户须知之后联网开关才打开；在本机模式下启动时这一段不执行，
+    // 在设置里同意之后 HomeShell 重建，从这里补上首次说明与更新检查。
+    if (scope.networkAllowed && !_networkChecksStarted) {
+      _networkChecksStarted = true;
+      final report = scope.accountServices.activeReport;
+      final updates = scope.accountServices.updates;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         unawaited(_runStartupChecks(report, updates));
-        _preloadTimer = Timer(preloadDelay, _releasePreload);
       });
     }
     _pages ??= [

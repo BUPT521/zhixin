@@ -94,12 +94,17 @@ class ActiveReportService {
 
   /// 首次说明的选择结果：记住说明看过，并按用户的选择决定是否上报。
   ///
-  /// 选择保持开启时当场尝试一次上报；调用方在弹窗关闭之后才走到这里，等待这次
-  /// 请求不会挡住用户操作。
-  Future<void> completeNotice({required bool enabled}) async {
+  /// [report] 为假时只写开关与“说明已看过”，不发这次请求：首次启动引导在第一
+  /// 步就把这两项写下来，但真正的上报要等引导走完、进入首页之后才发出，见
+  /// ADR-0077。弹窗或设置页的调用方保持默认真，选择保持开启时当场尝试一次；
+  /// 等待这次请求不会挡住用户操作。
+  Future<void> completeNotice({
+    required bool enabled,
+    bool report = true,
+  }) async {
     await store.setEnabled(enabled);
     await store.markNoticeSeen();
-    if (enabled) await reportIfDue();
+    if (enabled && report) await reportIfDue();
   }
 
   static String _platform() =>
