@@ -900,6 +900,10 @@ paths:
         `max_output_tokens`、`stream` 与 `store: false`，客户端不使用
         `previous_response_id`，也不发送 `temperature` 与 `top_p`。服务端校验
         `model` 后转发到来源的 `/responses`，只放行白名单内的字段，其余字段回 400。
+        第三方客户端常见、取值由服务端与来源决定的字段是例外，接受但不转发：
+        `prompt_cache_key`、`prompt_cache_retention`、`prompt_cache_options`、
+        `service_tier` 与 `include`；把它们转给不认识这些字段的来源，只会让整次
+        请求按来源错误失败。
         `store` 放行但不按客户端取值转发：服务端在转发前一律写成 `false`，因为
         Responses 接口在缺少该字段时默认让上游保存响应。
         `max_output_tokens` 取 16 到 32768，省略时补 4096，与客户端的上限一致，

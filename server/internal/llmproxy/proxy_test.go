@@ -247,6 +247,56 @@ func TestHandlerResponsesForcesStoreOff(t *testing.T) {
 	}
 }
 
+// TestHandlerResponsesDropsClientHints 断言第三方 Responses 客户端常见的缓存与
+// 服务档位字段被接受、但不转发给来源。DeepSeek Harness 一类的工具每次请求都带
+// `prompt_cache_key`，开启思考时再带 `include`，按白名单回 400 会让接入密钥在
+// 这些工具里完全不可用（ADR-0063）；来源不认识这些字段时，转发出去只会让整次
+// 请求按来源错误失败。
+func TestHandlerResponsesDropsClientHints(t *testing.T) {
+	var gotBody map[string]any
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_1","object":"response","status":"completed","output":[]}`)
+	}))
+	defer upstream.Close()
+
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "up", upstream.URL, "sk-server")
+		putModel(t, c, ModelRecord{Name: "deepseek-flash", Kind: KindChat, Routes: []Route{{ProviderID: "up", UpstreamModel: "deepseek-flash"}}})
+	})
+	tokens, err := env.authSvc.Register(context.Background(), "hints@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.quota.SetDailyLimit(tokens.UserID, 1<<30)
+
+	req, err := json.Marshal(map[string]any{
+		"model": "deepseek-flash", "input": []any{},
+		"prompt_cache_key":       "session-1",
+		"prompt_cache_retention": "in_memory",
+		"prompt_cache_options":   map[string]any{},
+		"service_tier":           "default",
+		"include":                []any{"reasoning.encrypted_content"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := env.c.Do(http.MethodPost, "/v1/llm/responses", tokens.AccessToken, bytes.NewReader(req), map[string]string{"Content-Type": "application/json"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("客户端提示字段应放行，得到 %d", resp.StatusCode)
+	}
+	for _, name := range []string{"prompt_cache_key", "prompt_cache_retention", "prompt_cache_options", "service_tier", "include"} {
+		if _, present := gotBody[name]; present {
+			t.Fatalf("上游不该收到 %s：%+v", name, gotBody)
+		}
+	}
+	if gotBody["model"] != "deepseek-flash" || gotBody["store"] != false {
+		t.Fatalf("模型名与 store 应照常处理：%+v", gotBody)
+	}
+}
+
 func TestHandlerQuotaOverride(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")

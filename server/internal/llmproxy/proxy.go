@@ -519,9 +519,10 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 	if model == nil {
 		return
 	}
-	if !allowFields(w, r, fields, chatFields) {
+	if !allowFields(w, r, fields, chatFields, clientHintFields) {
 		return
 	}
+	stripClientHints(fields)
 	if raw, ok := fields["input"]; !ok || !isJSONArray(raw) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "input must be a list of input items")
 		return
@@ -828,6 +829,17 @@ var chatFields = map[string]bool{
 	"reasoning": true, "text": true, "store": true,
 }
 
+// clientHintFields 是第三方 Responses 客户端常见、服务端接受但不转发的字段。
+// 缓存亲和、缓存保留与服务档位由服务端与来源决定，转发给不认识这些字段的来源
+// 只会让整次请求被拒；`include` 只要求上游多返回推理内容，知新的客户端不保存
+// 推理条目，当前来源默认就会返回。DeepSeek Harness 一类的工具每次请求都带
+// `prompt_cache_key`，开启思考时再带 `include`，按白名单回 400 会让接入密钥在
+// 这些工具里完全不可用（ADR-0063）。
+var clientHintFields = map[string]bool{
+	"prompt_cache_key": true, "prompt_cache_retention": true, "prompt_cache_options": true,
+	"service_tier": true, "include": true,
+}
+
 func functionToolsOnly(raw json.RawMessage) bool {
 	var tools []struct {
 		Type string `json:"type"`
@@ -843,14 +855,28 @@ func functionToolsOnly(raw json.RawMessage) bool {
 	return true
 }
 
-func allowFields(w http.ResponseWriter, r *http.Request, fields map[string]json.RawMessage, allowed map[string]bool) bool {
+func allowFields(w http.ResponseWriter, r *http.Request, fields map[string]json.RawMessage, allowed ...map[string]bool) bool {
 	for name := range fields {
-		if !allowed[name] {
+		ok := false
+		for _, set := range allowed {
+			if set[name] {
+				ok = true
+				break
+			}
+		}
+		if !ok {
 			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "unsupported model request field")
 			return false
 		}
 	}
 	return true
+}
+
+// stripClientHints 删掉接受但不转发的字段，剩下的才是交给来源的请求体。
+func stripClientHints(fields map[string]json.RawMessage) {
+	for name := range clientHintFields {
+		delete(fields, name)
+	}
 }
 
 // retryable 报告这个状态码是否换下一个来源再试：限流、服务端错误、key 被拒与
