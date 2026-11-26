@@ -607,8 +607,32 @@ type AdminUsageCounts struct {
 	// FailoverAttempts 同一请求内首次尝试失败后实际执行的路由尝试
 	FailoverAttempts int64 `json:"failover_attempts"`
 
+	// FailoverCachedReports 故障切换后的尝试中也给出 cached_tokens 的条数
+	FailoverCachedReports int64 `json:"failover_cached_reports"`
+
+	// FailoverCachedTokens 故障切换后的输入量中命中缓存的部分
+	FailoverCachedTokens int64 `json:"failover_cached_tokens"`
+
+	// FailoverInputReports 故障切换后的尝试中来源给出输入量的条数
+	FailoverInputReports int64 `json:"failover_input_reports"`
+
+	// FailoverInputTokens 故障切换后执行的尝试报告的输入量之和
+	FailoverInputTokens int64 `json:"failover_input_tokens"`
+
 	// FirstAttempts 每次请求首次执行的路由尝试
 	FirstAttempts int64 `json:"first_attempts"`
+
+	// FirstCachedReports 首次尝试中也给出 cached_tokens 的条数，与 first_input_reports 的差是缺报条数
+	FirstCachedReports int64 `json:"first_cached_reports"`
+
+	// FirstCachedTokens 首次尝试的输入量中命中缓存的部分
+	FirstCachedTokens int64 `json:"first_cached_tokens"`
+
+	// FirstInputReports 首次尝试中来源给出输入量的条数
+	FirstInputReports int64 `json:"first_input_reports"`
+
+	// FirstInputTokens 首次尝试报告的输入量之和
+	FirstInputTokens int64 `json:"first_input_tokens"`
 
 	// InputTokens 上游报告的输入量之和；没有报告时为 0
 	InputTokens int64 `json:"input_tokens"`

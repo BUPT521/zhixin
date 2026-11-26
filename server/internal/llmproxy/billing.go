@@ -20,8 +20,13 @@ const (
 // Usage 是一次调用的用量。Input 与 Cached 是来源报告的输入量与其中命中上下文
 // 缓存的部分，Output 是输出量。来源只报总量时 Input 与 Cached 为 0，此时按原始
 // token 记账，见 Billed。
+//
+// CachedReported 记录来源这次有没有给出 cached_tokens。给了而值为 0 表示这次确实
+// 没有命中，没有给表示这次拿不到命中数据；后台统计把两者分开，因为把缺报当成
+// 零命中会让命中率偏低，据此判断路由好坏就会判断错。它只用于统计，不参与折算。
 type Usage struct {
 	Input, Cached, Output int64
+	CachedReported        bool
 }
 
 func (u Usage) Total() int64 { return u.Input + u.Output }

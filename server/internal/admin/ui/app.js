@@ -1193,6 +1193,8 @@ const usagePart = () => ({
   attempts: 0, first_attempts: 0, failover_attempts: 0, successes: 0,
   truncated_attempts: 0, canceled_attempts: 0, tokens: 0, estimated_tokens: 0,
   input_tokens: 0, cached_tokens: 0,
+  first_input_tokens: 0, first_cached_tokens: 0, failover_input_tokens: 0, failover_cached_tokens: 0,
+  first_input_reports: 0, first_cached_reports: 0, failover_input_reports: 0, failover_cached_reports: 0,
 });
 function addUsage(total, part) {
   for (const field of Object.keys(total)) total[field] += part[field];
@@ -1205,6 +1207,49 @@ function successRate(u) {
 // cacheHitRate 是来源报告的输入里命中缓存的比例；没有输入量时不显示。
 function cacheHitRate(u) {
   return u.input_tokens > 0 ? routeShare(u.cached_tokens / u.input_tokens) : '';
+}
+
+// cacheHitRateOf 是单独一栏的命中率：首次尝试与换路尝试分开算，用来判断换路之后
+// 已经热起来的前缀有没有被保住。
+function cacheHitRateOf(inputTokens, cachedTokens) {
+  return inputTokens > 0 ? routeShare(cachedTokens / inputTokens) : '';
+}
+
+// cacheUnreported 是来源给了输入量却没有给 cached_tokens 的条数。这些尝试既不能
+// 算命中也不能算零命中，单独列出来，否则缺报会被读成零命中。
+function cacheUnreported(u) {
+  return (u.first_input_reports - u.first_cached_reports) + (u.failover_input_reports - u.failover_cached_reports);
+}
+
+// cacheNotes 是卡片里那一行缓存说明：命中率、首次与换路的差别、缓存字段的上报
+// 覆盖率与缺报条数。
+function cacheNotes(u) {
+  const hit = cacheHitRate(u);
+  if (!hit) return '';
+  const parts = [`输入缓存命中 ${hit}（${number.format(u.cached_tokens)}/${number.format(u.input_tokens)}）`];
+  const first = cacheHitRateOf(u.first_input_tokens, u.first_cached_tokens);
+  const failover = cacheHitRateOf(u.failover_input_tokens, u.failover_cached_tokens);
+  if (first) parts.push(`首次 ${first}`);
+  if (failover) parts.push(`换路 ${failover}`);
+  const reports = u.first_input_reports + u.failover_input_reports;
+  const reported = u.first_cached_reports + u.failover_cached_reports;
+  if (reports > 0) parts.push(`缓存字段上报 ${percent.format(reported / reports)}`);
+  const unreported = reports - reported;
+  if (unreported > 0) parts.push(`缺报 ${number.format(unreported)} 条`);
+  return parts.join(' · ');
+}
+
+// cacheRowNote 是表格行里的短版本，只放这一行用得上的数字。
+function cacheRowNote(u) {
+  const hit = cacheHitRate(u);
+  if (!hit) return '';
+  const parts = [`输入 ${number.format(u.input_tokens)}`, `命中 ${hit}`];
+  const first = cacheHitRateOf(u.first_input_tokens, u.first_cached_tokens);
+  const failover = cacheHitRateOf(u.failover_input_tokens, u.failover_cached_tokens);
+  if (first && failover) parts.push(`首次 ${first} · 换路 ${failover}`);
+  const unreported = cacheUnreported(u);
+  if (unreported > 0) parts.push(`缺报 ${number.format(unreported)} 条`);
+  return parts.join(' · ');
 }
 
 $('#usage-days').addEventListener('change', loadUsage);
@@ -1328,10 +1373,8 @@ function renderUsage() {
   }
   $('#usage-period').textContent = `${days[0].day} 至 ${days.at(-1).day} · ${report.timezone}`;
   $('#usage-tokens').textContent = number.format(totals.tokens);
-  const hitRate = cacheHitRate(totals);
-  $('#usage-estimate').textContent = hitRate
-    ? `含估算 ${number.format(totals.estimated_tokens)} · 输入缓存命中 ${hitRate}（${number.format(totals.cached_tokens)}/${number.format(totals.input_tokens)}）`
-    : `含估算 ${number.format(totals.estimated_tokens)}`;
+  $('#usage-estimate').textContent = `含估算 ${number.format(totals.estimated_tokens)}`;
+  $('#usage-cache').textContent = cacheNotes(totals);
   $('#usage-attempts').textContent = number.format(totals.attempts);
   $('#usage-attempt-detail').textContent = `${number.format(totals.first_attempts)} 次首次 · ${number.format(totals.failover_attempts)} 次故障切换`;
   $('#usage-unsuccessful').textContent = `${number.format(totals.attempts - totals.successes)} 次未成功`;
@@ -1416,7 +1459,7 @@ function renderUsageTable(routes, date) {
     target.append(el('tr', {}, el('td', {}, el('span', { class: 'mono' }, label), sub ? el('div', { class: 'sub mono' }, sub) : null),
       el('td', { class: 'nowrap' }, kindName[kind]),
       el('td', { class: 'numeric' }, number.format(u.tokens),
-        u.input_tokens > 0 ? el('div', { class: 'sub' }, `输入 ${number.format(u.input_tokens)} · 命中 ${cacheHitRate(u)}`) : null),
+        cacheRowNote(u) ? el('div', { class: 'sub' }, cacheRowNote(u)) : null),
       [u.estimated_tokens, u.attempts, u.first_attempts, u.failover_attempts]
         .map((n) => el('td', { class: 'numeric' }, number.format(n))),
       el('td', { class: 'numeric' }, number.format(u.attempts - u.successes), incomplete ? el('div', { class: 'sub' }, incomplete) : null),

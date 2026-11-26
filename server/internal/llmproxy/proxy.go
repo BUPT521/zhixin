@@ -431,6 +431,7 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 				} else {
 					counts.FailoverAttempts = 1
 				}
+				counts.recordCache(model.Kind, first, result.usage)
 				if result.outputLimited {
 					counts.TruncatedAttempts = 1
 				} else if !result.success && canceled {
@@ -1186,24 +1187,27 @@ type usageEnvelope struct {
 		CompletionTokens int64 `json:"completion_tokens"`
 		// InputTokensDetails 是 Responses 在命中上下文缓存时给出的明细，命中量
 		// 读 cached_tokens；没有这个对象表示来源不支持或这次没有命中数据。
+		// 命中量用指针，用来区分“来源报了 0”（这次确实没有命中）与“来源没有
+		// 这个字段”（这次拿不到命中数据）。
 		InputTokensDetails *struct {
-			CachedTokens int64 `json:"cached_tokens"`
+			CachedTokens *int64 `json:"cached_tokens"`
 		} `json:"input_tokens_details"`
 	} `json:"usage"`
 }
 
-// input 返回来源报告的输入量与其中命中缓存的部分。没有输入量时缓存命中量也
-// 不单列，因为没有可用的分母；命中量超过输入量时按输入量截断。
-func (u usageEnvelope) input() (input, cached int64) {
+// input 返回来源报告的输入量、其中命中缓存的部分，以及来源有没有给出缓存字段。
+// 没有输入量时缓存命中量也不单列，因为没有可用的分母，也就不算一条缓存上报；
+// 命中量超过输入量时按输入量截断。
+func (u usageEnvelope) input() (input, cached int64, reported bool) {
 	if u.Usage == nil {
-		return 0, 0
+		return 0, 0, false
 	}
 	input = u.Usage.InputTokens
-	if u.Usage.InputTokensDetails != nil {
-		cached = u.Usage.InputTokensDetails.CachedTokens
+	if u.Usage.InputTokensDetails != nil && u.Usage.InputTokensDetails.CachedTokens != nil {
+		cached, reported = *u.Usage.InputTokensDetails.CachedTokens, true
 	}
 	if input <= 0 {
-		return 0, 0
+		return 0, 0, false
 	}
 	if cached > input {
 		cached = input
@@ -1211,7 +1215,7 @@ func (u usageEnvelope) input() (input, cached int64) {
 	if cached < 0 {
 		cached = 0
 	}
-	return input, cached
+	return input, cached, reported
 }
 
 func (u usageEnvelope) tokens(kind Kind) int64 {
@@ -1241,8 +1245,8 @@ func (u usageEnvelope) usage(kind Kind) Usage {
 	if kind == KindEmbedding {
 		return Usage{Input: u.tokens(kind)}
 	}
-	input, cached := u.input()
-	out := Usage{Input: input, Cached: cached}
+	input, cached, reported := u.input()
+	out := Usage{Input: input, Cached: cached, CachedReported: reported}
 	if total := u.tokens(kind); total > 0 {
 		out.Output = max(total-input, 0)
 	} else {
