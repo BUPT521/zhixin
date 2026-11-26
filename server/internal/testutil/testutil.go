@@ -224,6 +224,21 @@ func (Base) PostAdminV1Models(w http.ResponseWriter, _ *http.Request) {
 func (Base) GetAdminV1Usage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1UsageParams) {
 	w.WriteHeader(http.StatusNotFound)
 }
+func (Base) GetAdminV1Accounts(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1AccountsParams) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) GetAdminV1AccountsId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) DeleteAdminV1AccountsId(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) PutAdminV1AccountsIdQuota(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
+func (Base) DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, _ *http.Request, _ string) {
+	w.WriteHeader(http.StatusNotFound)
+}
 func (Base) GetAdminV1KeyUsage(w http.ResponseWriter, _ *http.Request, _ api.GetAdminV1KeyUsageParams) {
 	w.WriteHeader(http.StatusNotFound)
 }

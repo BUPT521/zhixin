@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/BUPT521/zhixin/server/internal/accountadmin"
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/backup"
@@ -29,6 +30,7 @@ type routes struct {
 	llm       *llmproxy.Proxy
 	payments  *nowpay.Handler
 	llmAdmin  *llmproxy.Admin
+	accounts  *accountadmin.Admin
 	feedback  *feedback.Handler
 	release   *release.Handler
 	retention *retention.Handler
@@ -211,6 +213,22 @@ func (rt routes) PostAdminV1Models(w http.ResponseWriter, r *http.Request) {
 }
 func (rt routes) GetAdminV1Usage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1UsageParams) {
 	rt.llmAdmin.Usage(w, r, params)
+}
+
+func (rt routes) GetAdminV1Accounts(w http.ResponseWriter, r *http.Request, params api.GetAdminV1AccountsParams) {
+	rt.accounts.List(w, r, params)
+}
+func (rt routes) GetAdminV1AccountsId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.accounts.Get(w, r, id)
+}
+func (rt routes) DeleteAdminV1AccountsId(w http.ResponseWriter, r *http.Request, id string) {
+	rt.accounts.DeleteAccount(w, r, id)
+}
+func (rt routes) PutAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request, id string) {
+	rt.accounts.PutQuota(w, r, id)
+}
+func (rt routes) DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request, id string) {
+	rt.accounts.DeleteQuota(w, r, id)
 }
 
 func (rt routes) GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1KeyUsageParams) {

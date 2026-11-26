@@ -83,3 +83,34 @@ DO UPDATE SET reserved_tokens = llm_usage.reserved_tokens + EXCLUDED.reserved_to
 SELECT daily_tokens, embedding_daily_tokens
 FROM llm_quota
 WHERE user_id = sqlc.arg(user_id);
+
+-- 管理后台读取一个账号的覆盖行：与 LLMQuotaOverride 相比多出备注与保存时间。
+-- 没有行时调用方按“没有覆盖”处理，回落到实例默认额度。
+-- name: AccountQuota :one
+SELECT daily_tokens, embedding_daily_tokens, note, updated_at
+FROM llm_quota
+WHERE user_id = sqlc.arg(user_id);
+
+-- 管理后台整体替换一个账号的覆盖值；两项额度都为空时调用方先删除这一行，不写
+-- 一条没有意义的记录。updated_at 在更新分支同样推进，页面据此看出最近一次保存。
+-- name: UpsertAccountQuota :exec
+INSERT INTO llm_quota (user_id, daily_tokens, embedding_daily_tokens, note, updated_at)
+VALUES (
+  sqlc.arg(user_id), sqlc.narg(daily_tokens), sqlc.narg(embedding_daily_tokens),
+  sqlc.arg(note), now()
+)
+ON CONFLICT (user_id) DO UPDATE SET
+  daily_tokens = EXCLUDED.daily_tokens,
+  embedding_daily_tokens = EXCLUDED.embedding_daily_tokens,
+  note = EXCLUDED.note,
+  updated_at = now();
+
+-- name: DeleteAccountQuota :exec
+DELETE FROM llm_quota
+WHERE user_id = sqlc.arg(user_id);
+
+-- 管理后台的账号列表一次读回一页账号的覆盖行，避免逐账号查询。
+-- name: AccountQuotasByUsers :many
+SELECT user_id, daily_tokens, embedding_daily_tokens, note, updated_at
+FROM llm_quota
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[]);

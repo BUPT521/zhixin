@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -181,6 +182,52 @@ func (s *Store) UserByIdentifier(ctx context.Context, kind, identifier string) (
 		PasswordHash: row.PasswordHash,
 		CreatedAt:    row.CreatedAt.Time,
 	}, nil
+}
+
+// ListAccounts 按创建时间倒序分页列出账号，匹配规则与内存实现一致：查询词
+// 先去掉首尾空白并转小写，再匹配账号编号或登录方式标识的子串。这一页的登录
+// 方式一次读回，按账号分组，避免逐账号查询。
+func (s *Store) ListAccounts(ctx context.Context, query string, limit, offset int) ([]auth.AccountRecord, int, error) {
+	query = strings.ToLower(strings.TrimSpace(query))
+	total, err := s.q.CountAccounts(ctx, query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("pg: 统计账号失败: %w", err)
+	}
+	users, err := s.q.ListAccounts(ctx, db.ListAccountsParams{
+		Query:     query,
+		RowLimit:  int32(limit),
+		RowOffset: int32(offset),
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("pg: 列出账号失败: %w", err)
+	}
+	ids := make([]string, 0, len(users))
+	for _, row := range users {
+		ids = append(ids, row.ID)
+	}
+	byUser := map[string][]auth.Identity{}
+	if len(ids) > 0 {
+		rows, err := s.q.IdentitiesByUsers(ctx, ids)
+		if err != nil {
+			return nil, 0, fmt.Errorf("pg: 读取账号登录方式失败: %w", err)
+		}
+		for _, row := range rows {
+			ident := identityFromRow(row)
+			byUser[ident.UserID] = append(byUser[ident.UserID], ident)
+		}
+	}
+	records := make([]auth.AccountRecord, 0, len(users))
+	for _, row := range users {
+		records = append(records, auth.AccountRecord{
+			User: auth.User{
+				ID:           row.ID,
+				PasswordHash: row.PasswordHash,
+				CreatedAt:    row.CreatedAt.Time,
+			},
+			Identities: byUser[row.ID],
+		})
+	}
+	return records, int(total), nil
 }
 
 func (s *Store) Identities(ctx context.Context, userID string) ([]auth.Identity, error) {

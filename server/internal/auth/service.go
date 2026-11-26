@@ -834,12 +834,22 @@ func (s *Service) DeleteAccount(ctx context.Context, p Principal, password strin
 	if err := s.VerifyCurrentPassword(ctx, p, password); err != nil {
 		return err
 	}
+	return s.DeleteAccountByID(ctx, p.UserID)
+}
+
+// DeleteAccountByID 注销一个账号，供管理后台使用：不核对账号本人的密码，其余
+// 清理与 DeleteAccount 相同，先删各业务包的数据，再删账号行。账号不存在时返回
+// ErrNotFound。这个入口只在管理令牌之后被调用，调用方负责确认要注销的编号。
+func (s *Service) DeleteAccountByID(ctx context.Context, userID string) error {
+	if _, err := s.store.UserByID(ctx, userID); err != nil {
+		return err
+	}
 	if s.deleteAccountData != nil {
-		if err := s.deleteAccountData(ctx, p.UserID); err != nil {
+		if err := s.deleteAccountData(ctx, userID); err != nil {
 			return err
 		}
 	}
-	return s.store.DeleteUser(ctx, p.UserID)
+	return s.store.DeleteUser(ctx, userID)
 }
 
 func (s *Service) issue(ctx context.Context, userID, device, checkedHash string) (Tokens, error) {

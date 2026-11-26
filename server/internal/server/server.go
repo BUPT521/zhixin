@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/time/rate"
 
+	"github.com/BUPT521/zhixin/server/internal/accountadmin"
 	"github.com/BUPT521/zhixin/server/internal/admin"
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
@@ -337,13 +338,15 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	go backupSvc.ReconcileLoop(ctx, log)
 
 	handlers := routes{
-		auth:          authHandler,
-		sync:          syncHandler,
-		backups:       backupHandler,
-		blobs:         blobHandler,
-		llm:           llmProxy,
-		payments:      newPurchaseHandler(cfg, st, log),
-		llmAdmin:      llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
+		auth:     authHandler,
+		sync:     syncHandler,
+		backups:  backupHandler,
+		blobs:    blobHandler,
+		llm:      llmProxy,
+		payments: newPurchaseHandler(cfg, st, log),
+		llmAdmin: llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
+		accounts: accountadmin.New(st.Auth, st.Quota, authSvc.DeleteAccountByID,
+			cfg.LLM.DailyTokens, cfg.LLM.EmbeddingDailyTokens, cfg.Location, log, cfg.MaxJSONBytes),
 		feedback:      feedbackHandler,
 		release:       release.NewHandler(cfg.Releases),
 		retention:     retentionHandler,

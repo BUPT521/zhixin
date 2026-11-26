@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,6 +15,13 @@ type User struct {
 	ID           string
 	PasswordHash string
 	CreatedAt    time.Time
+}
+
+// AccountRecord 是管理后台列账号时的一行：账号本身与它的全部登录方式。
+// 账号页按创建时间倒序显示，登录方式也按创建时间排列。
+type AccountRecord struct {
+	User       User
+	Identities []Identity
 }
 
 // Identity 是账号的一种登录方式。一种联系方式只能属于一个账号，
@@ -133,6 +141,10 @@ type Store interface {
 	UserByID(ctx context.Context, id string) (User, error)
 	// UserByIdentifier 按 (kind, identifier) 找账号；没有登记时返回 ErrNotFound。
 	UserByIdentifier(ctx context.Context, kind, identifier string) (User, error)
+	// ListAccounts 按创建时间倒序分页列出账号，返回这一页的账号与匹配总数。
+	// query 为空时列出全部，否则匹配账号编号或登录方式标识的子串；它只供管理
+	// 后台使用，登录与鉴权仍按 (kind, identifier) 精确查找。
+	ListAccounts(ctx context.Context, query string, limit, offset int) ([]AccountRecord, int, error)
 	// Identities 按创建顺序列出账号的登录方式。
 	Identities(ctx context.Context, userID string) ([]Identity, error)
 	// Identity 只认这个账号名下的登录方式；编号不存在或属于别的账号时返回
@@ -297,6 +309,52 @@ func (m *MemoryStore) Identities(_ context.Context, userID string) ([]Identity, 
 	if _, ok := m.users[userID]; !ok {
 		return nil, ErrNotFound
 	}
+	return m.identitiesLocked(userID), nil
+}
+
+// ListAccounts 在内存里按同一口径过滤、排序与分页；查询词先转小写，邮箱在写入
+// 时已经规范化，账号编号本身区分大小写，但管理后台的搜索按不区分大小写处理，
+// 与 PostgreSQL 的 lower 比较保持一致。
+func (m *MemoryStore) ListAccounts(_ context.Context, query string, limit, offset int) ([]AccountRecord, int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	query = strings.ToLower(strings.TrimSpace(query))
+	matched := make([]User, 0, len(m.users))
+	for _, u := range m.users {
+		if query != "" && !strings.Contains(strings.ToLower(u.ID), query) {
+			byIdentifier := false
+			for _, ident := range m.identities {
+				if ident.UserID == u.ID && strings.Contains(strings.ToLower(ident.Identifier), query) {
+					byIdentifier = true
+					break
+				}
+			}
+			if !byIdentifier {
+				continue
+			}
+		}
+		matched = append(matched, u)
+	}
+	sort.Slice(matched, func(i, j int) bool {
+		if matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].ID < matched[j].ID
+		}
+		return matched[i].CreatedAt.After(matched[j].CreatedAt)
+	})
+	total := len(matched)
+	if offset >= total {
+		return []AccountRecord{}, total, nil
+	}
+	end := min(offset+limit, total)
+	page := make([]AccountRecord, 0, end-offset)
+	for _, u := range matched[offset:end] {
+		page = append(page, AccountRecord{User: u, Identities: m.identitiesLocked(u.ID)})
+	}
+	return page, total, nil
+}
+
+// identitiesLocked 按创建顺序取一个账号的登录方式；调用方必须持有 m.mu。
+func (m *MemoryStore) identitiesLocked(userID string) []Identity {
 	list := make([]Identity, 0, len(m.identities))
 	for _, ident := range m.identities {
 		if ident.UserID == userID {
@@ -309,7 +367,7 @@ func (m *MemoryStore) Identities(_ context.Context, userID string) ([]Identity, 
 		}
 		return list[i].CreatedAt.Before(list[j].CreatedAt)
 	})
-	return list, nil
+	return list
 }
 
 func (m *MemoryStore) Identity(_ context.Context, userID, identityID string) (Identity, error) {

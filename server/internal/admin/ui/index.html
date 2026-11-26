@@ -44,6 +44,9 @@
     <button type="button" role="tab" id="nav-usage" data-tab="usage" aria-selected="false" aria-controls="tab-usage" tabindex="-1">
       <span class="tab-icon icon-usage" aria-hidden="true"></span>用量统计
     </button>
+    <button type="button" role="tab" id="nav-accounts" data-tab="accounts" aria-selected="false" aria-controls="tab-accounts" tabindex="-1">
+      <span class="tab-icon icon-accounts" aria-hidden="true"></span>账号管理
+    </button>
   </nav>
 
 <main>
@@ -164,6 +167,31 @@
         </table></div>
         <p class="hint usage-note">对话的计费 token 是上游报告用量按缓存命中折算之后的数量；约合积分按核销同一比例折算并向上取整，没有扣当天的免费额度，只作对账参考，嵌入只占每日免费额度，不计入积分。在途是还没有结算的预留，撤销超过保留期的密钥显示为已清理。</p>
       </section>
+    </div>
+  </section>
+
+  <section id="tab-accounts" class="panel" role="tabpanel" aria-labelledby="nav-accounts" hidden>
+    <div class="panel-head">
+      <div class="panel-intro">
+        <h1 class="panel-title">账号管理</h1>
+        <p class="hint">按邮箱或账号编号查找账号，调整这个账号的每日模型额度，或注销账号。注销会删除账号与全部云端数据，无法恢复。</p>
+        <p id="account-summary" class="summary" aria-live="polite"></p>
+      </div>
+      <div class="panel-actions"><button id="refresh-accounts" class="ghost" type="button">刷新</button></div>
+    </div>
+    <div class="model-tools">
+      <input id="account-search" type="search" placeholder="搜索邮箱或账号编号" aria-label="搜索账号" autocomplete="off" spellcheck="false">
+      <span id="account-filter-count" class="hint" aria-live="polite"></span>
+    </div>
+    <p id="account-status" class="hint" role="status" hidden></p>
+    <div class="list-surface"><table class="grid accounts">
+      <thead><tr><th scope="col">账号</th><th scope="col">状态</th><th scope="col">注册时间</th><th scope="col">每日额度</th><th scope="col" class="ops-head">操作</th></tr></thead>
+      <tbody id="accounts"></tbody>
+    </table></div>
+    <div class="account-pager">
+      <button id="account-prev" class="ghost" type="button">上一页</button>
+      <span id="account-page" class="hint"></span>
+      <button id="account-next" class="ghost" type="button">下一页</button>
     </div>
   </section>
 
@@ -293,6 +321,75 @@
       <span id="model-route-count" class="foot-note"></span>
       <button type="button" class="ghost" data-close="model-dialog">取消</button>
       <button type="submit" id="model-save">保存</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="quota-dialog" closedby="none" aria-labelledby="quota-title" aria-describedby="quota-desc">
+  <form id="quota-form" method="dialog">
+    <header class="dialog-head">
+      <div class="dialog-heading">
+        <h2 id="quota-title">调整每日额度</h2>
+        <p id="quota-desc" class="dialog-sub">额度按计费 token 计，保存之后下一次模型请求生效。</p>
+      </div>
+      <button type="button" class="icon-button" data-close="quota-dialog" aria-label="关闭">×</button>
+    </header>
+    <div class="dialog-body">
+      <div class="account-detail">
+        <p id="quota-account" class="account-line"></p>
+        <dl class="account-usage">
+          <div><dt>聊天今日</dt><dd id="quota-chat-used"></dd></div>
+          <div><dt>嵌入今日</dt><dd id="quota-embedding-used"></dd></div>
+        </dl>
+      </div>
+      <section class="form-section">
+        <div class="field-row">
+          <label>聊天每日额度
+            <input name="daily_tokens" type="number" min="1" step="1" inputmode="numeric" placeholder="留空用默认值" autocomplete="off">
+            <span class="field-hint">实例默认 <span id="quota-chat-default"></span>；留空表示恢复默认</span>
+          </label>
+          <label>嵌入每日额度
+            <input name="embedding_daily_tokens" type="number" min="1" step="1" inputmode="numeric" placeholder="留空用默认值" autocomplete="off">
+            <span class="field-hint">实例默认 <span id="quota-embedding-default"></span>；留空表示恢复默认</span>
+          </label>
+        </div>
+        <label>备注
+          <input name="note" maxlength="200" placeholder="例如 内测账号，额度临时提高">
+          <span class="field-hint">可选，只显示在后台</span>
+        </label>
+      </section>
+      <p class="form-error" id="quota-error" role="alert" hidden></p>
+    </div>
+    <footer class="dialog-actions">
+      <span id="quota-updated" class="foot-note"></span>
+      <button type="button" id="quota-reset" class="danger">恢复默认</button>
+      <button type="button" class="ghost" data-close="quota-dialog">取消</button>
+      <button type="submit" id="quota-save">保存</button>
+    </footer>
+  </form>
+</dialog>
+
+<dialog id="account-delete-dialog" closedby="none" aria-labelledby="account-delete-title" aria-describedby="account-delete-desc">
+  <form id="account-delete-form" method="dialog">
+    <header class="dialog-head">
+      <div class="dialog-heading">
+        <h2 id="account-delete-title">注销账号</h2>
+        <p id="account-delete-desc" class="dialog-sub">删除账号与全部云端数据，无法恢复。</p>
+      </div>
+      <button type="button" class="icon-button" data-close="account-delete-dialog" aria-label="关闭">×</button>
+    </header>
+    <div class="dialog-body">
+      <p id="account-delete-summary" class="confirm-message"></p>
+      <p class="hint">将删除登录方式、会话、接入密钥、积分余额、云端备份、提交序列与附件。账号在即刻收一侧还有积分时，删除之后无法使用也无法退款。</p>
+      <label>输入账号邮箱或账号编号确认
+        <input name="confirm" maxlength="254" autocomplete="off" spellcheck="false" required>
+        <span class="field-hint" id="account-delete-hint"></span>
+      </label>
+      <p class="form-error" id="account-delete-error" role="alert" hidden></p>
+    </div>
+    <footer class="dialog-actions">
+      <button type="button" class="ghost" data-close="account-delete-dialog">取消</button>
+      <button type="submit" id="account-delete-submit" class="danger-solid">注销账号</button>
     </footer>
   </form>
 </dialog>

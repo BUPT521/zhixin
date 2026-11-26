@@ -1263,6 +1263,111 @@ paths:
         "400": { $ref: "#/components/responses/Problem" }
         "401": { $ref: "#/components/responses/Problem" }
         "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/accounts:
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 列出与搜索账号
+      description: |
+        按注册时间倒序分页列出账号，返回登录方式、单独调整过的模型额度与生效额度。
+        `query` 为空时列出全部，否则匹配账号编号或登录方式标识的子串。这个页面
+        显示完整邮箱，管理员据此辨认与联系账号本人；按密钥的对账视图仍然只显示
+        账号编号。
+      parameters:
+        - name: query
+          in: query
+          description: 账号编号或登录方式标识的片段
+          schema: { type: string, maxLength: 254 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, maximum: 100000, default: 0 }
+      responses:
+        "200":
+          description: 当前页的账号
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccountList" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/accounts/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
+    get:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 读取一个账号的额度与今日用量
+      description: |
+        返回账号的登录方式、单独调整过的额度、生效额度以及按服务端时区计算的今日
+        已结算用量。读取用量不改变任何计数，也不包含仍在途的预留。
+      responses:
+        "200":
+          description: 账号详情
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccount" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 注销一个账号
+      description: |
+        删除账号、登录方式、会话、模型代理密钥、积分余额副本，以及云端的备份、
+        提交序列、附件与其余用量，与账号本人执行 `DELETE /v1/me` 用的是同一套
+        清理；不要求账号本人的密码。请求体必须再次给出路径里的账号编号，避免
+        把编号看错时误删另一个账号。账号不存在时返回 404，删除不可恢复。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminAccountDelete" }
+      responses:
+        "204": { description: 已注销 }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+  /admin/v1/accounts/{id}/quota:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 64 } }
+    put:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 调整一个账号的每日模型额度
+      description: |
+        整体替换这个账号的额度覆盖值。`daily_tokens` 与 `embedding_daily_tokens`
+        省略或为 null 时这类模型回到实例默认额度；两项都为空且没有备注时删除覆盖
+        行。额度下一次模型请求生效，不需要重启服务。账号不存在时返回 404。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AdminQuotaInput" }
+      responses:
+        "200":
+          description: 保存之后的账号与生效额度
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminAccount" }
+        "400": { $ref: "#/components/responses/Problem" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
+    delete:
+      tags: [admin]
+      security: [{ admin: [] }]
+      summary: 清除一个账号的额度覆盖值
+      description: 删除 `llm_quota` 的这一行，这个账号回到实例默认额度；没有覆盖行时同样返回 204。
+      responses:
+        "204": { description: 已清除 }
+        "401": { $ref: "#/components/responses/Problem" }
+        "404": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
   /admin/v1/models:
     get:
       tags: [admin]
@@ -1670,6 +1775,79 @@ components:
         keys:
           type: array
           items: { $ref: "#/components/schemas/AdminKeyUsage" }
+    AdminAccountIdentity:
+      type: object
+      description: 管理后台看到的账号登录方式，不含内部编号；现在只有邮箱一种
+      required: [kind, identifier, verified]
+      properties:
+        kind: { $ref: "#/components/schemas/IdentityKind" }
+        identifier: { type: string, description: 规范化之后的联系方式 }
+        verified: { type: boolean, description: 是否已经用验证码确认 }
+    AdminAccountQuota:
+      type: object
+      description: 一个账号的模型额度：覆盖值与最终生效值。没有覆盖值时覆盖项省略，表示这一项用实例默认值
+      required: [daily_tokens, default_daily_tokens, embedding_daily_tokens, default_embedding_daily_tokens, note]
+      properties:
+        daily_tokens: { type: integer, format: int64, description: 聊天最终生效的每日额度 }
+        default_daily_tokens: { type: integer, format: int64, description: 实例配置的聊天默认额度，页面用它说明留空时的取值 }
+        embedding_daily_tokens: { type: integer, format: int64, description: 嵌入最终生效的每日额度 }
+        default_embedding_daily_tokens: { type: integer, format: int64, description: 实例配置的嵌入默认额度 }
+        daily_tokens_override:
+          type: integer
+          format: int64
+          description: 聊天单独调整过的额度；没有覆盖时省略
+        embedding_daily_tokens_override:
+          type: integer
+          format: int64
+          description: 嵌入单独调整过的额度；没有覆盖时省略
+        note: { type: string, description: 覆盖行的备注，没有覆盖时为空字符串 }
+        updated_at: { type: string, format: date-time, description: 覆盖行最近一次保存的时间；没有覆盖时省略 }
+    AdminAccountUsage:
+      type: object
+      description: 按服务端时区计算的今日已结算用量，不含在途预留
+      required: [day, chat_tokens, embedding_tokens]
+      properties:
+        day: { type: string, format: date, description: 统计自然日 }
+        chat_tokens: { type: integer, format: int64, description: 聊天当天已结算的计费 token }
+        embedding_tokens: { type: integer, format: int64, description: 嵌入当天已结算的计费 token }
+    AdminAccount:
+      type: object
+      required: [id, created_at, identities, quota]
+      properties:
+        id: { type: string, description: 账号编号 }
+        created_at: { type: string, format: date-time }
+        identities:
+          type: array
+          description: 这个账号的登录方式；现在只有一条邮箱
+          items: { $ref: "#/components/schemas/AdminAccountIdentity" }
+        quota: { $ref: "#/components/schemas/AdminAccountQuota" }
+        usage:
+          description: 今日已结算用量；只在读取单个账号时返回，列表里省略
+          $ref: "#/components/schemas/AdminAccountUsage"
+    AdminAccountList:
+      type: object
+      required: [data, total, limit, offset]
+      properties:
+        data:
+          type: array
+          items: { $ref: "#/components/schemas/AdminAccount" }
+        total: { type: integer, format: int64, description: 匹配查询条件的账号总数 }
+        limit: { type: integer, description: 这一页的条数上限 }
+        offset: { type: integer, description: 这一页的起始位置 }
+    AdminQuotaInput:
+      type: object
+      additionalProperties: false
+      description: 整体替换一个账号的额度覆盖值；省略或为 null 的项回到实例默认值
+      properties:
+        daily_tokens: { type: integer, format: int64, minimum: 1, nullable: true, description: 聊天每日额度；null 表示用实例默认值 }
+        embedding_daily_tokens: { type: integer, format: int64, minimum: 1, nullable: true, description: 嵌入每日额度；null 表示用实例默认值 }
+        note: { type: string, maxLength: 200, description: 备注，例如调整原因 }
+    AdminAccountDelete:
+      type: object
+      additionalProperties: false
+      required: [user_id]
+      properties:
+        user_id: { type: string, minLength: 1, maxLength: 64, description: 必须与路径里的账号编号一致 }
     AdminRoute:
       type: object
       required: [provider_id, upstream_model, priority, weight, max_batch, enabled, supports_tools, supports_images, state, health]

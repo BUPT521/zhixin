@@ -296,8 +296,8 @@ CREATE TABLE install_active (
 );
 
 -- 按账号调整每日模型额度：没有行或者某一列为空时用 ZHIXIN_LLM_DAILY_TOKENS
--- 与 ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS。管理员直接写这张表调整个别账号，不重启
--- 服务。
+-- 与 ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS。管理后台的账号管理页读写这张表，下一次
+-- 模型请求生效，不重启服务；后台不可用时仍可直接改库（ADR-0078）。
 CREATE TABLE llm_quota (
   user_id                 TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
   daily_tokens            BIGINT CHECK (daily_tokens > 0),

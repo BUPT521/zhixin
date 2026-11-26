@@ -36,6 +36,42 @@ FROM user_identity
 WHERE user_id = sqlc.arg(user_id)
 ORDER BY created_at, id;
 
+-- 管理后台的账号列表：按创建时间倒序分页，查询词为空时列出全部，否则匹配账号
+-- 编号或登录方式标识的子串。position 与 lower 让查询词里的 % 与 _ 只当普通字符，
+-- 管理员输入邮箱片段时不会意外命中整张表；登录与鉴权仍走上面的精确查询。
+-- name: CountAccounts :one
+SELECT count(*)::bigint
+FROM app_user AS u
+WHERE sqlc.arg(query)::text = ''
+   OR position(lower(sqlc.arg(query)::text) in lower(u.id)) > 0
+   OR EXISTS (
+     SELECT 1
+     FROM user_identity AS i
+     WHERE i.user_id = u.id
+       AND position(lower(sqlc.arg(query)::text) in lower(i.identifier)) > 0
+   );
+
+-- name: ListAccounts :many
+SELECT u.id, u.password_hash, u.created_at
+FROM app_user AS u
+WHERE sqlc.arg(query)::text = ''
+   OR position(lower(sqlc.arg(query)::text) in lower(u.id)) > 0
+   OR EXISTS (
+     SELECT 1
+     FROM user_identity AS i
+     WHERE i.user_id = u.id
+       AND position(lower(sqlc.arg(query)::text) in lower(i.identifier)) > 0
+   )
+ORDER BY u.created_at DESC, u.id
+LIMIT sqlc.arg(row_limit)::int OFFSET sqlc.arg(row_offset)::int;
+
+-- 一页账号的登录方式一次读回，避免逐账号查询；调用方按 user_id 分组。
+-- name: IdentitiesByUsers :many
+SELECT id, user_id, kind, identifier, verified_at, created_at
+FROM user_identity
+WHERE user_id = ANY(sqlc.arg(user_ids)::text[])
+ORDER BY created_at, id;
+
 -- 验证接口只认当前账号名下的登录方式：带着别人的编号来请求得到 0 行，调用方
 -- 据此回 404，不区分“不存在”与“不属于这个账号”。
 -- name: IdentityByID :one

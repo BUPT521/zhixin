@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 // Quota tracks tokens used per account, model kind, and local day. The day key is a
@@ -38,6 +39,24 @@ type Quota interface {
 	// 标记：没有开通收款时都给不出，余额副本还没建好或账号还没有副本时只给已核销
 	// 积分，接口据此分别决定哪个字段回 null，见 ADR-0073。
 	Points(ctx context.Context, userID, day string) (Points, error)
+
+	// QuotaOverrides 批量读取管理后台用到的额度覆盖行。它只返回有覆盖的账号，
+	// 没有出现说明这一类额度走实例默认值；一次读回一页账号，避免逐行查询。
+	QuotaOverrides(ctx context.Context, userIDs []string) (map[string]QuotaOverride, error)
+	// SetQuotaOverride 整体替换一个账号的额度覆盖值；某一项为 nil 时回到实例
+	// 默认值，两项都为 nil 且备注为空时删除覆盖行。下一次模型请求生效。
+	SetQuotaOverride(ctx context.Context, userID string, daily, embedding *int64, note string) error
+	// ClearQuotaOverride 删除覆盖行，这个账号回到实例默认额度。
+	ClearQuotaOverride(ctx context.Context, userID string) error
+}
+
+// QuotaOverride 是管理后台看到的一个账号额度覆盖行。指针为空表示这一项没有
+// 单独调整过，实际放行时用配置的默认额度；UpdatedAt 为零值表示没有这一行。
+type QuotaOverride struct {
+	DailyTokens          *int64
+	EmbeddingDailyTokens *int64
+	Note                 string
+	UpdatedAt            time.Time
 }
 
 // Points 是账号的积分视图，用于账号页展示。Charged 是当天已经落库成功的核销，
@@ -98,8 +117,12 @@ type MemoryQuota struct {
 	// 核销只看 used，口径与 llm_usage 的两列一致（ADR-0071）。
 	reserved map[[4]string]int64
 	// split 记最近一次结算的原始用量，与 used 同键；只用于核对缓存命中统计。
-	split  map[[4]string]Usage
-	limits map[[2]string]int64
+	split map[[4]string]Usage
+	// limits 是管理后台调整过的额度覆盖值；quotaNotes 与 quotaUpdated 跟着覆盖行
+	// 一起保存，供后台列表显示备注与保存时间。
+	limits       map[[2]string]int64
+	quotaNotes   map[string]string
+	quotaUpdated map[string]time.Time
 	// instance 是实例当天的账本，按自然日记 token 数；它与 used 分开保存，删号
 	// 只清 used，已经占用的实例预算因此不会重新腾出来（ADR-0036）。
 	instance map[string]int64
@@ -113,11 +136,13 @@ type MemoryQuota struct {
 
 func NewMemoryQuota() *MemoryQuota {
 	return &MemoryQuota{
-		used:     map[[4]string]int64{},
-		reserved: map[[4]string]int64{},
-		split:    map[[4]string]Usage{},
-		limits:   map[[2]string]int64{},
-		instance: map[string]int64{},
+		used:         map[[4]string]int64{},
+		reserved:     map[[4]string]int64{},
+		split:        map[[4]string]Usage{},
+		limits:       map[[2]string]int64{},
+		quotaNotes:   map[string]string{},
+		quotaUpdated: map[string]time.Time{},
+		instance:     map[string]int64{},
 	}
 }
 
@@ -283,6 +308,78 @@ func (m *MemoryQuota) DailyLimit(_ context.Context, userID string, kind Kind) (i
 	return limit, ok, nil
 }
 
+// QuotaOverrides 汇总这一批账号里调整过的额度；没有覆盖的账号不出现在结果里。
+func (m *MemoryQuota) QuotaOverrides(_ context.Context, userIDs []string) (map[string]QuotaOverride, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]QuotaOverride, len(userIDs))
+	for _, userID := range userIDs {
+		override := QuotaOverride{}
+		found := false
+		if limit, ok := m.limits[[2]string{userID, string(KindChat)}]; ok {
+			value := limit
+			override.DailyTokens = &value
+			found = true
+		}
+		if limit, ok := m.limits[[2]string{userID, string(KindEmbedding)}]; ok {
+			value := limit
+			override.EmbeddingDailyTokens = &value
+			found = true
+		}
+		if note, ok := m.quotaNotes[userID]; ok {
+			override.Note = note
+			found = true
+		}
+		if updated, ok := m.quotaUpdated[userID]; ok {
+			override.UpdatedAt = updated
+			found = true
+		}
+		if found {
+			out[userID] = override
+		}
+	}
+	return out, nil
+}
+
+// SetQuotaOverride 整体替换一个账号的覆盖值；两项都为空且没有备注时删除覆盖，
+// 与 PostgreSQL 的 upsert 分支保持同一语义。
+func (m *MemoryQuota) SetQuotaOverride(_ context.Context, userID string, daily, embedding *int64, note string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if daily == nil && embedding == nil && note == "" {
+		m.clearQuotaOverrideLocked(userID)
+		return nil
+	}
+	m.setLimitLocked(userID, KindChat, daily)
+	m.setLimitLocked(userID, KindEmbedding, embedding)
+	m.quotaNotes[userID] = note
+	m.quotaUpdated[userID] = time.Now().UTC()
+	return nil
+}
+
+func (m *MemoryQuota) ClearQuotaOverride(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.clearQuotaOverrideLocked(userID)
+	return nil
+}
+
+func (m *MemoryQuota) setLimitLocked(userID string, kind Kind, limit *int64) {
+	key := [2]string{userID, string(kind)}
+	if limit == nil {
+		delete(m.limits, key)
+		return
+	}
+	m.limits[key] = *limit
+}
+
+func (m *MemoryQuota) clearQuotaOverrideLocked(userID string) {
+	delete(m.limits, [2]string{userID, string(KindChat)})
+	delete(m.limits, [2]string{userID, string(KindEmbedding)})
+	delete(m.quotaNotes, userID)
+	delete(m.quotaUpdated, userID)
+}
+
 // DeleteUser 清掉账号自己的用量与额度覆盖值。实例账本不在这里清：它记录的是
 // 提供方已经计费的用量，删号不会让那笔费用消失（ADR-0036）。
 func (m *MemoryQuota) DeleteUser(_ context.Context, userID string) error {
@@ -298,7 +395,6 @@ func (m *MemoryQuota) DeleteUser(_ context.Context, userID string) error {
 			delete(m.reserved, k)
 		}
 	}
-	delete(m.limits, [2]string{userID, string(KindChat)})
-	delete(m.limits, [2]string{userID, string(KindEmbedding)})
+	m.clearQuotaOverrideLocked(userID)
 	return nil
 }

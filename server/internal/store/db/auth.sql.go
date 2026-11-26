@@ -126,6 +126,29 @@ func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCode, e
 	return i, err
 }
 
+const countAccounts = `-- name: CountAccounts :one
+SELECT count(*)::bigint
+FROM app_user AS u
+WHERE $1::text = ''
+   OR position(lower($1::text) in lower(u.id)) > 0
+   OR EXISTS (
+     SELECT 1
+     FROM user_identity AS i
+     WHERE i.user_id = u.id
+       AND position(lower($1::text) in lower(i.identifier)) > 0
+   )
+`
+
+// 管理后台的账号列表：按创建时间倒序分页，查询词为空时列出全部，否则匹配账号
+// 编号或登录方式标识的子串。position 与 lower 让查询词里的 % 与 _ 只当普通字符，
+// 管理员输入邮箱片段时不会意外命中整张表；登录与鉴权仍走上面的精确查询。
+func (q *Queries) CountAccounts(ctx context.Context, query string) (int64, error) {
+	row := q.db.QueryRow(ctx, countAccounts, query)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createApiKey = `-- name: CreateApiKey :execrows
 
 INSERT INTO api_key (id, user_id, name, prefix, key_hash)
@@ -417,6 +440,41 @@ func (q *Queries) IdentitiesByUser(ctx context.Context, userID string) ([]UserId
 	return items, nil
 }
 
+const identitiesByUsers = `-- name: IdentitiesByUsers :many
+SELECT id, user_id, kind, identifier, verified_at, created_at
+FROM user_identity
+WHERE user_id = ANY($1::text[])
+ORDER BY created_at, id
+`
+
+// 一页账号的登录方式一次读回，避免逐账号查询；调用方按 user_id 分组。
+func (q *Queries) IdentitiesByUsers(ctx context.Context, userIds []string) ([]UserIdentity, error) {
+	rows, err := q.db.Query(ctx, identitiesByUsers, userIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []UserIdentity{}
+	for rows.Next() {
+		var i UserIdentity
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Kind,
+			&i.Identifier,
+			&i.VerifiedAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const identityByID = `-- name: IdentityByID :one
 SELECT id, user_id, kind, identifier, verified_at, created_at
 FROM user_identity
@@ -535,6 +593,47 @@ func (q *Queries) InsertRefreshUsed(ctx context.Context, arg InsertRefreshUsedPa
 		arg.ReplacedRefreshHash,
 	)
 	return err
+}
+
+const listAccounts = `-- name: ListAccounts :many
+SELECT u.id, u.password_hash, u.created_at
+FROM app_user AS u
+WHERE $1::text = ''
+   OR position(lower($1::text) in lower(u.id)) > 0
+   OR EXISTS (
+     SELECT 1
+     FROM user_identity AS i
+     WHERE i.user_id = u.id
+       AND position(lower($1::text) in lower(i.identifier)) > 0
+   )
+ORDER BY u.created_at DESC, u.id
+LIMIT $3::int OFFSET $2::int
+`
+
+type ListAccountsParams struct {
+	Query     string
+	RowOffset int32
+	RowLimit  int32
+}
+
+func (q *Queries) ListAccounts(ctx context.Context, arg ListAccountsParams) ([]AppUser, error) {
+	rows, err := q.db.Query(ctx, listAccounts, arg.Query, arg.RowOffset, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppUser{}
+	for rows.Next() {
+		var i AppUser
+		if err := rows.Scan(&i.ID, &i.PasswordHash, &i.CreatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lockUser = `-- name: LockUser :one

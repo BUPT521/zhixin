@@ -376,6 +376,94 @@ func (e TokensTokenType) Valid() bool {
 	}
 }
 
+// AdminAccount defines model for AdminAccount.
+type AdminAccount struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Id 账号编号
+	Id string `json:"id"`
+
+	// Identities 这个账号的登录方式；现在只有一条邮箱
+	Identities []AdminAccountIdentity `json:"identities"`
+
+	// Quota 一个账号的模型额度：覆盖值与最终生效值。没有覆盖值时覆盖项省略，表示这一项用实例默认值
+	Quota AdminAccountQuota `json:"quota"`
+
+	// Usage 今日已结算用量；只在读取单个账号时返回，列表里省略
+	Usage *AdminAccountUsage `json:"usage,omitempty"`
+}
+
+// AdminAccountDelete defines model for AdminAccountDelete.
+type AdminAccountDelete struct {
+	// UserId 必须与路径里的账号编号一致
+	UserId string `json:"user_id"`
+}
+
+// AdminAccountIdentity 管理后台看到的账号登录方式，不含内部编号；现在只有邮箱一种
+type AdminAccountIdentity struct {
+	// Identifier 规范化之后的联系方式
+	Identifier string `json:"identifier"`
+
+	// Kind 登录方式的种类；表结构的 check 约束与这里一致
+	Kind IdentityKind `json:"kind"`
+
+	// Verified 是否已经用验证码确认
+	Verified bool `json:"verified"`
+}
+
+// AdminAccountList defines model for AdminAccountList.
+type AdminAccountList struct {
+	Data []AdminAccount `json:"data"`
+
+	// Limit 这一页的条数上限
+	Limit int `json:"limit"`
+
+	// Offset 这一页的起始位置
+	Offset int `json:"offset"`
+
+	// Total 匹配查询条件的账号总数
+	Total int64 `json:"total"`
+}
+
+// AdminAccountQuota 一个账号的模型额度：覆盖值与最终生效值。没有覆盖值时覆盖项省略，表示这一项用实例默认值
+type AdminAccountQuota struct {
+	// DailyTokens 聊天最终生效的每日额度
+	DailyTokens int64 `json:"daily_tokens"`
+
+	// DailyTokensOverride 聊天单独调整过的额度；没有覆盖时省略
+	DailyTokensOverride *int64 `json:"daily_tokens_override,omitempty"`
+
+	// DefaultDailyTokens 实例配置的聊天默认额度，页面用它说明留空时的取值
+	DefaultDailyTokens int64 `json:"default_daily_tokens"`
+
+	// DefaultEmbeddingDailyTokens 实例配置的嵌入默认额度
+	DefaultEmbeddingDailyTokens int64 `json:"default_embedding_daily_tokens"`
+
+	// EmbeddingDailyTokens 嵌入最终生效的每日额度
+	EmbeddingDailyTokens int64 `json:"embedding_daily_tokens"`
+
+	// EmbeddingDailyTokensOverride 嵌入单独调整过的额度；没有覆盖时省略
+	EmbeddingDailyTokensOverride *int64 `json:"embedding_daily_tokens_override,omitempty"`
+
+	// Note 覆盖行的备注，没有覆盖时为空字符串
+	Note string `json:"note"`
+
+	// UpdatedAt 覆盖行最近一次保存的时间；没有覆盖时省略
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+}
+
+// AdminAccountUsage 按服务端时区计算的今日已结算用量，不含在途预留
+type AdminAccountUsage struct {
+	// ChatTokens 聊天当天已结算的计费 token
+	ChatTokens int64 `json:"chat_tokens"`
+
+	// Day 统计自然日
+	Day openapi_types.Date `json:"day"`
+
+	// EmbeddingTokens 嵌入当天已结算的计费 token
+	EmbeddingTokens int64 `json:"embedding_tokens"`
+}
+
 // AdminHealth defines model for AdminHealth.
 type AdminHealth struct {
 	ConsecutiveFailures int              `json:"consecutive_failures"`
@@ -544,6 +632,18 @@ type AdminProviderInput struct {
 // AdminProviderList defines model for AdminProviderList.
 type AdminProviderList struct {
 	Data []AdminProvider `json:"data"`
+}
+
+// AdminQuotaInput 整体替换一个账号的额度覆盖值；省略或为 null 的项回到实例默认值
+type AdminQuotaInput struct {
+	// DailyTokens 聊天每日额度；null 表示用实例默认值
+	DailyTokens *int64 `json:"daily_tokens,omitempty"`
+
+	// EmbeddingDailyTokens 嵌入每日额度；null 表示用实例默认值
+	EmbeddingDailyTokens *int64 `json:"embedding_daily_tokens,omitempty"`
+
+	// Note 备注，例如调整原因
+	Note *string `json:"note,omitempty"`
 }
 
 // AdminRoute defines model for AdminRoute.
@@ -1250,6 +1350,14 @@ type ConfirmPassword struct {
 	Password string `json:"password"`
 }
 
+// GetAdminV1AccountsParams defines parameters for GetAdminV1Accounts.
+type GetAdminV1AccountsParams struct {
+	// Query 账号编号或登录方式标识的片段
+	Query  *string `form:"query,omitempty" json:"query,omitempty"`
+	Limit  *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int    `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // GetAdminV1KeyUsageParams defines parameters for GetAdminV1KeyUsage.
 type GetAdminV1KeyUsageParams struct {
 	// Days 包含今天，按服务端时区计算
@@ -1447,6 +1555,12 @@ type PutV1SyncSnapshotParams struct {
 	// XSyncCapabilities 逗号分隔的小写能力名，当前只有 `snapshot`；含 `snapshot` 时把这一台设备记为支持快照，其余取值忽略（ADR-0048、ADR-0054）。
 	XSyncCapabilities *string `json:"X-Sync-Capabilities,omitempty"`
 }
+
+// DeleteAdminV1AccountsIdJSONRequestBody defines body for DeleteAdminV1AccountsId for application/json ContentType.
+type DeleteAdminV1AccountsIdJSONRequestBody = AdminAccountDelete
+
+// PutAdminV1AccountsIdQuotaJSONRequestBody defines body for PutAdminV1AccountsIdQuota for application/json ContentType.
+type PutAdminV1AccountsIdQuotaJSONRequestBody = AdminQuotaInput
 
 // PostAdminV1ModelsJSONRequestBody defines body for PostAdminV1Models for application/json ContentType.
 type PostAdminV1ModelsJSONRequestBody = AdminModelInput
@@ -1666,6 +1780,21 @@ func (t *EmbeddingRequest_Input) UnmarshalJSON(b []byte) error {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetAdminV1Accounts 列出与搜索账号
+	// (GET /admin/v1/accounts)
+	GetAdminV1Accounts(w http.ResponseWriter, r *http.Request, params GetAdminV1AccountsParams)
+	// DeleteAdminV1AccountsId 注销一个账号
+	// (DELETE /admin/v1/accounts/{id})
+	DeleteAdminV1AccountsId(w http.ResponseWriter, r *http.Request, id string)
+	// GetAdminV1AccountsId 读取一个账号的额度与今日用量
+	// (GET /admin/v1/accounts/{id})
+	GetAdminV1AccountsId(w http.ResponseWriter, r *http.Request, id string)
+	// DeleteAdminV1AccountsIdQuota 清除一个账号的额度覆盖值
+	// (DELETE /admin/v1/accounts/{id}/quota)
+	DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request, id string)
+	// PutAdminV1AccountsIdQuota 调整一个账号的每日模型额度
+	// (PUT /admin/v1/accounts/{id}/quota)
+	PutAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request, id string)
 	// GetAdminV1KeyUsage 按接入密钥汇总的托管用量与折算积分
 	// (GET /admin/v1/key-usage)
 	GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request, params GetAdminV1KeyUsageParams)
@@ -1850,6 +1979,169 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetAdminV1Accounts operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1Accounts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminV1AccountsParams
+
+	// ------------- Optional query parameter "query" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "query", r.URL.Query(), &params.Query, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "query"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "query", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "limit", r.URL.Query(), &params.Limit, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "limit"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		}
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "offset", r.URL.Query(), &params.Offset, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		var requiredError *runtime.RequiredParameterError
+		if errors.As(err, &requiredError) {
+			siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "offset"})
+		} else {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		}
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1Accounts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAdminV1AccountsId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAdminV1AccountsId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAdminV1AccountsId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminV1AccountsId operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminV1AccountsId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminV1AccountsId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteAdminV1AccountsIdQuota operation middleware
+func (siw *ServerInterfaceWrapper) DeleteAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteAdminV1AccountsIdQuota(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutAdminV1AccountsIdQuota operation middleware
+func (siw *ServerInterfaceWrapper) PutAdminV1AccountsIdQuota(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "id" -------------
+	var id string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", r.PathValue("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutAdminV1AccountsIdQuota(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetAdminV1KeyUsage operation middleware
 func (siw *ServerInterfaceWrapper) GetAdminV1KeyUsage(w http.ResponseWriter, r *http.Request) {
@@ -3519,6 +3811,11 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/providers/{id}/test", wrapper.PostAdminV1ProvidersIdTest)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/usage", wrapper.GetAdminV1Usage)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/key-usage", wrapper.GetAdminV1KeyUsage)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/accounts", wrapper.GetAdminV1Accounts)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/accounts/{id}", wrapper.DeleteAdminV1AccountsId)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/accounts/{id}", wrapper.GetAdminV1AccountsId)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/accounts/{id}/quota", wrapper.DeleteAdminV1AccountsIdQuota)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/admin/v1/accounts/{id}/quota", wrapper.PutAdminV1AccountsIdQuota)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/admin/v1/models", wrapper.GetAdminV1Models)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/admin/v1/models", wrapper.PostAdminV1Models)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/admin/v1/models/{name}", wrapper.DeleteAdminV1ModelsName)

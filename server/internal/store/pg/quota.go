@@ -176,6 +176,69 @@ func settledTokens(ctx context.Context, q *db.Queries, userID string, day pgtype
 	return settled, nil
 }
 
+// QuotaOverrides 批量读取管理后台用到的额度覆盖行；没有覆盖的账号不出现在
+// 结果里，调用方按实例默认值显示。一次查询取回一页账号，列表不必逐行读库。
+func (s *Store) QuotaOverrides(ctx context.Context, userIDs []string) (map[string]llmproxy.QuotaOverride, error) {
+	out := make(map[string]llmproxy.QuotaOverride, len(userIDs))
+	if len(userIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.q.AccountQuotasByUsers(ctx, userIDs)
+	if err != nil {
+		return nil, fmt.Errorf("pg: 读取账号额度失败: %w", err)
+	}
+	for _, row := range rows {
+		override := llmproxy.QuotaOverride{Note: row.Note}
+		if row.DailyTokens.Valid {
+			value := row.DailyTokens.Int64
+			override.DailyTokens = &value
+		}
+		if row.EmbeddingDailyTokens.Valid {
+			value := row.EmbeddingDailyTokens.Int64
+			override.EmbeddingDailyTokens = &value
+		}
+		if row.UpdatedAt.Valid {
+			override.UpdatedAt = row.UpdatedAt.Time
+		}
+		out[row.UserID] = override
+	}
+	return out, nil
+}
+
+// SetQuotaOverride 整体替换一个账号的额度覆盖值；两项都为空且没有备注时删除
+// 覆盖行，与内存实现保持同一语义。账号不存在时外键会拒绝写入，调用方先用
+// UserByID 核对。
+func (s *Store) SetQuotaOverride(ctx context.Context, userID string, daily, embedding *int64, note string) error {
+	if daily == nil && embedding == nil && note == "" {
+		return s.ClearQuotaOverride(ctx, userID)
+	}
+	if err := s.q.UpsertAccountQuota(ctx, db.UpsertAccountQuotaParams{
+		UserID:               userID,
+		DailyTokens:          pgInt8(daily),
+		EmbeddingDailyTokens: pgInt8(embedding),
+		Note:                 note,
+	}); err != nil {
+		return fmt.Errorf("pg: 保存账号额度失败: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ClearQuotaOverride(ctx context.Context, userID string) error {
+	if err := s.q.DeleteAccountQuota(ctx, userID); err != nil {
+		return fmt.Errorf("pg: 清除账号额度失败: %w", err)
+	}
+	return nil
+}
+
+// pgInt8 把可空的 int64 转成 pgtype.Int8；nil 写成 NULL，与 llm_quota 的可空列
+// 一致。零值不是合法的额度，调用方在处理器里已经拒绝。
+func pgInt8(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *value, Valid: true}
+}
+
 // Settle 把这次预留转成实际用量：reserved 从在途预留里扣掉，actual 记进已结算
 // 用量；两者都为 0 且没有拆分时什么也不写。账号用量与实例账本在同一个事务里改，
 // 任何一步失败都整体回滚，两边的数字不会各写一半。reserved 与 actual 是计费
