@@ -307,7 +307,7 @@ func TestPostgresPointsAdminView(t *testing.T) {
 	} {
 		if _, err := st.pool.Exec(ctx,
 			`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
-			 VALUES ($1, 'u1', $2::date, $3, $4, $5, now() - make_interval(mins => $6::int), now())`,
+			 VALUES ($1, 'u1', $2::date, $3, $4, $5, now() - make_interval(mins => $6::int), now() - make_interval(mins => $6::int))`,
 			charge.id, day, charge.points, charge.tokens, charge.status, 10-i); err != nil {
 			t.Fatalf("insert charge: %v", err)
 		}
@@ -332,7 +332,10 @@ func TestPostgresPointsAdminView(t *testing.T) {
 	if err != nil {
 		t.Fatalf("points: %v", err)
 	}
-	if !points.RemainingKnown || points.Remaining != 7 || points.SyncedAt.IsZero() {
+	// 可用积分是副本 7 减去没有反映的核销：待支付的 3 分还没有确认扣减，一律
+	// 计入；已成功的 2 分在快照之前就确认了，副本里已经反映，不再重复扣，因此
+	// 是 4（ADR-0073）。
+	if !points.RemainingKnown || points.Remaining != 4 || points.SyncedAt.IsZero() {
 		t.Fatalf("副本与快照时刻: %+v", points)
 	}
 
