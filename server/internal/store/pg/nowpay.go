@@ -296,14 +296,20 @@ func (s *Store) ChargeStatusCounts(ctx context.Context) (map[string]int64, error
 	return counts, nil
 }
 
-// SetStatus 记录一次核销的结果。status 为空时只更新备注，流水停在原状态等下一次
-// 补查。
-func (s *Store) SetStatus(ctx context.Context, id, status, note string) error {
+// SetStatus 记录一次核销的结果，并返回这次的确认时刻：status 为空时只更新备注，
+// 流水停在原状态等下一次补查。核销成功之后写余额副本要用确认时刻做快照的下限，
+// 终态行的 updated_at 就是确认时间，比响应里的快照时刻晚，不取它这笔流水会被算成
+// “快照之后才确认”，可用积分比实际少一笔直到下一次查询（ADR-0073）。
+func (s *Store) SetStatus(ctx context.Context, id, status, note string) (time.Time, error) {
 	params := db.SetChargeStatusParams{ID: id, Note: note}
 	if status != "" {
 		params.Status = pgtype.Text{String: status, Valid: true}
 	}
-	return s.q.SetChargeStatus(ctx, params)
+	at, err := s.q.SetChargeStatus(ctx, params)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return at.Time, nil
 }
 
 // LatestPurchaseLink 返回账号最近一次可用的购买入口：必须是 ready、带链接且没有过期。

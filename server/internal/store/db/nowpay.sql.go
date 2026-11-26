@@ -392,12 +392,13 @@ func (q *Queries) SaveBalance(ctx context.Context, arg SaveBalanceParams) error 
 	return err
 }
 
-const setChargeStatus = `-- name: SetChargeStatus :exec
+const setChargeStatus = `-- name: SetChargeStatus :one
 UPDATE nowpay_charge
 SET status = COALESCE($1, status),
     note = $2,
     updated_at = now()
 WHERE id = $3
+RETURNING updated_at
 `
 
 type SetChargeStatusParams struct {
@@ -406,9 +407,13 @@ type SetChargeStatusParams struct {
 	ID     string
 }
 
-func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams) error {
-	_, err := q.db.Exec(ctx, setChargeStatus, arg.Status, arg.Note, arg.ID)
-	return err
+// 落核销状态并返回这次的确认时刻。终态行的 updated_at 就是确认时间，核销成功之后
+// 写副本用它做快照的下限，这一笔才不会被算成“快照之后才确认”（ADR-0073）。
+func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, setChargeStatus, arg.Status, arg.Note, arg.ID)
+	var updated_at pgtype.Timestamptz
+	err := row.Scan(&updated_at)
+	return updated_at, err
 }
 
 const unreflectedChargePoints = `-- name: UnreflectedChargePoints :one

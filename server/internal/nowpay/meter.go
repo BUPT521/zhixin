@@ -44,7 +44,9 @@ type Ledger interface {
 	// UnsettledGlobal 取全局创建早于 before 且仍未终结的流水，供每十分钟一次的补查
 	// 兜底；它不按账号过滤。
 	UnsettledGlobal(ctx context.Context, before time.Time, limit int) ([]Charge, error)
-	SetStatus(ctx context.Context, id, status, note string) error
+	// SetStatus 落流水状态并返回这次的确认时刻；写余额副本时用它做快照的下限，
+	// 这一笔才不会被算成“快照之后才确认”（ADR-0073）。
+	SetStatus(ctx context.Context, id, status, note string) (time.Time, error)
 	// SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本，asOf 是这份余额对应的
 	// 快照时刻，不是写入时刻；晚到的旧快照不会覆盖新副本（ADR-0073）。额度预留按
 	// 这份副本放行免费额度之外的用量，请求路径上因此不调用即刻收（ADR-0069）。
@@ -330,6 +332,10 @@ func (m *Meter) saveBalance(ctx context.Context, userID string, points int64, as
 // 响应里带了剩余积分时覆盖余额副本：额度预留按这份副本放行，它比下一次查询更早
 // 反映这次扣减。PROCESSING 不覆盖副本：它返回的剩余积分是否已经扣住这笔预占还没有
 // 与即刻收确认，拿来当余额可能让副本偏低（ADR-0073）。
+//
+// 确认成功或失败时先落状态再写副本，副本的快照时刻取响应给出时刻与这次确认时刻里
+// 较晚的一个：终态行的 updated_at 就是确认时间，早于它的快照会把这一笔算成“快照
+// 之后才确认”，可用积分平白少一笔（ADR-0073）。
 func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err error, asOf time.Time) {
 	if !consume.AsOf.IsZero() {
 		asOf = consume.AsOf
@@ -344,15 +350,15 @@ func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err e
 	}
 	switch {
 	case err == nil && consume.Confirmed():
+		confirmed := m.setStatus(ctx, charge, StatusSucceeded, "")
 		if consume.RemainingKnown {
-			m.saveBalance(ctx, charge.UserID, consume.Remaining, asOf)
+			m.saveBalance(ctx, charge.UserID, consume.Remaining, laterOf(asOf, confirmed))
 		}
-		m.setStatus(ctx, charge, StatusSucceeded, "")
 	case err == nil && consume.Status == ConsumeFailed:
+		confirmed := m.setStatus(ctx, charge, StatusFailed, "即刻收判定本次核销失败")
 		if consume.RemainingKnown {
-			m.saveBalance(ctx, charge.UserID, consume.Remaining, asOf)
+			m.saveBalance(ctx, charge.UserID, consume.Remaining, laterOf(asOf, confirmed))
 		}
-		m.setStatus(ctx, charge, StatusFailed, "即刻收判定本次核销失败")
 	case err == nil && consume.Status == ConsumeProcessing:
 		m.setStatus(ctx, charge, StatusProcessing, "")
 	case Insufficient(err):
@@ -366,17 +372,30 @@ func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err e
 		m.log.Warn("nowpay charge is not settled yet",
 			"charge_id", charge.ID, "status", charge.Status, "error", err)
 		if err != nil {
-			if noteErr := m.ledger.SetStatus(ctx, charge.ID, "", err.Error()); noteErr != nil {
+			if _, noteErr := m.ledger.SetStatus(ctx, charge.ID, "", err.Error()); noteErr != nil {
 				m.log.Error("note nowpay charge", "charge_id", charge.ID, "error", noteErr)
 			}
 		}
 	}
 }
 
-func (m *Meter) setStatus(ctx context.Context, charge Charge, status, note string) {
-	if err := m.ledger.SetStatus(ctx, charge.ID, status, note); err != nil {
-		m.log.Error("settle nowpay charge", "charge_id", charge.ID, "status", status, "error", err)
+// laterOf 取两个快照时刻里较晚的一个，零值表示没有这个时刻。写副本时响应给出的
+// 快照时刻可能早于本地确认时刻，取较晚的一个才不会把刚确认的这一笔算成之后才确认。
+func laterOf(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
 	}
+	return a
+}
+
+// setStatus 落一次状态并返回确认时刻；失败时返回零值，调用方按没有这个时刻处理。
+func (m *Meter) setStatus(ctx context.Context, charge Charge, status, note string) time.Time {
+	at, err := m.ledger.SetStatus(ctx, charge.ID, status, note)
+	if err != nil {
+		m.log.Error("settle nowpay charge", "charge_id", charge.ID, "status", status, "error", err)
+		return time.Time{}
+	}
+	return at
 }
 
 // newChargeID 生成本地流水编号，同时作为即刻收的 out_request_no；长度与字符集都在

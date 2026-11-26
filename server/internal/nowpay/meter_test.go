@@ -23,6 +23,8 @@ type fakeLedger struct {
 	balances        map[string]int64
 	// balanceAsOf 记每次写副本带的快照时刻。
 	balanceAsOf map[string]time.Time
+	// confirmAt 是每次落状态返回的确认时刻；零值表示这次没有可用的确认时刻。
+	confirmAt time.Time
 
 	// capAt 与 capped 模拟 ReservePoints 按余额副本收口：capped 为真时申请量截到
 	// capAt，capAt 为零表示副本没有余额，不写流水。
@@ -73,13 +75,13 @@ func (f *fakeLedger) UnsettledGlobal(context.Context, time.Time, int) ([]Charge,
 	return f.unsettledGlobal, nil
 }
 
-func (f *fakeLedger) SetStatus(_ context.Context, id, status, note string) error {
+func (f *fakeLedger) SetStatus(_ context.Context, id, status, note string) (time.Time, error) {
 	change := statusChange{id: id, status: status, note: note}
 	f.statuses = append(f.statuses, change)
 	if f.statusEvents != nil {
 		f.statusEvents <- change
 	}
-	return nil
+	return f.confirmAt, nil
 }
 
 func (f *fakeLedger) last() statusChange {
@@ -223,6 +225,24 @@ func TestSucceededChargeSavesTheCopyAtTheResponseSnapshot(t *testing.T) {
 	want := time.Date(2026, 11, 25, 10, 0, 0, 0, ChinaTime())
 	if !ledger.balanceAsOf["user_1"].Equal(want) {
 		t.Fatalf("副本应按响应的快照时间写入，得到 %v", ledger.balanceAsOf["user_1"])
+	}
+}
+
+// TestSucceededChargeSavesTheCopyNoEarlierThanTheConfirmation 守住副本快照不早于这一笔
+// 的确认时刻：响应给的 as_of_time 早于本地确认时间时，拿响应时刻写 synced_at 会让这一
+// 笔自己被算成“快照之后才确认”，可用积分少一笔直到下一次查询，所以取较晚的那个。
+func TestSucceededChargeSavesTheCopyNoEarlierThanTheConfirmation(t *testing.T) {
+	caller := &fakeCaller{replies: map[string]string{
+		methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","consumed":3,"remaining":97,
+			"as_of_time":"2026-11-25 10:00:00"}`,
+	}}
+	confirmed := time.Date(2026, 11, 25, 10, 0, 1, 0, ChinaTime())
+	ledger := &fakeLedger{confirmAt: confirmed}
+	meter := newTestMeter(t, ledger, caller)
+	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
+	meter.run(context.Background(), job{charge: charge, verify: true})
+	if got := ledger.balanceAsOf["user_1"]; !got.Equal(confirmed) {
+		t.Fatalf("副本快照不应早于确认时刻，want %v got %v", confirmed, got)
 	}
 }
 

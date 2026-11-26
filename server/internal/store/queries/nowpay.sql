@@ -62,12 +62,15 @@ WHERE id IN (
 -- name: ChargeStatusCounts :many
 SELECT status, count(*)::bigint AS count FROM nowpay_charge GROUP BY status ORDER BY status;
 
--- name: SetChargeStatus :exec
+-- 落核销状态并返回这次的确认时刻。终态行的 updated_at 就是确认时间，核销成功之后
+-- 写副本用它做快照的下限，这一笔才不会被算成“快照之后才确认”（ADR-0073）。
+-- name: SetChargeStatus :one
 UPDATE nowpay_charge
 SET status = COALESCE(sqlc.narg(status), status),
     note = sqlc.arg(note),
     updated_at = now()
-WHERE id = sqlc.arg(id);
+WHERE id = sqlc.arg(id)
+RETURNING updated_at;
 
 -- name: PurchaseByClientRequestNo :one
 SELECT * FROM nowpay_purchase
