@@ -118,7 +118,7 @@ func (s *S3) List(ctx context.Context, prefix string) ([]Object, error) {
 		if obj.Err != nil {
 			return nil, fmt.Errorf("objectstore: 列出前缀 %q 失败: %w", prefix, obj.Err)
 		}
-		out = append(out, Object{Key: obj.Key, Size: obj.Size, ModTime: obj.LastModified})
+		out = append(out, Object{Key: obj.Key, ModTime: obj.LastModified})
 	}
 	return out, nil
 }

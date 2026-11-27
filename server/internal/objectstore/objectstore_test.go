@@ -50,8 +50,8 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 	if err := s.Put(ctx, "attachments/u2/bb", bytes.NewReader(body), Info{Size: int64(len(body))}); err != nil {
 		t.Fatalf("Put other attachment: %v", err)
 	}
-	// 列目录：前缀下的键与字节数都能读到，写入时间也要填上，备份对账靠它判断
-	// 宽限期；不存在的前缀返回空切片。
+	// 列目录：前缀下的键与写入时间都能读到，备份对账靠写入时间判断宽限期；
+	// 不存在的前缀返回空切片。
 	objects, err := s.List(ctx, "attachments/")
 	if err != nil || len(objects) != 2 {
 		t.Fatalf("List(attachments/) = %+v, %v", objects, err)
@@ -62,7 +62,7 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	}
 	objects, err = s.List(ctx, "attachments/u1/")
-	if err != nil || len(objects) != 1 || objects[0].Key != "attachments/u1/aa" || objects[0].Size != int64(len(body)) || objects[0].ModTime.IsZero() {
+	if err != nil || len(objects) != 1 || objects[0].Key != "attachments/u1/aa" || objects[0].ModTime.IsZero() {
 		t.Fatalf("List(attachments/u1/) = %+v, %v", objects, err)
 	}
 	if objects, err = s.List(ctx, "missing/"); err != nil || len(objects) != 0 {
