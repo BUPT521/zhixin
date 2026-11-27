@@ -26,6 +26,7 @@ import 'package:zhixin/data/revisions/revision_service.dart';
 import 'package:zhixin/domain/models/result.dart';
 
 import '../support/fake_server.dart';
+import '../support/restore_helpers.dart';
 import '../support/sync_rig.dart';
 import '../support/test_db.dart';
 
@@ -164,7 +165,7 @@ void main() {
     expect(await memoryIds(), ['m1', 'm2'], reason: '准备阶段：备份之后本机有两条记忆');
 
     // 整库恢复旧备份：本机数据与同步位置一起回到备份那一刻，比服务端落后一步。
-    final restored = await dataVersions.restore(backup);
+    final restored = await restoreFromBytes(dataVersions, backup);
     expect(
       restored,
       isA<Success<String?>>(),

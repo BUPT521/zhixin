@@ -42,6 +42,7 @@ import 'package:zhixin/data/revisions/revision_service.dart';
 import 'package:zhixin/domain/models/result.dart';
 
 import '../support/fake_server.dart';
+import '../support/restore_helpers.dart';
 import '../support/sync_rig.dart';
 import '../support/test_db.dart';
 
@@ -353,7 +354,7 @@ void main() {
     expect(await memoryIds(), ['m1', 'm2'], reason: '准备阶段：本机有两条记忆');
 
     // 整库恢复旧备份：库与提交编号一起回到备份那一刻。
-    final restored = await dataVersions.restore(backup);
+    final restored = await restoreFromBytes(dataVersions, backup);
     expect(
       restored,
       isA<Success<String?>>(),

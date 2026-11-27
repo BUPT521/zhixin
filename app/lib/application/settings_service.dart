@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import '../ai/ai_chat_service.dart';
 import '../ai/llm_config.dart';
 import '../ai/llm_config_store.dart';
@@ -197,9 +195,6 @@ class SettingsService {
     final day = current.attributionDay(current.now).replaceAll('-', '');
     return 'zhixin-$day.zip';
   }
-
-  Future<Result<String?>> restoreBytes(Uint8List bytes) =>
-      dataVersions.restore(bytes);
 
   Future<void> resetAllData() => dataVersions.resetAllData();
 }

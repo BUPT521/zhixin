@@ -96,17 +96,12 @@ class DataVersionService {
   /// 整库恢复：没有预检过的调用方先预检，再把当前状态存成一份恢复点，最后
   /// 替换库与附件。
   ///
-  /// 界面在确认框之前已经预检过包，走 [restoreInspected] 复用那份产物；这里
-  /// 是给只拿到字节的调用方的入口，预检同样只做一次。恢复点与恢复入口使用同
-  /// 一种版本库备份，恢复成功后仍然保留，用户可以从数据版本页回到恢复前；恢复
-  /// 点写不出来时中止，当前库不动。库替换成功后图片缓存重建失败只返回提醒，
-  /// 不再让界面把整次恢复报成失败。
+  /// 界面在确认框之前已经预检过包，这里复用那份产物，不再解包，也不再重跑
+  /// 完整性校验。恢复点与恢复入口使用同一种版本库备份，恢复成功后仍然保留，
+  /// 用户可以从数据版本页回到恢复前；恢复点写不出来时中止，当前库不动。库替换
+  /// 成功后图片缓存重建失败只返回提醒，不再让界面把整次恢复报成失败。
   ///
   /// 预检与恢复点写入是可预期失败，按 [Result] 返回；换库等程序错误仍抛出。
-  Future<Result<String?>> restore(Uint8List bytes) =>
-      _expected(() async => _restore(await _inspectRestorePackage(bytes)));
-
-  /// 用已经预检过的包恢复；不再解包，也不再重跑完整性校验。
   Future<Result<String?>> restoreInspected(RestoreInspection inspection) =>
       _expected(() => _restore(inspection));
 

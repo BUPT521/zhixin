@@ -21,6 +21,7 @@ import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 import '../support/test_db.dart';
+import '../support/restore_helpers.dart';
 
 DataVersionService _service(TestRig rig) {
   return DataVersionService(
@@ -78,7 +79,7 @@ void main() {
     final service = _service(rig);
     final broken = Uint8List.fromList([1, 2, 3, 4]);
 
-    final restored = await service.restore(broken);
+    final restored = await restoreFromBytes(service, broken);
     expect(restored, isA<Failure<String?>>());
     expect(restored.failureOrNull!.message, contains('数据包'));
 
