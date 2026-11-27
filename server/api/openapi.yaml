@@ -390,15 +390,17 @@ paths:
       description: |
         依次清理整库备份、提交序列、附件以及对象存储里遗留的字节，可重复调用：
         中途失败时重试会从剩下的部分继续。清除期间这个账号的写入请求返回 409
-        `conflict`，客户端退避之后重试；账号、会话与本机数据不受影响。应用在设置
-        页显示完成状态，再询问是否恢复自动同步。
+        `conflict`，客户端退避之后重试；会写设备名册的读请求（`GET /v1/sync/head`、
+        `GET /v1/sync/commits` 与 `GET /v1/sync/devices`）照常返回，只是不更新名册。
+        账号、会话与本机数据不受影响。应用在设置页显示完成状态，再询问是否恢复
+        自动同步。
       requestBody: { $ref: "#/components/requestBodies/ConfirmPassword" }
       responses:
         "204": { description: 已清空；本来就是空的也返回 204 }
         "401": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "409":
-          description: "`conflict`：该账号还有写入或清除请求在途，稍后重试"
+          description: "`conflict`：该账号还有云端写入（含会写名册的读请求）或清除请求在途，稍后重试"
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }

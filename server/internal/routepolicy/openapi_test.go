@@ -102,6 +102,30 @@ func TestCloudWritePoliciesMatchContract(t *testing.T) {
 	}
 }
 
+// TestRosterWritesMatchContract 守住“会写名册的读接口”清单：每一条都要在契约里、
+// 是 GET、并且要求鉴权——它们只有落到具体账号上才有名册可写。
+func TestRosterWritesMatchContract(t *testing.T) {
+	public, all := specOperations(t)
+	if len(rosterWrites) == 0 {
+		t.Fatal("rosterWrites 不应为空")
+	}
+	for pattern := range rosterWrites {
+		if !all[pattern] {
+			t.Errorf("契约里没有 %s", pattern)
+			continue
+		}
+		if !strings.HasPrefix(pattern, http.MethodGet+" ") {
+			t.Errorf("%s 不是读接口", pattern)
+		}
+		if public[pattern] {
+			t.Errorf("%s 是公开操作，不应写名册", pattern)
+		}
+		if _, ok := CloudWritePolicy(pattern); ok {
+			t.Errorf("%s 同时被列为云端写操作", pattern)
+		}
+	}
+}
+
 func TestCacheOperationsAreExplicit(t *testing.T) {
 	if seconds, ok := CacheSeconds("GET /v1/app/releases"); !ok || seconds <= 0 {
 		t.Fatalf("发布清单应当可以缓存，得到 %d, %v", seconds, ok)

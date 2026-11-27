@@ -61,6 +61,19 @@ func CloudWritePolicy(pattern string) (CloudWrite, bool) {
 	return policy, ok
 }
 
+// rosterWrites 是读取响应之外还会写设备名册的路由。名册是账号的云端数据，清除
+// 期间写入会落在提交序列清空之后，把已经删掉的行插回去；这三条读接口因此与写
+// 请求一样参与 cloudOperations 的互斥。与写请求不同的是，清除进行中它们照常
+// 返回读取结果，只是跳过名册更新（ADR-0048、ADR-0054）。
+var rosterWrites = map[string]bool{
+	"GET /v1/sync/head":    true,
+	"GET /v1/sync/commits": true,
+	"GET /v1/sync/devices": true,
+}
+
+// WritesRoster 报告这条已匹配的读接口是否还会写设备名册。
+func WritesRoster(pattern string) bool { return rosterWrites[pattern] }
+
 // keyOperations 是模型代理密钥可以访问的路由：只有模型调用与它们的元数据。
 // 密钥不持有学习数据，所以同步、备份、附件与账号管理都不在其中；密钥访问其余
 // 受保护路由时回 403 key_scope_denied（ADR-0063）。

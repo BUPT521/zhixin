@@ -382,10 +382,30 @@ func (h *Handler) recordDeviceAt(ctx context.Context, userID, deviceID string, s
 	h.recordDevice(ctx, userID, deviceID, snapshotCapable, -1)
 }
 
+// RosterWriteSuppressed 报告这次请求是否跳过设备名册更新。清除云端数据期间
+// cloudOperations 为会写名册的读接口设置这个标记：读取照常返回，名册写入若落在
+// 提交序列清空之后，会把已经删掉的行重新插回去。
+func RosterWriteSuppressed(ctx context.Context) bool {
+	suppressed, _ := ctx.Value(rosterWriteKey{}).(bool)
+	return suppressed
+}
+
+// SuppressRosterWrite 让一次请求只读：处理器跳过设备名册更新，其余行为不变。
+func SuppressRosterWrite(ctx context.Context) context.Context {
+	return context.WithValue(ctx, rosterWriteKey{}, true)
+}
+
+// rosterWriteKey 是 SuppressRosterWrite 使用的上下文键。
+type rosterWriteKey struct{}
+
 // recordDevice 更新设备名册：快照能力整组替换，位置按 position 取较大值且不超过
 // 当前 head，别名不动；最近出现时间只在能力或位置变化时前进。写入失败只记日志，
-// 不影响这一轮同步的结果（ADR-0048、ADR-0054）。
+// 不影响这一轮同步的结果（ADR-0048、ADR-0054）。清除云端数据期间的读取请求由
+// RosterWriteSuppressed 标记，直接跳过写入。
 func (h *Handler) recordDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) {
+	if RosterWriteSuppressed(ctx) {
+		return
+	}
 	if err := h.svc.TouchDevice(ctx, userID, deviceID, snapshotCapable, position); err != nil {
 		h.log.Warn("cannot record a sync device",
 			slog.String("user_id", userID),

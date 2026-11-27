@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -44,6 +45,12 @@ func TestProductionStoresRejectsProductWithoutClient(t *testing.T) {
 }
 
 func newHarness(t *testing.T, env map[string]string) *harness {
+	return newHarnessWithStores(t, env, nil)
+}
+
+// newHarnessWithStores 与 newHarness 相同，另外允许用例在装配之前替换存储，
+// 用来把一次请求停在指定步骤上。
+func newHarnessWithStores(t *testing.T, env map[string]string, wrap func(*Stores)) *harness {
 	t.Helper()
 	// 用例都从同一个来源地址发请求，默认关掉限流，免得相互干扰；
 	// 专门测限流的用例自己把这些变量打开。
@@ -66,6 +73,9 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stores := MemoryStores(cfg, log)
+	if wrap != nil {
+		wrap(&stores)
+	}
 	// 管理后台的用例会从空目录录入来源和模型，再用普通客户端请求核对配置。
 	handler, err := build(t.Context(), cfg, stores, log, cfg.AdminToken != "")
 	if err != nil {
@@ -381,6 +391,116 @@ func TestClearCloudDataKeepsAccount(t *testing.T) {
 		if resp.StatusCode != http.StatusUnauthorized || p.Code != "unauthorized" {
 			t.Fatalf("DELETE %s anonymous: %d %+v", path, resp.StatusCode, p)
 		}
+	}
+}
+
+// purgeGateStore 把一次云端清除停在提交序列清空之后：互斥与清空都已经生效，
+// 用例可以在这一刻发别的请求。
+type purgeGateStore struct {
+	syncsvc.Store
+	reset   chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *purgeGateStore) Reset(ctx context.Context, userID string) error {
+	if err := s.Store.Reset(ctx, userID); err != nil {
+		return err
+	}
+	s.once.Do(func() { close(s.reset) })
+	<-s.release
+	return nil
+}
+
+// purge 在后台发起一次清除，返回状态码；请求本身出错时状态码为 0。
+func (h *harness) purge(token string) <-chan int {
+	out := make(chan int, 1)
+	go func() {
+		req, err := http.NewRequest(http.MethodDelete, h.srv.URL+"/v1/cloud", strings.NewReader(`{"password":"password1"}`))
+		if err != nil {
+			out <- 0
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			out <- 0
+			return
+		}
+		resp.Body.Close()
+		out <- resp.StatusCode
+	}()
+	return out
+}
+
+// awaitPurgeStart 等一次清除走到提交序列清空；提前结束说明前面某一步已经失败。
+func awaitPurgeStart(t *testing.T, done <-chan int, reset <-chan struct{}) {
+	t.Helper()
+	select {
+	case code := <-done:
+		t.Fatalf("清除在走到提交序列之前结束：%d", code)
+	case <-reset:
+	}
+}
+
+// TestPurgeKeepsRosterReadOnly 守住清除期间的名册写入：清除已经清掉名册之后，
+// 另一台设备查 head、拉取或查名册都照常返回，但不能把设备行写回名册。
+func TestPurgeKeepsRosterReadOnly(t *testing.T) {
+	gate := &purgeGateStore{reset: make(chan struct{}), release: make(chan struct{})}
+	h := newHarnessWithStores(t, nil, func(st *Stores) {
+		gate.Store = st.Sync
+		st.Sync = gate
+	})
+	token := h.signUp("roster-purge@b.cn")
+
+	done := h.purge(token)
+	awaitPurgeStart(t, done, gate.reset)
+	for _, path := range []string{"/v1/sync/head", "/v1/sync/commits?after=0", "/v1/sync/devices"} {
+		resp := h.do(http.MethodGet, path, token, nil, map[string]string{"X-Device-Id": "device-late"})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("清除进行中读 %s: %d", path, resp.StatusCode)
+		}
+	}
+	close(gate.release)
+	if code := <-done; code != http.StatusNoContent {
+		t.Fatalf("清除: %d", code)
+	}
+
+	var list struct {
+		Devices []struct {
+			DeviceID string `json:"device_id"`
+		} `json:"devices"`
+	}
+	if code := h.json(http.MethodGet, "/v1/sync/devices", token, nil, &list); code != http.StatusOK || len(list.Devices) != 0 {
+		t.Fatalf("清除之后名册应为空，得到 %d %+v", code, list.Devices)
+	}
+}
+
+// TestPurgeConflictConsumesUploadQuota 守住限流在云端写入互斥之外：清除期间的
+// 上传返回 409，但这一次请求已经用掉额度，清除结束之后的下一次上传返回 429。
+func TestPurgeConflictConsumesUploadQuota(t *testing.T) {
+	gate := &purgeGateStore{reset: make(chan struct{}), release: make(chan struct{})}
+	h := newHarnessWithStores(t, map[string]string{
+		"ZHIXIN_UPLOAD_RATE":  "0.0001",
+		"ZHIXIN_UPLOAD_BURST": "1",
+	}, func(st *Stores) {
+		gate.Store = st.Sync
+		st.Sync = gate
+	})
+	token := h.signUp("quota-purge@b.cn")
+
+	done := h.purge(token)
+	awaitPurgeStart(t, done, gate.reset)
+	if resp := upload(h, token, []byte("zip"), ClientSchemaVersion); resp.StatusCode != http.StatusConflict {
+		t.Fatalf("清除期间上传: %d", resp.StatusCode)
+	}
+	close(gate.release)
+	if code := <-done; code != http.StatusNoContent {
+		t.Fatalf("清除: %d", code)
+	}
+	if resp := upload(h, token, []byte("zip"), ClientSchemaVersion); resp.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("被拒绝的上传应消耗额度，下一次上传得到 %d", resp.StatusCode)
 	}
 }
 

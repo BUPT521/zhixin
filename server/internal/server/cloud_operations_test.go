@@ -3,12 +3,18 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
+
+	"golang.org/x/time/rate"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/ratelimit"
+	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
-// servePattern 用给定的注册模式调用一次中间件链，返回状态码。
+// newCloudOperationsServer 用给定的注册模式调用一次中间件链，返回状态码。
 func newCloudOperationsServer(handler http.Handler) func(method, path, user string, verified bool) int {
 	return func(method, path, user string, verified bool) int {
 		req := httptest.NewRequest(method, path, nil)
@@ -103,5 +109,95 @@ func TestCloudOperationsBlockWritesDuringDeletion(t *testing.T) {
 	close(writeRelease)
 	if status := <-writeDone; status != http.StatusNoContent {
 		t.Fatalf("naming ref: %d", status)
+	}
+}
+
+// TestCloudOperationsKeepRosterWritesOut 守住会写名册的读接口与清除的互斥：清除
+// 进行中 head、拉取与名册查询照常返回，但处理器被告知跳过名册更新，写入因此不会
+// 落在提交序列清空之后；不写名册的读请求不带这个标记（ADR-0048、ADR-0054）。
+func TestCloudOperationsKeepRosterWritesOut(t *testing.T) {
+	deleting := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan int, 1)
+	var mu sync.Mutex
+	suppressed := map[string]bool{}
+	handler := cloudOperations(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		suppressed[r.Pattern] = syncsvc.RosterWriteSuppressed(r.Context())
+		mu.Unlock()
+		if r.Pattern == "DELETE /v1/cloud" {
+			close(deleting)
+			<-release
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	serve := newCloudOperationsServer(handler)
+
+	go func() { done <- serve(http.MethodDelete, "/v1/cloud", "user", true) }()
+	<-deleting
+	for _, path := range []string{"/v1/sync/head", "/v1/sync/commits", "/v1/sync/devices", "/v1/me"} {
+		if status := serve(http.MethodGet, path, "user", true); status != http.StatusNoContent {
+			t.Fatalf("清除进行中读 %s: %d", path, status)
+		}
+	}
+	close(release)
+	if status := <-done; status != http.StatusNoContent {
+		t.Fatalf("清除: %d", status)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, path := range []string{"/v1/sync/head", "/v1/sync/commits", "/v1/sync/devices"} {
+		if !suppressed["GET "+path] {
+			t.Errorf("清除进行中的 %s 应当跳过名册更新", path)
+		}
+	}
+	if suppressed["GET /v1/me"] {
+		t.Error("/v1/me 不写名册，不应带跳过标记")
+	}
+}
+
+// TestRosterReadInFlightBlocksDeletion 守住反过来的方向：一次会写名册的读请求
+// 在途时，整库清除返回 409；读请求结束之后清除照常进行。
+func TestRosterReadInFlightBlocksDeletion(t *testing.T) {
+	reading := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan int, 1)
+	handler := cloudOperations(false)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Pattern == "GET /v1/sync/head" {
+			close(reading)
+			<-release
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	serve := newCloudOperationsServer(handler)
+
+	go func() { done <- serve(http.MethodGet, "/v1/sync/head", "user", true) }()
+	<-reading
+	if status := serve(http.MethodDelete, "/v1/cloud", "user", true); status != http.StatusConflict {
+		t.Fatalf("名册读取在途时的清除: %d", status)
+	}
+	close(release)
+	if status := <-done; status != http.StatusNoContent {
+		t.Fatalf("读 head: %d", status)
+	}
+	if status := serve(http.MethodDelete, "/v1/cloud", "user", true); status != http.StatusNoContent {
+		t.Fatalf("读取结束后的清除: %d", status)
+	}
+}
+
+// TestUploadQuotaCoversRejectedWrites 守住限流在云端写入互斥之外：未验证账号的
+// 403 也消耗一次上传额度，紧接着的合法上传返回 429，而不是悄悄放行。
+func TestUploadQuotaCoversRejectedWrites(t *testing.T) {
+	limiter := ratelimit.New(rate.Limit(0.0001), 1, 15*time.Minute, 10)
+	handler := uploadLimit(limiter)(cloudOperations(true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	serve := newCloudOperationsServer(handler)
+	if status := serve(http.MethodPost, "/v1/backups", "user", false); status != http.StatusForbidden {
+		t.Fatalf("未验证的上传: %d", status)
+	}
+	if status := serve(http.MethodPost, "/v1/backups", "user", true); status != http.StatusTooManyRequests {
+		t.Fatalf("额度用掉之后再上传: %d", status)
 	}
 }
