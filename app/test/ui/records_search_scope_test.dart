@@ -7,7 +7,7 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
-import 'package:zhixin/data/vector/embedding_config_store.dart';
+import 'package:zhixin/domain/models/embedding_config.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/records_search_page.dart';
 

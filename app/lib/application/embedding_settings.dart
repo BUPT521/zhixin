@@ -1,5 +1,6 @@
 import '../data/repository/evidence_repository.dart';
 import '../data/vector/embedding_config_store.dart';
+import '../domain/models/embedding_config.dart';
 import 'embedding_client.dart';
 import 'search_index_service.dart';
 

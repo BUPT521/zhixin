@@ -195,7 +195,6 @@ void main() {
 /// 不是允许继续新增依赖的许可；每去掉一处引用，就把文件名删掉，用例会强制清单只减不增。
 const _uiDataAllowlist = <String>{
   'data_version_page.dart',
-  'embedding_settings_page.dart',
   'integrity_check.dart',
   'settings_page.dart',
 };
