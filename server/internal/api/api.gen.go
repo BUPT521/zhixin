@@ -463,7 +463,7 @@ type AdminAccountPoints struct {
 	// ChargedToday 今天已经核销成功的积分；未开通收款时为 0
 	ChargedToday int64 `json:"charged_today"`
 
-	// Charges 最近五条核销流水，新到旧；只在读取单个账号时返回
+	// Charges 最多 5 条核销流水，新到旧；只在读取单个账号时返回
 	Charges []AdminPointCharge `json:"charges"`
 
 	// Enabled 这个实例是否开通了积分收款
@@ -1599,7 +1599,7 @@ type PostV1BackupsParams struct {
 	XContentSHA256 string `json:"X-Content-SHA256"`
 	XSchemaVersion int    `json:"X-Schema-Version"`
 
-	// XDeviceName 设备名，按 percent-encoding 编码 UTF-8 字节后放在头里；服务端解码后保存原文。
+	// XDeviceName 设备名，按 percent-encoding 编码 UTF-8 字节后放在头里；服务端解码后保存原文，超过 64 个字符时按字符截断。
 	XDeviceName *string `json:"X-Device-Name,omitempty"`
 }
 

@@ -769,8 +769,8 @@ paths:
         - { name: X-Schema-Version, in: header, required: true, schema: { type: integer } }
         - name: X-Device-Name
           in: header
-          description: 设备名，按 percent-encoding 编码 UTF-8 字节后放在头里；服务端解码后保存原文。
-          schema: { type: string, maxLength: 256 }
+          description: 设备名，按 percent-encoding 编码 UTF-8 字节后放在头里；服务端解码后保存原文，超过 64 个字符时按字符截断。
+          schema: { type: string, maxLength: 64 }
       requestBody:
         required: true
         content:
@@ -2007,7 +2007,7 @@ components:
           description: 余额副本的快照时刻；没有副本时省略
         charges:
           type: array
-          description: 最近五条核销流水，新到旧；只在读取单个账号时返回
+          description: 最多 5 条核销流水，新到旧；只在读取单个账号时返回
           items: { $ref: "#/components/schemas/AdminPointCharge" }
     AdminAccount:
       type: object
