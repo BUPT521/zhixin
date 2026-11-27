@@ -277,9 +277,9 @@ func (s *Service) Push(
 			return AppendResult{}, ErrInvalid
 		}
 		total += int64(len(b))
-		// PostgreSQL 的 JSONB 文本会为键值与数组元素补空格。为这部分及
-		// 服务端生成的元数据留空间，保证新提交能够独立拉取。
-		if len(b) > MaxCommitBytes || 2*int64(len(b))+256 > s.maxPullBytes || total > MaxPushBytes {
+		// 单条与整批各有各的上限，拉取页预算只决定一页取多少条，不参与这里：
+		// 把页预算调小不该连带把能存的提交判成太大，否则写入之后又拉不下来。
+		if len(b) > MaxCommitBytes || total > MaxPushBytes {
 			return AppendResult{}, ErrPushTooLarge
 		}
 	}

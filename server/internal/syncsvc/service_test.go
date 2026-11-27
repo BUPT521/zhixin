@@ -128,6 +128,28 @@ func TestServicePullStopsAtByteLimit(t *testing.T) {
 	}
 }
 
+// TestServicePushSizesByCommitNotPage 守住提交大小的判断口径：单条提交只看
+// MaxCommitBytes，整批只看 MaxPushBytes，一页拉取的字节预算不参与。把页预算调小
+// 之后普通提交仍然写得进去，超过单条上限的提交照旧拒绝。
+func TestServicePushSizesByCommitNotPage(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryStore(), 27)
+	// 页预算调到 1 字节：它只决定一页取多少条，不该把能存的提交判成太大。
+	svc.SetMaxPullBytes(1)
+
+	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}, DeviceRoster{})
+	if err != nil || result.Head != 2 {
+		t.Fatalf("页预算不应限制提交大小: %+v, %v", result, err)
+	}
+
+	big := testCommit("big", 27)
+	after := json.RawMessage(fmt.Sprintf(`{"content":%q}`, strings.Repeat("x", MaxCommitBytes)))
+	big.Changes[0].After = &after
+	if _, err := svc.Push(ctx, "u1", 2, []Commit{big}, DeviceRoster{}); !errors.Is(err, ErrPushTooLarge) {
+		t.Fatalf("超过单条上限应返回 ErrPushTooLarge，得到 %v", err)
+	}
+}
+
 // TestServiceResetClearsLog 守住重置的范围：只清指定账号的序列并把 head 归零，
 // 另一个账号不受影响；重置之后从 0 重新推送可以正常分配序号，空序列再重置一次
 // 不算错误。

@@ -477,7 +477,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES` | `2147483648` | 一个账号全部附件的总量上限，超限上传返回 413 `storage_full` |
 | `ZHIXIN_UPLOAD_TEMP_BUDGET_BYTES` | 较大的单次上传上限 × 4 | 实例内备份和附件共用的临时文件预算，每个请求按对应上传上限预留。配置值小于任一单次上传上限时服务拒绝启动，运行中预算不足时返回 503 `unavailable` |
 | `ZHIXIN_SYNC_MAX_CONCURRENT` | `4` | 实例内同步提交拉取和推送共用的并发上限，名额用完时返回 503 `unavailable` |
-| `ZHIXIN_SYNC_PULL_MAX_BYTES` | `4194304` | 一次拉取同步提交的累计字节上限，最大 16 MiB；下一条超过上限时返回 413 |
+| `ZHIXIN_SYNC_PULL_MAX_BYTES` | `4194304` | 一次拉取同步提交的累计字节上限，最大 16 MiB，只决定一页取多少条；下一条超过上限时返回 413，所以不要调到低于单条提交的 2 MiB 上限 |
 | `ZHIXIN_SYNC_COMPACT_KEEP` | `168h` | 快照位置之下仍然保留提交的时间窗口：登记快照时删除更早的已覆盖提交。窗口越长，落后设备越少重新克隆，序列占地也越大（[ADR-0043](../docs/adr/0043-服务端快照登记与提交序列压缩.md)） |
 | `ZHIXIN_SYNC_COMPACT` | `0` | 打开快照压缩：关闭时登记快照只写指针、推送超出预算直接返回 413；打开之后名册里的活跃设备都声明了 `snapshot` 才删提交（[ADR-0047](../docs/adr/0047-快照附件回收与压缩前的客户端门槛.md)） |
 | `ZHIXIN_SYNC_SNAPSHOT_GRACE` | `24h` | 旧快照附件的回收宽限期：让位时间早于它的旧字节在下一次登记时删除（[ADR-0047](../docs/adr/0047-快照附件回收与压缩前的客户端门槛.md)） |
