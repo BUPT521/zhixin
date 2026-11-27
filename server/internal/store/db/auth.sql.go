@@ -97,7 +97,7 @@ func (q *Queries) ApiKeysByUser(ctx context.Context, userID string) ([]ApiKeysBy
 }
 
 const authCode = `-- name: AuthCode :one
-SELECT purpose, kind, identifier, user_id, code_hash, expires_at, attempts, created_at
+SELECT purpose, kind, identifier, user_id, code_hash, expires_at, created_at
 FROM auth_code
 WHERE purpose = $1
   AND kind = $2
@@ -110,9 +110,19 @@ type AuthCodeParams struct {
 	Identifier string
 }
 
-func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCode, error) {
+type AuthCodeRow struct {
+	Purpose    string
+	Kind       string
+	Identifier string
+	UserID     pgtype.Text
+	CodeHash   string
+	ExpiresAt  pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+}
+
+func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCodeRow, error) {
 	row := q.db.QueryRow(ctx, authCode, arg.Purpose, arg.Kind, arg.Identifier)
-	var i AuthCode
+	var i AuthCodeRow
 	err := row.Scan(
 		&i.Purpose,
 		&i.Kind,
@@ -120,7 +130,6 @@ func (q *Queries) AuthCode(ctx context.Context, arg AuthCodeParams) (AuthCode, e
 		&i.UserID,
 		&i.CodeHash,
 		&i.ExpiresAt,
-		&i.Attempts,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -554,16 +563,15 @@ func (q *Queries) IncrementAuthCodeAttempts(ctx context.Context, arg IncrementAu
 const insertRefreshUsed = `-- name: InsertRefreshUsed :exec
 INSERT INTO session_refresh_used (
   token_hash, session_id, user_id, request_id, rotated_at, grace_until,
-  replaced_access_hash, replaced_refresh_hash
+  replaced_refresh_hash
 )
 VALUES (
   $1, $2, $3,
   $4, $5, $6,
-  $7, $8
+  $7
 )
 ON CONFLICT (token_hash) DO UPDATE SET
   rotated_at = excluded.rotated_at,
-  replaced_access_hash = excluded.replaced_access_hash,
   replaced_refresh_hash = excluded.replaced_refresh_hash
 `
 
@@ -574,7 +582,6 @@ type InsertRefreshUsedParams struct {
 	RequestID           string
 	RotatedAt           pgtype.Timestamptz
 	GraceUntil          pgtype.Timestamptz
-	ReplacedAccessHash  string
 	ReplacedRefreshHash string
 }
 
@@ -589,7 +596,6 @@ func (q *Queries) InsertRefreshUsed(ctx context.Context, arg InsertRefreshUsedPa
 		arg.RequestID,
 		arg.RotatedAt,
 		arg.GraceUntil,
-		arg.ReplacedAccessHash,
 		arg.ReplacedRefreshHash,
 	)
 	return err
@@ -750,7 +756,7 @@ func (q *Queries) PutAuthCode(ctx context.Context, arg PutAuthCodeParams) error 
 
 const refreshUsed = `-- name: RefreshUsed :one
 SELECT token_hash, session_id, user_id, request_id, rotated_at, grace_until,
-  replaced_access_hash, replaced_refresh_hash
+  replaced_refresh_hash
 FROM session_refresh_used
 WHERE token_hash = $1
 `
@@ -765,7 +771,6 @@ func (q *Queries) RefreshUsed(ctx context.Context, tokenHash string) (SessionRef
 		&i.RequestID,
 		&i.RotatedAt,
 		&i.GraceUntil,
-		&i.ReplacedAccessHash,
 		&i.ReplacedRefreshHash,
 	)
 	return i, err

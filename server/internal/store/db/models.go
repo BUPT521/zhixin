@@ -240,7 +240,6 @@ type SessionRefreshUsed struct {
 	RequestID           string
 	RotatedAt           pgtype.Timestamptz
 	GraceUntil          pgtype.Timestamptz
-	ReplacedAccessHash  string
 	ReplacedRefreshHash string
 }
 

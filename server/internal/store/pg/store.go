@@ -441,7 +441,6 @@ func (s *Store) RotateSessionAndRecord(ctx context.Context, id, oldRefreshHash, 
 	}
 	// 记录里的“本次发出的令牌”按刚写入会话的摘要填好，调用方不用设置，两条
 	// 记录因此不会与轮换后的会话写成不同的令牌。
-	used.ReplacedAccessHash = newAccessHash
 	used.ReplacedRefreshHash = newRefreshHash
 	if err := insertRefreshUsed(ctx, q, used); err != nil {
 		return err
@@ -475,7 +474,6 @@ func insertRefreshUsed(ctx context.Context, q *db.Queries, u auth.RefreshUsed) e
 		RequestID:           u.RequestID,
 		RotatedAt:           rotated,
 		GraceUntil:          grace,
-		ReplacedAccessHash:  u.ReplacedAccessHash,
 		ReplacedRefreshHash: u.ReplacedRefreshHash,
 	})
 }
@@ -495,7 +493,6 @@ func (s *Store) UsedRefresh(ctx context.Context, tokenHash string) (auth.Refresh
 		RequestID:           row.RequestID,
 		RotatedAt:           row.RotatedAt.Time,
 		GraceUntil:          row.GraceUntil.Time,
-		ReplacedAccessHash:  row.ReplacedAccessHash,
 		ReplacedRefreshHash: row.ReplacedRefreshHash,
 	}, nil
 }
@@ -628,7 +625,6 @@ func (s *Store) Code(ctx context.Context, purpose, kind, identifier string) (aut
 		UserID:     row.UserID.String,
 		CodeHash:   row.CodeHash,
 		ExpiresAt:  row.ExpiresAt.Time,
-		Attempts:   int(row.Attempts),
 		CreatedAt:  row.CreatedAt.Time,
 	}, nil
 }

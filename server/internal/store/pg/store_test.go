@@ -153,7 +153,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 		t.Fatalf("put code: %v", err)
 	}
 	gotCode, err := st.Code(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn")
-	if err != nil || gotCode.CodeHash != "hash-1" || gotCode.Attempts != 0 || gotCode.UserID != u.ID {
+	if err != nil || gotCode.CodeHash != "hash-1" || gotCode.UserID != u.ID {
 		t.Fatalf("get code: %v %+v", err, gotCode)
 	}
 	if n, err := st.IncrementCodeAttempts(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn"); err != nil || n != 1 {
@@ -387,7 +387,7 @@ func TestPostgresRefreshRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("更新后读取旧令牌记录: %v", err)
 	}
-	if afterUpdate.ReplacedRefreshHash != "rh3" || afterUpdate.ReplacedAccessHash != "ah3" {
+	if afterUpdate.ReplacedRefreshHash != "rh3" {
 		t.Fatalf("本次发出的令牌应更新，得到 %+v", afterUpdate)
 	}
 	if !afterUpdate.GraceUntil.Equal(used.GraceUntil) || afterUpdate.RequestID != "req-1" {

@@ -76,7 +76,6 @@ CREATE TABLE session_refresh_used (
   request_id            TEXT NOT NULL DEFAULT '',
   rotated_at            TIMESTAMPTZ NOT NULL,
   grace_until           TIMESTAMPTZ NOT NULL,
-  replaced_access_hash  TEXT NOT NULL,          -- 本次轮换发出的访问令牌摘要
   replaced_refresh_hash TEXT NOT NULL           -- 本次轮换发出的刷新令牌摘要
 );
 CREATE INDEX session_refresh_used_session ON session_refresh_used(session_id);

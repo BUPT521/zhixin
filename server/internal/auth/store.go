@@ -62,7 +62,6 @@ type Code struct {
 	UserID     string
 	CodeHash   string
 	ExpiresAt  time.Time
-	Attempts   int
 	CreatedAt  time.Time
 }
 
@@ -108,7 +107,6 @@ type RefreshUsed struct {
 	RequestID           string
 	RotatedAt           time.Time
 	GraceUntil          time.Time
-	ReplacedAccessHash  string
 	ReplacedRefreshHash string
 }
 
@@ -229,27 +227,29 @@ type Store interface {
 
 // MemoryStore is a Store kept in process memory.
 type MemoryStore struct {
-	mu          sync.Mutex
-	users       map[string]User
-	identities  map[string]Identity
-	byKey       map[string]string // kind + "\x00" + identifier → identity id
-	sessions    map[string]Session
-	codes       map[string]Code
-	refreshUsed map[string]RefreshUsed
-	apiKeys     map[string]APIKey
-	keyHashes   map[string]string // 密钥摘要 → 密钥编号
+	mu           sync.Mutex
+	users        map[string]User
+	identities   map[string]Identity
+	byKey        map[string]string // kind + "\x00" + identifier → identity id
+	sessions     map[string]Session
+	codes        map[string]Code
+	codeAttempts map[string]int // 验证码摘要之外的输错次数，键与 codes 相同
+	refreshUsed  map[string]RefreshUsed
+	apiKeys      map[string]APIKey
+	keyHashes    map[string]string // 密钥摘要 → 密钥编号
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:       map[string]User{},
-		identities:  map[string]Identity{},
-		byKey:       map[string]string{},
-		sessions:    map[string]Session{},
-		codes:       map[string]Code{},
-		refreshUsed: map[string]RefreshUsed{},
-		apiKeys:     map[string]APIKey{},
-		keyHashes:   map[string]string{},
+		users:        map[string]User{},
+		identities:   map[string]Identity{},
+		byKey:        map[string]string{},
+		sessions:     map[string]Session{},
+		codes:        map[string]Code{},
+		codeAttempts: map[string]int{},
+		refreshUsed:  map[string]RefreshUsed{},
+		apiKeys:      map[string]APIKey{},
+		keyHashes:    map[string]string{},
 	}
 }
 
@@ -444,6 +444,7 @@ func (m *MemoryStore) deleteUserLocked(id string) bool {
 	for key, c := range m.codes {
 		if c.UserID == id {
 			delete(m.codes, key)
+			delete(m.codeAttempts, key)
 		}
 	}
 	m.purgeUsedLocked(func(u RefreshUsed) bool { return u.UserID == id })
@@ -602,6 +603,7 @@ func (m *MemoryStore) ResetPassword(_ context.Context, reset PasswordReset) erro
 		return ErrNotFound
 	}
 	delete(m.codes, key)
+	delete(m.codeAttempts, key)
 	u.PasswordHash = reset.NewPasswordHash
 	m.users[reset.UserID] = u
 	if ident, ok := m.identities[reset.IdentityID]; ok && ident.UserID == reset.UserID {
@@ -625,7 +627,11 @@ func (m *MemoryStore) ResetPassword(_ context.Context, reset PasswordReset) erro
 func (m *MemoryStore) PutCode(_ context.Context, c Code) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.codes[codeKey(c.Purpose, c.Kind, c.Identifier)] = c
+	key := codeKey(c.Purpose, c.Kind, c.Identifier)
+	m.codes[key] = c
+	// 重新发送覆盖同一枚验证码时输错次数归零，与 SQL 里 ON CONFLICT 的
+	// attempts = 0 一致。
+	m.codeAttempts[key] = 0
 	return nil
 }
 
@@ -643,19 +649,19 @@ func (m *MemoryStore) IncrementCodeAttempts(_ context.Context, purpose, kind, id
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := codeKey(purpose, kind, identifier)
-	c, ok := m.codes[key]
-	if !ok {
+	if _, ok := m.codes[key]; !ok {
 		return 0, ErrNotFound
 	}
-	c.Attempts++
-	m.codes[key] = c
-	return c.Attempts, nil
+	m.codeAttempts[key]++
+	return m.codeAttempts[key], nil
 }
 
 func (m *MemoryStore) DeleteCode(_ context.Context, purpose, kind, identifier string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.codes, codeKey(purpose, kind, identifier))
+	key := codeKey(purpose, kind, identifier)
+	delete(m.codes, key)
+	delete(m.codeAttempts, key)
 	return nil
 }
 
@@ -720,6 +726,7 @@ func (m *MemoryStore) PruneExpired(_ context.Context, now, usedBefore time.Time)
 	for key, c := range m.codes {
 		if !now.Before(c.ExpiresAt) {
 			delete(m.codes, key)
+			delete(m.codeAttempts, key)
 		}
 	}
 	return nil
@@ -789,7 +796,6 @@ func (m *MemoryStore) RotateSessionAndRecord(_ context.Context, id, oldRefreshHa
 	s.RefreshExpires = refreshExpires
 	m.sessions[id] = s
 	// 记录里的“本次发出的令牌”由这里按刚写入会话的摘要填好，调用方不用设置。
-	used.ReplacedAccessHash = newAccessHash
 	used.ReplacedRefreshHash = newRefreshHash
 	m.recordRefreshUsedLocked(used)
 	if used.TokenHash != oldRefreshHash {
@@ -818,7 +824,6 @@ func (m *MemoryStore) UsedRefresh(_ context.Context, tokenHash string) (RefreshU
 func (m *MemoryStore) recordRefreshUsedLocked(u RefreshUsed) {
 	if old, ok := m.refreshUsed[u.TokenHash]; ok {
 		old.RotatedAt = u.RotatedAt
-		old.ReplacedAccessHash = u.ReplacedAccessHash
 		old.ReplacedRefreshHash = u.ReplacedRefreshHash
 		m.refreshUsed[u.TokenHash] = old
 		return
