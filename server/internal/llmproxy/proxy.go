@@ -1393,7 +1393,6 @@ func (p *Proxy) discardedUsage(body io.ReadCloser, mediaType string) (Usage, int
 	return Usage{}, estimateResponseOutput(response.Output)
 }
 
-// copyResponseHeaders 只复制客户端解释响应需要的头；其余头由代理自己决定。
 // parseUsage 从一段响应体里读用量，聊天与嵌入共用。额度结算、账号统计与路由
 // 统计都靠它取数，同一条响应只解析一次，不再各解析一遍而口径不一。
 func parseUsage(b []byte, kind Kind) Usage {
@@ -1541,7 +1540,8 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 	}
 }
 
-// usageAmount 已并入 Usage：一条流事件报告的用量就是那一个值。
+// streamData 解析一条流事件的完成状态与用量：用量先取 response 包装里的一份，
+// 没有再取事件自身的一份；[DONE] 只表示结束，不带用量。
 func streamData(data []byte) (responseCompletion, Usage) {
 	if bytes.Equal(data, []byte("[DONE]")) {
 		return responseCompleted, Usage{}
