@@ -30,15 +30,6 @@ class GuardedDatabase implements RawDatabase {
   /// 取当前连接；恢复替换期间由调用方切到新连接。
   final RawDatabase Function() resolve;
 
-  /// 当前连接的 drift 主库；测试里的原始执行器、只读副本与换库期间为空。
-  ///
-  /// 需要生成查询的读取（例如记忆使用统计按设备现算）从这里取，依赖真实类型，
-  /// 而不是把基类返回的可空连接强制转换。
-  AppDatabase? get appDatabase {
-    final connection = _db.driftConnection;
-    return connection is AppDatabase ? connection : null;
-  }
-
   /// 数据版本引擎；为空的旧测试入口只执行原始 SQL。
   RevisionEngine? revisions;
 
@@ -73,8 +64,20 @@ class GuardedDatabase implements RawDatabase {
   Future<T> _readAfterCommit<T>(Future<T> Function() read) =>
       gate.shared(read, newReader: true);
 
+  /// 当前 drift 连接：事务内是本次事务的连接，事务之外是当前主库的连接。
+  ///
+  /// 这是唯一一个“取连接”的入口，[selectGenerated] 与 [writeGenerated] 都经它
+  /// 落库；它自己不经访问协调，需要与恢复、清空互斥的读写请走那两个方法。只读
+  /// 副本与测试里的原始执行器没有 drift 主库，返回空。
   @override
-  DatabaseConnectionUser? get driftConnection => _currentTxn?.driftConnection;
+  DatabaseConnectionUser? get driftConnection {
+    final connection = _currentTxn?.driftConnection ?? _db.driftConnection;
+    assert(
+      connection == null || connection is AppDatabase,
+      '生成查询只能落在 drift 主库上；只读副本与原始执行器没有仓库查询',
+    );
+    return connection;
+  }
 
   /// 等共享访问获准后再取连接，恢复期间排队的读取会访问新库。
   @override

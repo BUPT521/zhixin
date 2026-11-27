@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:zvec/zvec.dart';
 
 import '../../domain/rules/embedding.dart';
+import '../atomic_file.dart';
 import 'vector_index.dart';
 import 'vector_store.dart';
 
@@ -343,36 +344,23 @@ class ZvecVectorIndex implements VectorIndex {
   }
 
   static _IndexState? _readState(File file, EmbeddingModelSpec spec) {
-    if (!file.existsSync()) return null;
-    try {
-      final state = _IndexState.parse(file.readAsStringSync());
-      if (state == null) return null;
-      if (state.modelKey != spec.indexKey ||
-          state.dim != spec.dim ||
-          state.textVersion != spec.textVersion) {
-        return null;
-      }
-      return state;
-    } on FileSystemException {
+    final text = AtomicFile(file.path).readTextSync();
+    if (text == null) return null;
+    final state = _IndexState.parse(text);
+    if (state == null) return null;
+    if (state.modelKey != spec.indexKey ||
+        state.dim != spec.dim ||
+        state.textVersion != spec.textVersion) {
       return null;
     }
+    return state;
   }
 
+  /// 状态文件与设置类小文件共用 [AtomicFile] 的同步原子写入：先写临时文件再
+  /// 改名，写到一半失败时上一次的状态仍然可用。
   void _writeState() {
-    final temp = File('$statePath.tmp');
     try {
-      Directory(rootPath).createSync(recursive: true);
-      temp.writeAsStringSync(jsonEncode(_state.toJson()), flush: true);
-      try {
-        temp.renameSync(statePath);
-      } on FileSystemException {
-        try {
-          File(statePath).deleteSync();
-        } on FileSystemException {
-          // 目标不存在或删不掉，下面的改名再试一次。
-        }
-        temp.renameSync(statePath);
-      }
+      AtomicFile(statePath).writeTextSync(jsonEncode(_state.toJson()));
     } on FileSystemException catch (error) {
       throw VectorStoreFailure('无法写入向量索引状态：${error.message}');
     }

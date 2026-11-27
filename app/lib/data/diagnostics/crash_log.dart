@@ -10,6 +10,7 @@ import 'package:sqlite3/sqlite3.dart';
 import '../../domain/models/diagnostics.dart';
 import '../../domain/rules/text.dart';
 import '../../domain/rules/time_format.dart';
+import '../atomic_file.dart';
 
 /// 本机崩溃记录：一个 JSON 文件，记启动次数与最近几次未捕获错误；配置了 DSN 时
 /// 同一份脱敏后的说明与调用栈也上报自建 Sentry。
@@ -129,10 +130,10 @@ class CrashLog {
   }
 
   Map<String, Object?> _read() {
+    final text = AtomicFile(path).readTextSync();
+    if (text == null) return <String, Object?>{};
     try {
-      final file = File(path);
-      if (!file.existsSync()) return <String, Object?>{};
-      final decoded = jsonDecode(file.readAsStringSync());
+      final decoded = jsonDecode(text);
       if (decoded is! Map<String, Object?>) return <String, Object?>{};
       return decoded;
     } catch (_) {
@@ -141,13 +142,12 @@ class CrashLog {
   }
 
   /// 先写临时文件再替换，写到一半被杀时旧的记录还在。
+  ///
+  /// 与设置类小文件共用 [AtomicFile] 的同步写入与同一种临时文件后缀：崩溃时
+  /// 进程可能马上结束，等不了异步排队。
   void _write(Map<String, Object?> data) {
-    final temp = File('$path.tmp');
     try {
-      final directory = Directory(filesDir);
-      if (!directory.existsSync()) directory.createSync(recursive: true);
-      temp.writeAsStringSync(jsonEncode(data), flush: true);
-      temp.renameSync(path);
+      AtomicFile(path).writeTextSync(jsonEncode(data));
     } catch (_) {
       // 记录诊断信息失败不影响应用使用。
     }
