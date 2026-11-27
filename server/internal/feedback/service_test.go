@@ -81,6 +81,25 @@ func TestPruneSkipsWhenKeepDaysIsZero(t *testing.T) {
 	}
 }
 
+// 保留天数只由配置层给出，业务层不再写一份与配置默认值相同的兜底：没有调用
+// SetKeepDays 时不清理，装配处漏了这一步会立刻暴露，而不是悄悄沿用 365 天。
+func TestPruneSkipsWithoutConfiguredKeepDays(t *testing.T) {
+	store := NewMemoryStore()
+	svc := newPruneService(store)
+	seedFeedback(t, store)
+
+	deleted, err := svc.Prune(context.Background())
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if deleted != 0 {
+		t.Fatalf("未设置保留天数时不清理，得到删除 %d 行", deleted)
+	}
+	if got := len(store.snapshot()); got != 3 {
+		t.Fatalf("应保留全部 3 行，得到 %d", got)
+	}
+}
+
 func TestPruneLoopPrunesAtStartup(t *testing.T) {
 	store := NewMemoryStore()
 	svc := newPruneService(store)
