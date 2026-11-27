@@ -23,22 +23,13 @@ import 'account_dialogs.dart';
 import 'failure_feedback.dart';
 import 'navigation.dart';
 import 'live_view.dart';
+import 'settings_model_form.dart';
+import 'settings_notices.dart';
 import 'update_notice.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
-
-/// 操作结果挂在触发它的那一段卡片下方：长页里也能就近看到，不集中到页底。
-enum _Area {
-  model,
-  developer,
-  learning,
-  appearance,
-  updates,
-  diagnostics,
-  danger,
-}
 
 /// 一级界面切进来之后预读的设置页首屏；字段与预读任务返回的记录一致。
 typedef _SettingsPrewarm = ({
@@ -49,14 +40,6 @@ typedef _SettingsPrewarm = ({
   bool reportCrashes,
   bool reportUsage,
 });
-
-/// 一段操作的最近一次结果；失败用错误描边的就地说明，成功用一行小字。
-class _Result {
-  const _Result(this.message, {this.failed = false});
-
-  final String message;
-  final bool failed;
-}
 
 /// 设置：模型、语义索引、学习、外观、诊断与危险操作。
 ///
@@ -72,16 +55,17 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  final _model = TextEditingController();
-  final _contextWindow = TextEditingController();
+  /// 模型配置表单：两个输入框、图片开关与保存前的一次校验。
+  final SettingsModelForm _form = SettingsModelForm();
 
-  LlmConfig? _config;
+  /// 每段操作的结果与首读失败的说明；呈现交给 [ResultNotice]。
+  final SettingsNotices _notices = SettingsNotices();
+
   AccountSnapshot? _account;
   bool? _developerMode;
 
   /// 服务端允许的模型；登录且读得到时显示，作为模型名的参照。
   List<String> _serverModels = const [];
-  bool _allowImages = true;
   ThemeMode _themeMode = ThemeMode.system;
 
   bool _reportCrashes = true;
@@ -91,7 +75,6 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _checkingUpdates = false;
   bool _loading = true;
   bool _busy = false;
-  final Map<_Area, _Result> _results = {};
 
   /// 语义索引入口的副标题：没有可用来源时写“未启用”，否则写来源条数。
   bool _embeddingUsable = false;
@@ -104,9 +87,6 @@ class _SettingsPageState extends State<SettingsPage> {
 
   /// 库里设置项的订阅：截止小时与拍照方式随写入更新（ADR-0014）。
   Stream<SettingsView>? _stream;
-
-  /// 第一次读取设置项失败时的说明；重新订阅之后清除。
-  String? _loadFailure;
 
   @override
   void didChangeDependencies() {
@@ -121,7 +101,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (prewarm != null) {
       _account = prewarm.account;
       _serverModels = prewarm.models;
-      _applyConfig(prewarm.config.valueOrNull);
+      _form.apply(prewarm.config.valueOrNull);
       _reportCrashes = prewarm.reportCrashes;
       _reportUsage = prewarm.reportUsage;
       _embeddingUsable = prewarm.embedding.usable;
@@ -134,24 +114,35 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _notices.addListener(_onNoticesChanged);
+  }
+
+  @override
   void dispose() {
-    _model.dispose();
-    _contextWindow.dispose();
+    _notices.removeListener(_onNoticesChanged);
+    _notices.dispose();
+    _form.dispose();
     super.dispose();
+  }
+
+  void _onNoticesChanged() {
+    if (mounted) setState(() {});
   }
 
   /// 重新订阅设置项：拍照方式写在 app_meta 里，保存不形成提交、没有表通知，
   /// 因此保存之后换一条新流重读（ADR-0014）。
   void _reloadSettings() {
+    _notices.clearLoadFailure();
     setState(() {
-      _loadFailure = null;
       _stream = AppScope.of(context).settings.edit.watchSettings();
     });
   }
 
   void _onSettings(SettingsView settings) {
-    if (_loadFailure == null) return;
-    setState(() => _loadFailure = null);
+    if (_notices.loadFailure == null) return;
+    _notices.clearLoadFailure();
   }
 
   void _onSettingsError(Object error, StackTrace stack) {
@@ -165,7 +156,7 @@ class _SettingsPageState extends State<SettingsPage> {
       kept: '现有设置没有改动',
       next: '可以在页面顶部重试',
     );
-    setState(() => _loadFailure = message);
+    _notices.setLoadFailure(message);
   }
 
   /// 读本机保存的模型配置与诊断设置，以及语义索引的规模。
@@ -202,7 +193,7 @@ class _SettingsPageState extends State<SettingsPage> {
         _account = account;
         _developerMode = developerMode;
         _serverModels = serverModels;
-        _applyConfig(config);
+        _form.apply(config);
         _reportCrashes = reportCrashes;
         _reportUsage = reportUsage;
         _themeMode = themeMode;
@@ -211,21 +202,21 @@ class _SettingsPageState extends State<SettingsPage> {
         _loading = false;
       });
       if (configFailure != null && mounted) {
-        setState(() {
-          _loadFailure = describeFailureReason(
+        _notices.setLoadFailure(
+          describeFailureReason(
             context,
             configFailure,
             kind: 'settings_config_read',
             kept: '其他设置照常显示',
             next: '可以在开发者模式中重新保存模型配置',
-          );
-        });
+          ),
+        );
       }
     } catch (error, stack) {
       if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _loadFailure = describeFailure(
+      setState(() => _loading = false);
+      _notices.setLoadFailure(
+        describeFailure(
           context,
           error,
           stack,
@@ -233,16 +224,16 @@ class _SettingsPageState extends State<SettingsPage> {
           kind: 'settings_read',
           kept: '现有设置没有改动',
           next: '可以在页面顶部重试',
-        );
-      });
+        ),
+      );
     }
   }
 
   /// 顶部说明失败之后的重试：重新订阅库里设置项，并把本机配置再读一次。
   Future<void> _retry() async {
+    _notices.clearLoadFailure();
     setState(() {
       _loading = true;
-      _loadFailure = null;
       _stream = AppScope.of(context).settings.edit.watchSettings();
     });
     await _loadLocal(AppScope.of(context));
@@ -273,10 +264,8 @@ class _SettingsPageState extends State<SettingsPage> {
   /// 手动检查更新：与启动检查走同一套流程，结果就地说明；有更新时另弹提示。
   Future<void> _checkUpdates() async {
     if (_checkingUpdates) return;
-    setState(() {
-      _checkingUpdates = true;
-      _results.remove(_Area.updates);
-    });
+    setState(() => _checkingUpdates = true);
+    _notices.clear(SettingsArea.updates);
     try {
       final service =
           widget.updates ?? AppScope.of(context).accountServices.updates;
@@ -284,13 +273,13 @@ class _SettingsPageState extends State<SettingsPage> {
       if (!mounted) return;
       switch (result.status) {
         case UpdateCheckStatus.upToDate:
-          _report(_Area.updates, '已经是最新版本（$appVersion）');
+          _report(SettingsArea.updates, '已经是最新版本（$appVersion）');
         case UpdateCheckStatus.failed:
-          _report(_Area.updates, result.failureMessage, failed: true);
+          _report(SettingsArea.updates, result.failureMessage, failed: true);
         case UpdateCheckStatus.updateAvailable:
           final release = result.release!;
           _report(
-            _Area.updates,
+            SettingsArea.updates,
             '有新版本 ${release.version}（构建号 ${release.build}），可以打开下载地址更新。',
           );
           await showUpdateNotice(context, result);
@@ -300,74 +289,33 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  /// 把一份模型配置填回输入框；为空时回到默认值与空输入。
-  void _applyConfig(LlmConfig? config) {
-    _config = config;
-    _allowImages = config?.allowImages ?? true;
-    _model.text = config?.model ?? LlmConfig.defaultModel;
-    final window = config?.contextWindowTokens;
-    _contextWindow.text =
-        window == null || window == LlmConfig.defaultContextWindowTokens
-        ? ''
-        : window.toString();
-  }
-
-  LlmConfig _formConfig() {
-    final input = _contextWindow.text.trim();
-    final window = input.isEmpty
-        ? LlmConfig.defaultContextWindowTokens
-        : int.tryParse(input);
-    if (window == null || window <= 0) {
-      throw const FormatException('模型上下文上限须为正整数');
-    }
-    if (window > LlmConfig.maxContextWindowTokens) {
-      throw FormatException('模型上下文上限不能超过 ${LlmConfig.maxContextWindowTokens}');
-    }
-    return LlmConfig(
-      model: _model.text.trim().isEmpty
-          ? LlmConfig.defaultModel
-          : _model.text.trim(),
-      allowImages: _allowImages,
-      contextWindowTokens: window,
-    );
-  }
-
   /// 结果留在触发操作的那一段卡片下方；失败另用错误描边的就地说明。
-  void _report(_Area area, String message, {bool failed = false}) {
+  void _report(SettingsArea area, String message, {bool failed = false}) {
     if (!mounted) return;
-    setState(() => _results[area] = _Result(message, failed: failed));
+    _notices.report(area, message, failed: failed);
   }
 
-  Widget? _resultFor(_Area area) {
-    final result = _results[area];
-    if (result == null) return null;
-    final theme = context.zhixin;
-    if (result.failed) return InlineNotice(message: result.message);
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm),
-      child: Text(result.message, style: theme.text.bodySmall),
-    );
-  }
+  Widget? _resultFor(SettingsArea area) => _notices.widgetFor(area);
 
   /// 保存模型配置：只存模型名、上下文上限与图片开关，先确认已经登录。
   Future<void> _saveConfig() async {
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final config = _formConfig();
+      final config = _form.read();
       await AppScope.of(context).settings.edit.saveConfig(config);
       if (!mounted) return;
-      setState(() => _applyConfig(config));
-      _report(_Area.model, '模型配置已保存，可以回到原来的讨论或题目重试');
+      setState(() => _form.apply(config));
+      _report(SettingsArea.model, '模型配置已保存，可以回到原来的讨论或题目重试');
     } on AccountSignedOut catch (error) {
       // 没有登录时先说明原因，再带着这次填的模型名去账号页；回来之后表单还在。
       if (!mounted) return;
-      _report(_Area.model, error.userMessage, failed: true);
+      _report(SettingsArea.model, error.userMessage, failed: true);
       await _openAccount();
     } catch (error, stack) {
       if (!mounted) return;
       _report(
-        _Area.model,
+        SettingsArea.model,
         describeFailure(
           context,
           error,
@@ -388,16 +336,16 @@ class _SettingsPageState extends State<SettingsPage> {
   Future<void> _testConfig() async {
     if (_busy) return;
     setState(() => _busy = true);
-    _report(_Area.model, '正在测试连接…');
+    _report(SettingsArea.model, '正在测试连接…');
     try {
       final duration = await AppScope.of(context).settings.edit
-          .testConfig(_formConfig());
+          .testConfig(_form.read());
       if (!mounted) return;
-      _report(_Area.model, '连接成功，用时 ${duration.inSeconds} 秒');
+      _report(SettingsArea.model, '连接成功，用时 ${duration.inSeconds} 秒');
     } on LlmException catch (error, stack) {
       if (!mounted) return;
       _report(
-        _Area.model,
+        SettingsArea.model,
         describeFailure(
           context,
           error,
@@ -414,7 +362,7 @@ class _SettingsPageState extends State<SettingsPage> {
     } catch (error, stack) {
       if (!mounted) return;
       _report(
-        _Area.model,
+        SettingsArea.model,
         describeFailure(
           context,
           error,
@@ -443,12 +391,12 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       await AppScope.of(context).settings.edit.clearConfig();
       if (!mounted) return;
-      setState(() => _applyConfig(null));
-      _report(_Area.model, '已恢复默认模型 ${LlmConfig.defaultModel}');
+      setState(() => _form.apply(null));
+      _report(SettingsArea.model, '已恢复默认模型 ${LlmConfig.defaultModel}');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
-        _Area.model,
+        SettingsArea.model,
         describeFailure(
           context,
           error,
@@ -475,10 +423,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _setDeveloperMode(bool enabled) async {
     if (_busy) return;
-    setState(() {
-      _busy = true;
-      _results.remove(_Area.developer);
-    });
+    setState(() => _busy = true);
+    _notices.clear(SettingsArea.developer);
     try {
       final scope = AppScope.of(context);
       await scope.accountServices.account.setDeveloperMode(enabled);
@@ -486,7 +432,7 @@ class _SettingsPageState extends State<SettingsPage> {
       setState(() => _developerMode = enabled);
       if (enabled) await _loadLocal(scope);
     } catch (_) {
-      _report(_Area.developer, '开发者模式设置未保存，请重试', failed: true);
+      _report(SettingsArea.developer, '开发者模式设置未保存，请重试', failed: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -501,7 +447,7 @@ class _SettingsPageState extends State<SettingsPage> {
     );
     if (!mounted || saved != true) return;
     await _loadLocal(scope);
-    _report(_Area.developer, '知新服务地址已保存');
+    _report(SettingsArea.developer, '知新服务地址已保存');
   }
 
   Future<void> _resetAll() async {
@@ -520,11 +466,11 @@ class _SettingsPageState extends State<SettingsPage> {
     try {
       await AppScope.of(context).settings.edit.resetAllData();
       if (!mounted) return;
-      _report(_Area.danger, '本机记录已清空');
+      _report(SettingsArea.danger, '本机记录已清空');
     } catch (error, stack) {
       if (!mounted) return;
       _report(
-        _Area.danger,
+        SettingsArea.danger,
         describeFailure(
           context,
           error,
@@ -549,7 +495,8 @@ class _SettingsPageState extends State<SettingsPage> {
       builder: (context, settings, loading) {
         // 首读期间保留标题栏，内容用与卡片同高的骨架占位；预读结果已经填过
         // 首屏时直接显示，设置项的订阅回来再补。
-        if (_loading || (loading && !_prewarmed && _loadFailure == null)) {
+        if (_loading ||
+            (loading && !_prewarmed && _notices.loadFailure == null)) {
           return DetailScaffold(
             header: const ZhixinHeader(title: Text('设置'), showBack: true),
             child: ListView(
@@ -578,15 +525,15 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 Expanded(child: Text('模型配置', style: theme.text.titleSmall)),
                 StatusTag(
-                  _config == null ? '默认模型' : '已自定义',
-                  tone: _config == null ? TagTone.muted : TagTone.accent,
+                  _form.config == null ? '默认模型' : '已自定义',
+                  tone: _form.config == null ? TagTone.muted : TagTone.accent,
                 ),
               ],
             ),
             SizedBox(height: theme.space.sm),
             Text(
               signedIn
-                  ? '当前模型为 ${_config?.model ?? LlmConfig.defaultModel}；请求发往知新服务。'
+                  ? '当前模型为 ${_form.config?.model ?? LlmConfig.defaultModel}；请求发往知新服务。'
                   : '登录后可以通过当前知新服务调用模型。',
               style: theme.text.bodySmall.copyWith(
                 color: theme.colors.onSurfaceVariant,
@@ -626,7 +573,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ],
             SizedBox(height: context.zhixin.space.gap),
             forui.FTextField(
-              control: .managed(controller: _model),
+              control: .managed(controller: _form.model),
               label: const Text('模型名'),
               description: const Text(
                 '留空使用 ${LlmConfig.defaultModel}，所选模型需要支持工具调用。',
@@ -634,7 +581,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
             SizedBox(height: context.zhixin.space.gap),
             forui.FTextField(
-              control: .managed(controller: _contextWindow),
+              control: .managed(controller: _form.contextWindow),
               keyboardType: TextInputType.number,
               label: const Text('模型上下文上限（token）'),
               description: const Text('按模型公布的上限填写，留空使用 65536。'),
@@ -643,8 +590,8 @@ class _SettingsPageState extends State<SettingsPage> {
             forui.FSwitch(
               label: const Text('允许上传题目图片'),
               description: const Text('请求提示、讲解或读图时发送当前图片。'),
-              value: _allowImages,
-              onChange: (value) => setState(() => _allowImages = value),
+              value: _form.allowImages,
+              onChange: (value) => setState(() => _form.setAllowImages(value)),
             ),
             SizedBox(height: context.zhixin.space.md),
             Wrap(
@@ -662,7 +609,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   onPress: _busy ? null : _testConfig,
                   child: const Text('测试连接'),
                 ),
-                if (_config != null)
+                if (_form.config != null)
                   forui.FButton(
                     variant: forui.FButtonVariant.ghost,
                     mainAxisSize: MainAxisSize.min,
@@ -686,8 +633,8 @@ class _SettingsPageState extends State<SettingsPage> {
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
-        if (_loadFailure != null)
-          InlineNotice(message: _loadFailure!, onRetry: _retry),
+        if (_notices.loadFailure != null)
+          InlineNotice(message: _notices.loadFailure!, onRetry: _retry),
         const SectionHeading(
           title: '学习',
           subtitle: '每天的截止时间与拍照方式影响记录与拍题。',
@@ -712,11 +659,11 @@ class _SettingsPageState extends State<SettingsPage> {
                       // 截止小时保存成一条提交，订阅随这次提交重读，界面不另外改值。
                       await AppScope.of(context).settings.edit
                           .saveCutoffHour(value);
-                      _report(_Area.learning, '每日截止时间已保存');
+                      _report(SettingsArea.learning, '每日截止时间已保存');
                     } catch (error, stack) {
                       if (!mounted || !context.mounted) return;
                       _report(
-                        _Area.learning,
+                        SettingsArea.learning,
                         describeFailure(
                           context,
                           error,
@@ -746,7 +693,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     } catch (error, stack) {
                       if (!mounted || !context.mounted) return;
                       _report(
-                        _Area.learning,
+                        SettingsArea.learning,
                         describeFailure(
                           context,
                           error,
@@ -770,7 +717,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        ?_resultFor(_Area.learning),
+        ?_resultFor(SettingsArea.learning),
         const SectionHeading(title: '外观', subtitle: '深浅色与主题色立即生效，只保存在本机。'),
         forui.FCard(
           child: Padding(
@@ -794,7 +741,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     } catch (error, stack) {
                       if (!mounted || !context.mounted) return;
                       _report(
-                        _Area.appearance,
+                        SettingsArea.appearance,
                         describeFailure(
                           context,
                           error,
@@ -812,7 +759,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     setState(() => _themeMode = value);
                   },
                 ),
-                const _CardDivider(),
+                const CardDivider(),
                 AccentPicker(
                   selected: AppScope.of(context).themeAccent.value,
                   onSelected: (accent) async {
@@ -821,7 +768,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     } catch (error, stack) {
                       if (!mounted || !context.mounted) return;
                       _report(
-                        _Area.appearance,
+                        SettingsArea.appearance,
                         describeFailure(
                           context,
                           error,
@@ -840,7 +787,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        ?_resultFor(_Area.appearance),
+        ?_resultFor(SettingsArea.appearance),
         const SectionHeading(
           title: '模型与索引',
           subtitle: '语义索引、服务地址与聊天模型；开发者模式默认关闭。',
@@ -866,7 +813,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        ?_resultFor(_Area.developer),
+        ?_resultFor(SettingsArea.developer),
         if (_developerMode == true) ...[
           SizedBox(height: theme.space.sm),
           forui.FTile(
@@ -890,7 +837,7 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           SizedBox(height: theme.space.md),
           _modelConfiguration(signedIn: signedIn),
-          ?_resultFor(_Area.model),
+          ?_resultFor(SettingsArea.model),
         ],
         const SectionHeading(title: '诊断与隐私'),
         forui.FCard(
@@ -918,11 +865,15 @@ class _SettingsPageState extends State<SettingsPage> {
                       if (!context.mounted) return;
                       setState(() => _reportCrashes = previous);
                       CrashLog.reportEnabled = previous;
-                      _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
+                      _report(
+                        SettingsArea.diagnostics,
+                        '设置没有保存，可以再试一次',
+                        failed: true,
+                      );
                     }
                   },
                 ),
-                const _CardDivider(),
+                const CardDivider(),
                 forui.FSwitch(
                   label: const Text('匿名使用统计'),
                   description: const Text(
@@ -939,7 +890,11 @@ class _SettingsPageState extends State<SettingsPage> {
                     } catch (_) {
                       if (!context.mounted) return;
                       setState(() => _reportUsage = previous);
-                      _report(_Area.diagnostics, '设置没有保存，可以再试一次', failed: true);
+                      _report(
+                        SettingsArea.diagnostics,
+                        '设置没有保存，可以再试一次',
+                        failed: true,
+                      );
                     }
                   },
                 ),
@@ -947,7 +902,7 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ),
         ),
-        ?_resultFor(_Area.diagnostics),
+        ?_resultFor(SettingsArea.diagnostics),
         SizedBox(height: theme.space.sm),
         forui.FTile(
           prefix: const LeadingIcon(FLucideIcons.shieldCheck),
@@ -972,7 +927,7 @@ class _SettingsPageState extends State<SettingsPage> {
               : const Icon(FLucideIcons.chevronRight),
           onPress: _busy || _checkingUpdates ? null : _checkUpdates,
         ),
-        ?_resultFor(_Area.updates),
+        ?_resultFor(SettingsArea.updates),
         const SectionHeading(title: '危险操作', subtitle: '清空之后无法撤销。'),
         forui.FTile(
           variant: forui.FItemVariant.destructive,
@@ -982,25 +937,8 @@ class _SettingsPageState extends State<SettingsPage> {
           suffix: const Icon(FLucideIcons.trash2),
           onPress: _busy ? null : _resetAll,
         ),
-        ?_resultFor(_Area.danger),
+        ?_resultFor(SettingsArea.danger),
       ],
-    );
-  }
-}
-
-/// 同一张卡片里两组设置之间的分隔线：左右与卡片内容对齐，上下留一档间距。
-class _CardDivider extends StatelessWidget {
-  const _CardDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.zhixin;
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: theme.space.md),
-      child: SizedBox(
-        height: 1,
-        child: ColoredBox(color: theme.colors.outlineVariant),
-      ),
     );
   }
 }

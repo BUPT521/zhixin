@@ -8,12 +8,12 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/memory_service.dart';
-import '../application/request_gate.dart';
 import '../domain/models/memory.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
 import 'memory_actions.dart';
 import 'navigation.dart';
+import 'search_state.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_menu.dart';
@@ -35,18 +35,28 @@ class MemorySearchPage extends StatefulWidget {
 class _MemorySearchPageState extends State<MemorySearchPage> {
   final TextEditingController _query = TextEditingController();
   final ScrollController _scroll = ScrollController();
-  final RequestGate _requests = RequestGate();
+
+  /// 本页的查找状态：请求序号、输入防抖、分页与结果都在这一份里。
+  final SearchState<Memory> _matches = SearchState<Memory>();
 
   MemoryKind? _kind;
   MemoryScopeFilter _scope = const MemoryScopeFilter.all();
   MemoryStatus _status = MemoryStatus.active;
 
-  MemorySearchResults? _results;
+  /// 范围标识到显示名的对应与本次条件的命中总数：服务随每页一起给出，页面
+  /// 只在取回结果时记下，用于条数与范围标签。
   Map<String, String> _scopeLabels = const {};
+  int? _matched;
+
+  /// 查找失败的就地说明；重试按当前条件重取第一页。
   String? _notice;
-  bool _loading = true;
-  bool _loadingMore = false;
   bool _started = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _matches.addListener(_onSearchChanged);
+  }
 
   @override
   void didChangeDependencies() {
@@ -55,16 +65,21 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
     _started = true;
     // 范围选项要读应用根上的目标与材料；读不到时仍可按其他条件查找。
     unawaited(_loadScopeOptions());
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_search());
-    });
+    // 第一页立即取，首帧就按读取中显示骨架，不先闪一下入口提示。
+    unawaited(_search());
   }
 
   @override
   void dispose() {
+    _matches.removeListener(_onSearchChanged);
+    _matches.dispose();
     _query.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadScopeOptions() async {
@@ -84,78 +99,67 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
     status: _status,
   );
 
-  /// 取第一页。查询或筛选变化时换一个编号，晚到的旧结果直接丢弃。
-  Future<void> _search() async {
-    final query = _queryCondition;
-    final requestId = _requests.start();
-    if (query.status == MemoryStatus.deleted) {
-      setState(() {
-        _results = null;
-        _notice = null;
-        _loading = false;
-        _loadingMore = false;
-      });
-      return;
-    }
-    setState(() {
-      _loading = true;
-      _loadingMore = false;
-      _notice = null;
-    });
-    try {
-      final results = await AppScope.of(context).memory.edit.search(query);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results;
-        _scopeLabels = results.scopeLabels;
-        _loading = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '查找记忆',
-          kind: 'memory_search',
-          kept: '屏幕上已经显示的记忆保持不变',
-          next: '可以点重试再找一次',
+  /// 按一组条件取一页：把服务返回值换成 [PagedResult]，范围名字与命中总数记在
+  /// 页面；失败说明在这里生成，保留原始调用栈。
+  ///
+  /// 结果晚到且条件已经换过时不写回范围名字与条数：新的第一页已经显示，旧的
+  /// 命中总数不能盖在它上面。
+  SearchPage<Memory> _pageFetcher(MemorySearchQuery query) {
+    return (offset) async {
+      final loadingMore = _matches.loadingMore;
+      try {
+        final results = await AppScope.of(context).memory.edit
+            .search(query, offset: offset, pageSize: kSearchPageSize);
+        if (query == _queryCondition) {
+          _scopeLabels = results.scopeLabels;
+          _matched = results.matched;
+        }
+        return PagedResult<Memory>(
+          items: results.memories,
+          hasMore: results.hasMore,
+          nextOffset: results.nextOffset,
+          total: results.matched,
         );
-      });
-    }
+      } catch (error, stack) {
+        if (mounted && query == _queryCondition) {
+          _notice = describeFailure(
+            context,
+            error,
+            stack,
+            action: loadingMore ? '继续读取记忆查找结果' : '查找记忆',
+            kind: loadingMore ? 'memory_search_page' : 'memory_search',
+            kept: loadingMore ? '已经显示的记忆没有改动' : '屏幕上已经显示的记忆保持不变',
+            next: loadingMore ? '可以再点一次“加载更多结果”' : '可以点重试再找一次',
+          );
+        }
+        rethrow;
+      }
+    };
+  }
+
+  /// 立即按当前条件重取第一页；筛选变化、重试与写入之后都走这里。
+  Future<void> _search() async {
+    _notice = null;
+    await _matches.refresh(
+      active: _status != MemoryStatus.deleted,
+      fetch: _pageFetcher(_queryCondition),
+    );
+  }
+
+  /// 输入变化：先按有条件的读取中显示，等输入停下来再查，只留最后一次。
+  void _onTextChanged(String _) {
+    _notice = null;
+    final query = _queryCondition;
+    _matches.onQueryChanged(
+      active: query.status != MemoryStatus.deleted,
+      fetch: _pageFetcher(query),
+    );
   }
 
   /// 接着向后取一页；过滤与排序已经在前一页完成，这里只追加新的条目。
   Future<void> _loadMore() async {
-    final results = _results;
-    if (results == null || !results.hasMore || _loading || _loadingMore) return;
-    final requestId = _requests.start();
-    setState(() => _loadingMore = true);
-    try {
-      final next = await AppScope.of(context).memory.edit
-          .search(results.query, offset: results.nextOffset);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results.append(next);
-        _loadingMore = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loadingMore = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '继续读取记忆查找结果',
-          kind: 'memory_search_page',
-          kept: '已经显示的记忆没有改动',
-          next: '可以再点一次“加载更多结果”',
-        );
-      });
-    }
+    _notice = null;
+    await _matches.loadMore();
   }
 
   /// 写入之后重取当前条件的第一页；撤销也从提示条走同一次重读。
@@ -171,7 +175,6 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
       _kind = null;
       _scope = const MemoryScopeFilter.all();
       _status = MemoryStatus.active;
-      _notice = null;
     });
     unawaited(_search());
   }
@@ -210,7 +213,7 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
               key: const ValueKey('memory-search-field'),
               control: .managed(
                 controller: _query,
-                onChange: (_) => unawaited(_search()),
+                onChange: (value) => _onTextChanged(value.text),
               ),
               textInputAction: TextInputAction.search,
               onSubmit: (_) => _search(),
@@ -218,7 +221,7 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
             ),
           ),
           _filters(theme),
-          if (_loading) const forui.FProgress(),
+          if (_matches.isLoading) const forui.FProgress(),
           if (_notice != null)
             Padding(
               padding: EdgeInsets.fromLTRB(
@@ -326,20 +329,23 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
       );
     }
 
-    final results = _results;
-    if (results == null) {
-      if (_loading) return const ListSkeleton(rows: 3);
-      return const SingleChildScrollView(
-        child: EmptyState(
-          icon: FLucideIcons.search,
-          title: '输入要查找的文字',
-          description: '可以按正文关键词、类别、适用范围与状态查找；查找只在本机完成，不调用模型。',
-        ),
-      );
+    final page = _matches.page;
+    if (page == null) {
+      if (_matches.isFailed || _matches.phase == SearchPhase.idle) {
+        return const SingleChildScrollView(
+          child: EmptyState(
+            icon: FLucideIcons.search,
+            title: '输入要查找的文字',
+            description: '可以按正文关键词、类别、适用范围与状态查找；查找只在本机完成，不调用模型。',
+          ),
+        );
+      }
+      return const ListSkeleton(rows: 3);
     }
 
-    if (results.isEmpty) {
-      if (results.query.isDefault) {
+    final query = _queryCondition;
+    if (page.isEmpty) {
+      if (query.isDefault) {
         return SingleChildScrollView(
           child: EmptyState(
             icon: FLucideIcons.brain,
@@ -363,14 +369,12 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
       );
     }
 
-    final showEnd =
-        !results.hasMore &&
-        results.memories.length >= MemoryService.searchPageSize;
+    final showEnd = !page.hasMore && page.length >= kSearchPageSize;
     return ListView(
       controller: _scroll,
       padding: theme.space.pageInsets(top: theme.space.xs),
       children: [
-        if (results.query.isDefault)
+        if (query.isDefault)
           Padding(
             padding: EdgeInsets.only(bottom: theme.space.sm),
             child: Text(
@@ -384,17 +388,17 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
           Padding(
             padding: EdgeInsets.only(bottom: theme.space.xs),
             child: Text(
-              '共 ${results.matched} 条命中',
+              '共 ${_matched ?? page.total ?? page.length} 条命中',
               style: theme.text.bodySmall.copyWith(
                 color: theme.colors.onSurfaceVariant,
               ),
             ),
           ),
-        for (final memory in results.memories) _tile(theme, memory),
-        if (results.hasMore)
+        for (final memory in page.items) _tile(theme, memory),
+        if (page.hasMore)
           LoadMoreFooter(
             label: '加载更多结果',
-            loading: _loadingMore,
+            loading: _matches.loadingMore,
             onPressed: _loadMore,
           )
         else if (showEnd)
@@ -409,9 +413,7 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
   /// 一条结果：正文片段、类别、来源与来源对象、有效期、状态，以及原有编辑入口。
   Widget _tile(ZhixinTheme theme, Memory memory) {
     final expired = !memory.isValidAt(AppScope.of(context).timePolicy.now);
-    final scope = memory.scope == null
-        ? null
-        : _scopeLabels[memory.scope] ?? '范围已删除';
+    final scope = memoryScopeOf(_scopeLabels, memory.scope);
     return Padding(
       padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(

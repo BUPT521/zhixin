@@ -46,7 +46,7 @@ class AboutPage extends StatelessWidget {
             textAlign: TextAlign.center,
             style: theme.text.bodyMedium,
           ),
-          Divider(height: theme.space.page, color: theme.colors.outlineVariant),
+          const CardDivider(),
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.fileText),
             title: const Text('开源许可'),
@@ -68,7 +68,7 @@ class AboutPage extends StatelessWidget {
             suffix: const Icon(FLucideIcons.chevronRight),
             onPress: () => _openHomepage(context),
           ),
-          Divider(height: theme.space.page, color: theme.colors.outlineVariant),
+          const CardDivider(),
           Text(
             '学习记录保存在本机；模型调用经登录后的知新服务发出，'
             '应用不保存密钥，费用由项目组承担。',
