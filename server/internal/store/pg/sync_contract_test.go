@@ -176,23 +176,23 @@ func TestPostgresRefs(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
-	ref, written, err := st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-1", Note: "备注", UpdatedAt: now})
-	if err != nil || !written || ref.CommitUID != "uid-1" || !ref.DeletedAt.IsZero() {
-		t.Fatalf("写入: %+v %v %v", ref, written, err)
+	ref, err := st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-1", Note: "备注", UpdatedAt: now})
+	if err != nil || ref.CommitUID != "uid-1" || !ref.DeletedAt.IsZero() {
+		t.Fatalf("写入: %+v %v", ref, err)
 	}
 	// 后写覆盖先写。
-	ref, written, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-2", UpdatedAt: now.Add(time.Minute)})
-	if err != nil || !written || ref.CommitUID != "uid-2" {
-		t.Fatalf("覆盖: %+v %v %v", ref, written, err)
+	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-2", UpdatedAt: now.Add(time.Minute)})
+	if err != nil || ref.CommitUID != "uid-2" {
+		t.Fatalf("覆盖: %+v %v", ref, err)
 	}
 	refs, err := st.Refs(ctx, "u1")
 	if err != nil || len(refs) != 1 || refs[0].CommitUID != "uid-2" || refs[0].Note != "" {
 		t.Fatalf("覆盖之后: %+v %v", refs, err)
 	}
 	// 删除留墓碑，返回写进去的那一行。
-	ref, written, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", UpdatedAt: now.Add(2 * time.Minute), DeletedAt: now.Add(2 * time.Minute)})
-	if err != nil || !written || ref.DeletedAt.IsZero() {
-		t.Fatalf("删除: %+v %v %v", ref, written, err)
+	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", UpdatedAt: now.Add(2 * time.Minute), DeletedAt: now.Add(2 * time.Minute)})
+	if err != nil || ref.DeletedAt.IsZero() {
+		t.Fatalf("删除: %+v %v", ref, err)
 	}
 	refs, err = st.Refs(ctx, "u1")
 	if err != nil || len(refs) != 1 || refs[0].DeletedAt.IsZero() {
@@ -200,24 +200,24 @@ func TestPostgresRefs(t *testing.T) {
 	}
 	deletedAt := refs[0].DeletedAt
 	// 比删除时间更早的写入不复活，返回原来的墓碑。
-	ref, written, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-late", UpdatedAt: deletedAt.Add(-time.Minute)})
-	if err != nil || written || ref.DeletedAt.IsZero() || ref.CommitUID != "" {
-		t.Fatalf("迟到的写入不应复活: %+v %v %v", ref, written, err)
+	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-late", UpdatedAt: deletedAt.Add(-time.Minute)})
+	if err != nil || ref.DeletedAt.IsZero() || ref.CommitUID != "" {
+		t.Fatalf("迟到的写入不应复活: %+v %v", ref, err)
 	}
 	if refs, err = st.Refs(ctx, "u1"); err != nil || refs[0].DeletedAt.IsZero() {
 		t.Fatalf("迟到的写入不应改变墓碑: %+v %v", refs, err)
 	}
-	ref, written, err = st.PutRef(ctx, "u1", syncsvc.Ref{
+	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{
 		Name: "第三章", CommitUID: "uid-late-offline", UpdatedAt: deletedAt.Add(time.Minute),
 		SourceUpdatedAt: deletedAt.Add(-time.Minute),
 	})
-	if err != nil || written || ref.DeletedAt.IsZero() {
-		t.Fatalf("晚到的离线旧编辑不应复活: %+v %v %v", ref, written, err)
+	if err != nil || ref.DeletedAt.IsZero() {
+		t.Fatalf("晚到的离线旧编辑不应复活: %+v %v", ref, err)
 	}
 	// 删除之后的写入复活，墓碑清空。
-	ref, written, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-revived", UpdatedAt: deletedAt.Add(time.Minute)})
-	if err != nil || !written || !ref.DeletedAt.IsZero() || ref.CommitUID != "uid-revived" {
-		t.Fatalf("删除之后的写入应复活: %+v %v %v", ref, written, err)
+	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-revived", UpdatedAt: deletedAt.Add(time.Minute)})
+	if err != nil || !ref.DeletedAt.IsZero() || ref.CommitUID != "uid-revived" {
+		t.Fatalf("删除之后的写入应复活: %+v %v", ref, err)
 	}
 	refs, err = st.Refs(ctx, "u1")
 	if err != nil || len(refs) != 1 || !refs[0].DeletedAt.IsZero() || refs[0].CommitUID != "uid-revived" {
@@ -225,12 +225,11 @@ func TestPostgresRefs(t *testing.T) {
 	}
 	// 上限：填满 200 个未删除的名字之后再写新的名字会被拒绝。
 	for i := 0; ; i++ {
-		_, written, err = st.PutRef(ctx, "u1", syncsvc.Ref{
+		_, err = st.PutRef(ctx, "u1", syncsvc.Ref{
 			Name: "版本-" + intText(i), CommitUID: "uid-fill",
 			UpdatedAt: now.Add(time.Duration(i+10) * time.Millisecond),
 		})
-
-		if errors.Is(err, syncsvc.ErrRefLimit) || !written {
+		if errors.Is(err, syncsvc.ErrRefLimit) {
 			break
 		}
 		if err != nil {
@@ -240,11 +239,11 @@ func TestPostgresRefs(t *testing.T) {
 			t.Fatal("没有在 300 次之内碰到上限")
 		}
 	}
-	ref, written, err = st.PutRef(ctx, "u1", syncsvc.Ref{
+	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{
 		Name: "第三章", CommitUID: "uid-existing", UpdatedAt: deletedAt.Add(2 * time.Minute),
 	})
-	if err != nil || !written || ref.CommitUID != "uid-existing" {
-		t.Fatalf("达到上限仍可更新已有名字: %+v %v %v", ref, written, err)
+	if err != nil || ref.CommitUID != "uid-existing" {
+		t.Fatalf("达到上限仍可更新已有名字: %+v %v", ref, err)
 	}
 	// 清空云端数据把整表清掉，墓碑一并清掉。
 	if err := st.Reset(ctx, "u1"); err != nil {

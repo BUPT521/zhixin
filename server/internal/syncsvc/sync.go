@@ -227,19 +227,17 @@ type Store interface {
 	// Refs lists every named ref of the account, tombstones included.
 	Refs(ctx context.Context, userID string) ([]Ref, error)
 	// PutRef stores one named ref or its tombstone and returns the row that is
-	// stored afterwards together with whether this call wrote it. A write older
-	// than the stored deletion time does not revive the name; it returns the
-	// existing tombstone and false. ErrRefLimit is returned when a new name
-	// would exceed the per-account limit.
-	PutRef(ctx context.Context, userID string, ref Ref) (Ref, bool, error)
+	// stored afterwards. A write older than the stored deletion time does not
+	// revive the name; it returns the existing tombstone. ErrRefLimit is
+	// returned when a new name would exceed the per-account limit.
+	PutRef(ctx context.Context, userID string, ref Ref) (Ref, error)
 }
 
-// AppendResult 是一次推送的结果：调用之后的 head、与请求逐条对应的序号，以及
-// 这批提交里有没有服务端新写入的。整批重放时 Fresh 为假，设备位置只按 base 推进。
+// AppendResult 是一次推送的结果：调用之后的 head，以及与请求逐条对应的序号。
+// 整批重放时序号都是原来的，设备位置只按 base 推进。
 type AppendResult struct {
-	Head  int64
-	Seqs  []int64
-	Fresh bool
+	Head int64
+	Seqs []int64
 }
 
 // DeviceClaim 是一次推送携带的设备标识与快照能力。请求没有可用的设备标识时不留
@@ -455,7 +453,7 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 	// 名册与提交序列在同一次写入里更新：推送成功之后不再单独补写设备行，
 	// 也不再用序号比较猜测有没有新提交（ADR-0048、ADR-0054）。
 	l.applyDeviceRoster(roster, base, l.head(), true, received.UTC())
-	return AppendResult{Head: l.head(), Seqs: plan.Seqs, Fresh: true}, nil
+	return AppendResult{Head: l.head(), Seqs: plan.Seqs}, nil
 }
 
 func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error) {
@@ -729,22 +727,16 @@ func (m *MemoryStore) Refs(_ context.Context, userID string) ([]Ref, error) {
 }
 
 // PutRef 写入一个命名版本：后写覆盖先写，写入时间不晚于已存删除时间时不复活；
-// 返回写入之后存储里的那一行，以及这次调用有没有改动它。新增一个未删除的名字
-// 会超过上限时返回 ErrRefLimit。
-func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (Ref, bool, error) {
+// 返回写入之后存储里的那一行。新增一个未删除的名字会超过上限时返回 ErrRefLimit。
+func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (Ref, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
 	current, exists := l.refs[ref.Name]
-	revives := true
-
 	if exists && !current.DeletedAt.IsZero() &&
 		(!ref.DeletedAt.IsZero() || !ref.SourceTime().After(current.DeletedAt)) {
 		// 名字已经是墓碑，而这次写入不晚于删除时间：不复活，也不改变已存的行。
-		revives = false
-	}
-	if !revives {
-		return current, false, nil
+		return current, nil
 	}
 	// 写入一个名字会新增一个未删除的名字：原来的行不存在或已经是墓碑时都要看上限。
 	if ref.DeletedAt.IsZero() && (!exists || !current.DeletedAt.IsZero()) {
@@ -755,11 +747,11 @@ func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (Ref, bo
 			}
 		}
 		if alive >= MaxRefsPerAccount {
-			return Ref{}, false, ErrRefLimit
+			return Ref{}, ErrRefLimit
 		}
 	}
 	l.refs[ref.Name] = ref
-	return ref, true, nil
+	return ref, nil
 }
 
 // SplitCapabilities 把逗号分隔的能力声明解析成小写名字：去首尾空白、丢掉空项、

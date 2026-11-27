@@ -497,7 +497,7 @@ func (s *Service) PutRef(ctx context.Context, userID string, in api.SyncRefWrite
 	}
 	// 存储返回写入之后的那一行：不复活时它仍是已存的墓碑，写入失败时按错误返回，
 	// 这里不再重读整份命名版本去找这一行。
-	ref, _, err := s.store.PutRef(ctx, userID, write)
+	ref, err := s.store.PutRef(ctx, userID, write)
 	if err != nil {
 		return Ref{}, err
 	}
