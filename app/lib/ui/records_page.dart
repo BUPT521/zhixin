@@ -24,6 +24,7 @@ import 'live_view.dart';
 import 'materials_list.dart';
 import 'navigation.dart';
 import 'question_capture_button.dart';
+import 'search_state.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';
@@ -110,7 +111,12 @@ class _RecordsPageState extends State<RecordsPage>
   /// （ADR-0014）；继续读取的页仍按屏幕上的入口逐页追加。
   Stream<RecordsView>? _stream;
   RecordsView? _view;
-  List<ConversationRecord> _older = const [];
+
+  /// 继续读取的页；第一页由订阅带回，这里只保存接着往后读到的记录。
+  ///
+  /// 追加与按键去重交给 [PagedResult]，屏幕上的一列由第一页接上它得到。
+  PagedResult<ConversationRecord> _older =
+      const PagedResult<ConversationRecord>();
   Map<String, QuestionRow> _olderQuestions = const {};
   Map<String, List<Assessment>> _olderAssessments = const {};
   bool _hasMore = false;
@@ -126,12 +132,9 @@ class _RecordsPageState extends State<RecordsPage>
   List<ConversationRecord> get _records {
     final first = _view?.records ?? const <ConversationRecord>[];
     if (_older.isEmpty) return first;
-    final seen = {for (final record in first) record.id};
-    return [
-      ...first,
-      for (final record in _older)
-        if (seen.add(record.id)) record,
-    ];
+    return PagedResult<ConversationRecord>(items: first)
+        .append(_older, key: (record) => record.id)
+        .items;
   }
 
   Map<String, QuestionRow> get _questions => {
@@ -207,7 +210,7 @@ class _RecordsPageState extends State<RecordsPage>
   /// 重新订阅第一页：筛选变了与右上角的刷新按钮都走这里。
   void _reload() {
     setState(() {
-      _older = const [];
+      _older = const PagedResult<ConversationRecord>();
       _olderQuestions = const {};
       _olderAssessments = const {};
       _hasMore = false;
@@ -359,10 +362,17 @@ class _RecordsPageState extends State<RecordsPage>
       );
       if (!mounted) return;
       setState(() {
-        _older = [..._older, ...page.records];
+        _older = _older.append(
+          PagedResult<ConversationRecord>(
+            items: page.records,
+            hasMore: page.records.length == _pageSize,
+            nextOffset: offset + page.records.length,
+          ),
+          key: (record) => record.id,
+        );
+        _hasMore = _older.hasMore;
         _olderQuestions = {..._olderQuestions, ...page.questions};
         _olderAssessments = {..._olderAssessments, ...page.assessments};
-        _hasMore = page.records.length == _pageSize;
         _loadingMore = false;
       });
     } catch (error, stack) {

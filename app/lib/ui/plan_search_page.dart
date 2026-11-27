@@ -9,13 +9,13 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/plan_search.dart';
 import '../application/prefetch_service.dart';
-import '../application/request_gate.dart';
 import '../domain/models/study.dart';
 import '../domain/rules/time_policy.dart' show naturalDay;
 import 'date_time_dialogs.dart';
 import 'failure_feedback.dart';
 import 'format.dart';
 import 'navigation.dart';
+import 'search_state.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
@@ -26,8 +26,8 @@ import 'zhixin_toast.dart';
 /// 关键词匹配事项标题与说明；目标按编号、状态按 [PlanItemStatus] 筛；日期用
 /// 日期按事项的截止日期筛选。
 /// 结果按时间从晚到早排，分页继续加载，超过四十条时也能翻到最早一条；查询
-/// 全部在本机完成，断网或没有配置模型时同样可用。查询或筛选变化只显示最后
-/// 一次请求的结果（[RequestGate]）。
+/// 全部在本机完成，断网或没有配置模型时同样可用。第一页、翻页与请求序号由共用的
+/// [SearchState] 负责，查询与筛选条件留在页面上，换条件时发起一次新的查找。
 class PlanSearchPage extends StatefulWidget {
   const PlanSearchPage({super.key, this.search});
 
@@ -43,14 +43,21 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
   final FocusNode _searchFocus = FocusNode();
   final ScrollController _scroll = ScrollController();
 
-  /// 每次查询或筛选变化都换一个编号，晚到的旧结果直接丢弃。
-  final RequestGate _requests = RequestGate();
+  /// 查找的共用状态：请求序号、结果、翻页与空态都由它保存。
+  late final SearchState<PlanSearchHit> _searchState =
+      SearchState<PlanSearchHit>(
+        pageSize: kSearchPageSize,
+        key: (hit) => hit.id,
+      );
 
-  PlanSearchPageResult? _results;
-  PlanSearchQuery _applied = const PlanSearchQuery();
-  bool _loading = false;
-  bool _loadingMore = false;
+  /// 最近一次失败时的说明；第一页失败显示在结果区，翻页失败留在列表上方。
   String? _notice;
+
+  /// 失败时的调用栈，交给 `describeFailure` 写进本机诊断记录。
+  StackTrace? _failureStack;
+
+  /// 屏幕上这一份结果对应的条件；空态里写的就是它。
+  PlanSearchQuery _applied = const PlanSearchQuery();
 
   /// 目标筛选的编号；空串表示全部目标。
   String _goalId = '';
@@ -59,6 +66,17 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
 
   List<LearningGoal> _goals = const [];
   bool _optionsRequested = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchState.addListener(_onSearchStateChanged);
+  }
+
+  /// 共用状态每次变化（开始读、读完、翻页、失败）都重画一次。
+  void _onSearchStateChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void didChangeDependencies() {
@@ -71,6 +89,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
 
   @override
   void dispose() {
+    _searchState.dispose();
     _keyword.dispose();
     _searchFocus.dispose();
     _scroll.dispose();
@@ -100,78 +119,83 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
     day: _day,
   );
 
-  /// 一次查找：换编号，只有最后一次请求能写入页面。
+  /// 一次查找：换一个请求序号，晚到的旧结果由共用状态丢弃。
   Future<void> _search() async {
     final query = _currentQuery;
-    final requestId = _requests.start();
+    _notice = null;
     if (query.isEmpty) {
-      setState(() {
-        _results = null;
-        _applied = query;
-        _loading = false;
-        _loadingMore = false;
-        _notice = null;
-      });
+      _applied = query;
+      _searchState.clear();
       return;
     }
-    setState(() {
-      _loading = true;
-      _loadingMore = false;
-      _notice = null;
-    });
+    await _searchState.refresh(
+      active: true,
+      fetch: (offset) => _fetchPage(query, offset),
+    );
+    if (!mounted) return;
+    // 成功时记下这一份结果对应的条件，空态与“已经到最后一条”都按它说明。
+    if (_searchState.phase == SearchPhase.ready) _applied = query;
+    _reportFailure(
+      '查找安排',
+      kind: 'plan_search_read',
+      kept: '已经保存的安排没有改动',
+      next: '可以再查一次',
+    );
+  }
+
+  /// 取一页结果：把服务返回的 `PlanSearchPageResult` 转成共用的分页结果。
+  ///
+  /// 失败时记下调用栈再抛出，页面上的说明由 [describeFailure] 生成。
+  Future<PagedResult<PlanSearchHit>> _fetchPage(
+    PlanSearchQuery query,
+    int offset,
+  ) async {
     try {
-      final page = await _runSearch(query, offset: 0);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = page;
-        _applied = query;
-        _loading = false;
-      });
+      final result = await _runSearch(query, offset: offset);
+      return PagedResult(
+        items: result.hits,
+        hasMore: result.hasMore,
+        nextOffset: result.nextOffset,
+      );
     } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '查找安排',
-          kind: 'plan_search_read',
-          kept: '已经保存的安排没有改动',
-          next: '可以再查一次',
-        );
-      });
+      _failureStack = stack;
+      rethrow;
     }
   }
 
-  /// 接着向后取一页；排序与去重已经在前一页完成，这里只追加新结果。
+  /// 第一页或翻页失败时把原始错误转成一句说明。
+  void _reportFailure(
+    String action, {
+    required String kind,
+    required String kept,
+    required String next,
+  }) {
+    if (!mounted) return;
+    final error = _searchState.error;
+    if (error == null) return;
+    setState(
+      () => _notice = describeFailure(
+        context,
+        error,
+        _failureStack ?? StackTrace.current,
+        action: action,
+        kind: kind,
+        kept: kept,
+        next: next,
+      ),
+    );
+  }
+
+  /// 接着向后取一页；已经显示的结果在失败时保持不变。
   Future<void> _loadMore() async {
-    final results = _results;
-    if (results == null || !results.hasMore || _loadingMore) return;
-    final requestId = _requests.start();
-    setState(() => _loadingMore = true);
-    try {
-      final next = await _runSearch(results.query, offset: results.nextOffset);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results.append(next);
-        _loadingMore = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loadingMore = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '继续读取查找结果',
-          kind: 'plan_search_page',
-          kept: '已经显示的结果没有改动',
-          next: '可以再点一次“加载更多结果”',
-        );
-      });
-    }
+    await _searchState.loadMore();
+    if (!mounted || !_searchState.loadMoreFailed) return;
+    _reportFailure(
+      '继续读取查找结果',
+      kind: 'plan_search_page',
+      kept: '已经显示的结果没有改动',
+      next: '可以再点一次“加载更多结果”',
+    );
   }
 
   Future<PlanSearchPageResult> _runSearch(
@@ -180,7 +204,8 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
   }) {
     final injected = widget.search;
     if (injected != null) return injected(query, offset: offset);
-    return AppScope.of(context).study.plan.searchPage(query, offset: offset);
+    return AppScope.of(context).study.plan
+        .searchPage(query, offset: offset, pageSize: _searchState.pageSize);
   }
 
   /// 筛选一改就重查；全部条件清空时回到入口提示。
@@ -227,7 +252,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final results = _results;
+    final state = _searchState;
     return DetailScaffold(
       header: const ZhixinHeader(title: Text('查找安排'), showBack: true),
       child: Column(
@@ -252,8 +277,10 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
             ),
           ),
           _filterBar(theme),
-          if (_loading) const forui.FProgress(),
-          if (_notice != null)
+          if (state.isLoading) const forui.FProgress(),
+          // 翻页失败时结果仍在屏幕上，说明放在列表上方；第一页失败的说明进
+          // 结果区。
+          if (_notice != null && !state.isFailed)
             Padding(
               padding: EdgeInsets.fromLTRB(
                 theme.space.page,
@@ -261,9 +288,9 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
                 theme.space.page,
                 0,
               ),
-              child: InlineNotice(message: _notice!, onRetry: _search),
+              child: InlineNotice(message: _notice!),
             ),
-          Expanded(child: _resultsArea(theme, results)),
+          Expanded(child: _resultsArea(theme)),
         ],
       ),
     );
@@ -496,9 +523,17 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
     return parts.isEmpty ? '' : parts.join('，');
   }
 
-  Widget _resultsArea(ZhixinTheme theme, PlanSearchPageResult? results) {
-    if (results == null) {
-      if (_loading) {
+  Widget _resultsArea(ZhixinTheme theme) {
+    final state = _searchState;
+    // 第一页读取失败：说明占结果区。
+    if (state.isFailed) {
+      return SingleChildScrollView(
+        padding: theme.space.pageInsets(top: theme.space.xs),
+        child: InlineNotice(message: _notice ?? '查找没有完成，可以再查一次。'),
+      );
+    }
+    if (state.page == null) {
+      if (state.isLoading) {
         return ListSkeleton(
           rows: 3,
           padding: theme.space.pageInsets(top: theme.space.xs),
@@ -514,9 +549,9 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
         ),
       );
     }
-    if (results.isEmpty) {
+    if (state.items.isEmpty) {
       // 新的条件还在读时保留上一份结果，空态等这次读完再判断。
-      if (_loading) return const SizedBox.shrink();
+      if (state.isLoading) return const SizedBox.shrink();
       return SingleChildScrollView(
         child: EmptyState(
           icon: FLucideIcons.searchX,
@@ -534,17 +569,16 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
       );
     }
     // 结果不足一页时不写“已经到最后一条”，免得刚查完就多一行结束语。
-    final showEnd =
-        !results.hasMore && results.hits.length >= planSearchPageSize;
+    final showEnd = !state.hasMore && state.items.length >= kSearchPageSize;
     return ListView(
       controller: _scroll,
       padding: theme.space.pageInsets(top: theme.space.xs),
       children: [
-        for (final hit in results.hits) _hitTile(theme, hit),
-        if (results.hasMore)
+        for (final hit in state.items) _hitTile(theme, hit),
+        if (state.hasMore)
           LoadMoreFooter(
             label: '加载更多结果',
-            loading: _loadingMore,
+            loading: state.loadingMore,
             onPressed: _loadMore,
           )
         else if (showEnd)

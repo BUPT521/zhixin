@@ -6,7 +6,6 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/prefetch_service.dart';
-import '../application/request_gate.dart';
 import '../application/search_service.dart';
 import '../application/search_index_service.dart';
 import '../domain/models/evidence.dart';
@@ -15,6 +14,7 @@ import '../domain/models/study.dart';
 import '../domain/models/material.dart';
 import 'failure_feedback.dart';
 import 'navigation.dart';
+import 'search_state.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
@@ -26,6 +26,9 @@ import 'zhixin_icon_button.dart';
 /// 决定，两者不共用。原文与关键词查找不调用网络，断网或没有配置模型时同样
 /// 可用；用户按下“按意思找”之后才请求嵌入服务，语义命中与本地结果按名次
 /// 融合成同一份记录列表。
+///
+/// 第一页、翻页、请求序号与空态都由共用的 [SearchState] 负责，页面只给取页函数
+/// 与行渲染；条件留在页面上，换条件或换范围时发起一次新的查找。
 class RecordsSearchPage extends StatefulWidget {
   const RecordsSearchPage({
     super.key,
@@ -47,16 +50,24 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   final TextEditingController _query = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
   final ScrollController _scroll = ScrollController();
-  SearchResults? _results;
-  bool _loading = false;
-  bool _loadingMore = false;
+
+  /// 查找的共用状态：请求序号、结果、翻页与空态都由它保存。
+  late final SearchState<SearchEntry> _searchState = SearchState<SearchEntry>(
+    pageSize: kSearchPageSize,
+    key: (entry) => entry.key,
+  );
+
+  /// 最近一次失败时的说明；第一页失败显示在结果区，翻页失败留在列表上方。
   String? _notice;
+
+  /// 失败时的调用栈，交给 `describeFailure` 写进本机诊断记录。
+  StackTrace? _failureStack;
+
+  /// 这一份结果对应的条件；空态标题与翻页都用它，查询条件留在页面上。
+  String _appliedQuery = '';
+
   EvidenceScope _scope = const EvidenceScope.userAll();
   bool _scopeMenuOpen = false;
-
-  /// 每次查询或筛选变化都换一个编号，晚到的旧结果直接丢弃。
-  final RequestGate _requests = RequestGate();
-  String _appliedQuery = '';
 
   /// 本次融合使用的语义命中；查询或范围变化时清空，需要重新按。
   List<EvidenceHit> _semanticHits = const [];
@@ -74,9 +85,15 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   @override
   void initState() {
     super.initState();
+    _searchState.addListener(_onSearchStateChanged);
     // 输入框在页面推入的过渡结束后再取焦点。过渡期间用户先点了“查找范围”，
     // 菜单已经打开，这时再弹键盘会盖住菜单，所以跳过这一次聚焦。
     WidgetsBinding.instance.addPostFrameCallback((_) => _focusSearchField());
+  }
+
+  /// 共用状态每次变化（开始读、读完、翻页、失败）都重画一次。
+  void _onSearchStateChanged() {
+    if (mounted) setState(() {});
   }
 
   Future<void> _focusSearchField() async {
@@ -97,6 +114,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   @override
   void dispose() {
+    _searchState.dispose();
     _semanticToken?.cancel();
     _query.dispose();
     _searchFocus.dispose();
@@ -139,53 +157,75 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     _semanticAttempted = false;
   }
 
+  /// 一次查找：换一个请求序号，晚到的旧结果由共用状态丢弃。
   Future<void> _search(String text) async {
     final query = text.trim();
-    final requestId = _requests.start();
     _cancelSemantic();
+    _notice = null;
+    _appliedQuery = query;
     if (query.isEmpty) {
-      setState(() {
-        _results = null;
-        _notice = null;
-        _appliedQuery = '';
-        _loading = false;
-        _loadingMore = false;
-      });
+      _searchState.clear();
       return;
     }
-    setState(() {
-      _loading = true;
-      _loadingMore = false;
-      _notice = null;
-    });
+    await _searchState.refresh(
+      active: true,
+      fetch: (offset) => _fetchPage(query, offset),
+    );
+    if (!mounted) return;
+    _reportFailure(
+      '搜索本机记录',
+      kind: 'search_read',
+      kept: '已经保存的记录没有改动',
+      next: '可以再搜一次',
+    );
+  }
+
+  /// 取一页结果：把服务返回的 `SearchResults` 转成共用的分页结果。
+  ///
+  /// 失败时记下调用栈再抛出，页面上的说明由 [describeFailure] 生成。
+  Future<PagedResult<SearchEntry>> _fetchPage(String query, int offset) async {
     try {
       final results = await AppScope.of(context).library.search.searchPage(
         query,
         scope: _scope,
-        pageSize: SearchService.defaultPageSize,
+        offset: offset,
+        pageSize: _searchState.pageSize,
+        semanticHits: _semanticHits,
       );
-      // 快速切换查询或筛选时，只有最后一次请求能写入页面。
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results;
-        _appliedQuery = query;
-        _loading = false;
-      });
+      return PagedResult(
+        items: results.entries,
+        hasMore: results.hasMore,
+        nextOffset: results.nextOffset,
+      );
     } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '搜索本机记录',
-          kind: 'search_read',
-          kept: '已经保存的记录没有改动',
-          next: '可以再搜一次',
-        );
-      });
+      _failureStack = stack;
+      rethrow;
     }
+  }
+
+  /// 第一页或翻页失败时把原始错误转成一句说明。
+  ///
+  /// [SearchState] 只保存错误本身，说明与诊断记录仍由页面生成。
+  void _reportFailure(
+    String action, {
+    required String kind,
+    required String kept,
+    required String next,
+  }) {
+    if (!mounted) return;
+    final error = _searchState.error;
+    if (error == null) return;
+    setState(
+      () => _notice = describeFailure(
+        context,
+        error,
+        _failureStack ?? StackTrace.current,
+        action: action,
+        kind: kind,
+        kept: kept,
+        next: next,
+      ),
+    );
   }
 
   /// 先取语义命中，再以同一份命中重查第一页；本地结果在等待期间保持不动。
@@ -241,75 +281,31 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
 
   /// 用已经取回的语义命中重查第一页，整表按融合顺序刷新。
   Future<void> _reloadFused(String query) async {
-    final requestId = _requests.start();
-    setState(() {
-      _loading = true;
-      _loadingMore = false;
-    });
-    try {
-      final results = await AppScope.of(context).library.search.searchPage(
-        query,
-        scope: _scope,
-        pageSize: SearchService.defaultPageSize,
-        semanticHits: _semanticHits,
-      );
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results;
-        _appliedQuery = query;
-        _loading = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loading = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '合并按意思找到的结果',
-          kind: 'search_fusion',
-          kept: '已经显示的记录没有改动',
-          next: '可以再按一次“按意思找”',
-        );
-      });
-    }
+    _appliedQuery = query;
+    _notice = null;
+    await _searchState.refresh(
+      active: true,
+      fetch: (offset) => _fetchPage(query, offset),
+    );
+    if (!mounted) return;
+    _reportFailure(
+      '合并按意思找到的结果',
+      kind: 'search_fusion',
+      kept: '已经显示的记录没有改动',
+      next: '可以再按一次“按意思找”',
+    );
   }
 
-  /// 接着向后取一页；排序与去重已经在前一页完成，这里只追加新记录。
+  /// 接着向后取一页；已经显示的记录在失败时保持不变。
   Future<void> _loadMore() async {
-    final results = _results;
-    if (results == null || !results.hasMore || _loadingMore) return;
-    final requestId = _requests.start();
-    setState(() => _loadingMore = true);
-    try {
-      final next = await AppScope.of(context).library.search.searchPage(
-        _appliedQuery,
-        scope: _scope,
-        offset: results.nextOffset,
-        pageSize: SearchService.defaultPageSize,
-        semanticHits: _semanticHits,
-      );
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results.append(next);
-        _loadingMore = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loadingMore = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '继续读取查找结果',
-          kind: 'search_page',
-          kept: '已经显示的记录没有改动',
-          next: '可以再点一次“加载更多结果”',
-        );
-      });
-    }
+    await _searchState.loadMore();
+    if (!mounted || !_searchState.loadMoreFailed) return;
+    _reportFailure(
+      '继续读取查找结果',
+      kind: 'search_page',
+      kept: '已经显示的记录没有改动',
+      next: '可以再点一次“加载更多结果”',
+    );
   }
 
   /// 把这一条来源加入下一次回答；只保存在应用根上，不写进记录。
@@ -446,7 +442,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final results = _results;
+    final state = _searchState;
     return PopScope<void>(
       canPop: !_scopeMenuOpen,
       onPopInvokedWithResult: (didPop, _) {
@@ -478,7 +474,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
               ),
             ),
             _searchControls(theme),
-            if (_loading) const forui.FProgress(),
+            if (state.isLoading) const forui.FProgress(),
             if (AppScope.of(context).broughtSources.length > 0)
               Padding(
                 padding: EdgeInsets.fromLTRB(
@@ -516,7 +512,9 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
                   ],
                 ),
               ),
-            if (_notice != null)
+            // 翻页失败时结果仍在屏幕上，说明放在列表上方；第一页失败的说明进
+            // 结果区，避免整页只剩一条说明和一个空列表。
+            if (_notice != null && !state.isFailed)
               Padding(
                 padding: EdgeInsets.fromLTRB(
                   theme.space.page,
@@ -526,7 +524,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
                 ),
                 child: InlineNotice(message: _notice!),
               ),
-            Expanded(child: _resultsArea(theme, results)),
+            Expanded(child: _resultsArea(theme)),
           ],
         ),
       ),
@@ -586,8 +584,16 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     );
   }
 
-  Widget _resultsArea(ZhixinTheme theme, SearchResults? results) {
-    if (results == null) {
+  Widget _resultsArea(ZhixinTheme theme) {
+    final state = _searchState;
+    // 第一页读取失败：说明占结果区，已经显示的记录已经清空，入口仍在上方。
+    if (state.isFailed) {
+      return SingleChildScrollView(
+        padding: theme.space.pageInsets(top: theme.space.xs),
+        child: InlineNotice(message: _notice ?? '查找没有完成，可以再搜一次。'),
+      );
+    }
+    if (state.page == null) {
       return SingleChildScrollView(
         child: EmptyState(
           icon: FLucideIcons.search,
@@ -596,14 +602,14 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
         ),
       );
     }
-    if (results.isEmpty) {
+    if (state.items.isEmpty) {
       // “按意思找”还在进行时本地可能暂时为空，空态等这一步结束再判断。
       if (_semanticLoading) return const SizedBox.shrink();
       final scoped = _scope.kind != EvidenceScopeKind.all;
       return SingleChildScrollView(
         child: EmptyState(
           icon: FLucideIcons.searchX,
-          title: '没有找到「${results.query}」',
+          title: '没有找到「$_appliedQuery」',
           description: scoped
               ? '当前只在$_scopeLabel里查找；可以改回本机全部记录再试。'
               : '可以换一段原句，或换几个关键词再试。',
@@ -619,18 +625,16 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
       );
     }
     // 结果不足一页时不写“已经到最后一条”，免得刚搜完就多一行无关的结束语。
-    final showEnd =
-        !results.hasMore &&
-        results.entries.length >= SearchService.defaultPageSize;
+    final showEnd = !state.hasMore && state.items.length >= kSearchPageSize;
     return ListView(
       controller: _scroll,
       padding: theme.space.pageInsets(top: theme.space.xs),
       children: [
-        for (final entry in results.entries) _entryTile(theme, entry),
-        if (results.hasMore)
+        for (final entry in state.items) _entryTile(theme, entry),
+        if (state.hasMore)
           LoadMoreFooter(
             label: '加载更多结果',
-            loading: _loadingMore,
+            loading: state.loadingMore,
             onPressed: _loadMore,
           )
         else if (showEnd)
