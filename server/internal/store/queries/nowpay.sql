@@ -105,6 +105,32 @@ WHERE id IN (
 -- name: ChargeStatusCounts :many
 SELECT status, count(*)::bigint AS count FROM nowpay_charge GROUP BY status ORDER BY status;
 
+-- 每个账号的已结算计费量与核销流水分别汇总，避免用途、密钥与流水的多行相乘。
+-- name: DailyChargeReconciliation :many
+WITH usage AS (
+  SELECT user_id,
+         SUM(CASE WHEN kind = 'embedding' THEN embedding_billed_tokens ELSE tokens END)::bigint AS settled_tokens
+  FROM llm_usage
+  WHERE day = sqlc.arg(day)::date
+  GROUP BY user_id
+), charges AS (
+  SELECT user_id,
+         SUM(points) FILTER (WHERE status <> 'failed')::bigint AS applied,
+         SUM(points) FILTER (WHERE status = 'succeeded')::bigint AS charged
+  FROM nowpay_charge
+  WHERE day = sqlc.arg(day)::date AND user_id IS NOT NULL
+  GROUP BY user_id
+)
+SELECT usage.user_id, usage.settled_tokens,
+       COALESCE(quota.daily_tokens, sqlc.arg(default_daily_tokens)::bigint)::bigint AS daily_tokens,
+       COALESCE(charges.applied, 0)::bigint AS applied,
+       COALESCE(charges.charged, 0)::bigint AS charged
+FROM usage
+LEFT JOIN llm_quota AS quota USING (user_id)
+LEFT JOIN charges USING (user_id)
+WHERE quota.daily_tokens IS NOT NULL OR sqlc.arg(default_daily_tokens)::bigint > 0
+ORDER BY usage.user_id;
+
 -- 落核销状态并返回这次的确认时刻。终态行的 updated_at 就是确认时间，核销成功之后
 -- 写副本用它做快照的下限，这一笔才不会被算成“快照之后才确认”（ADR-0073）。
 -- name: SetChargeStatus :one

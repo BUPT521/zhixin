@@ -340,6 +340,28 @@ func (s *Store) ChargeStatusCounts(ctx context.Context) (map[string]int64, error
 	return counts, nil
 }
 
+// DailyChargeReconciliation uses the same free quota and settled usage as chargeNowPay.
+func (s *Store) DailyChargeReconciliation(ctx context.Context, day string) ([]nowpay.AccountCharges, error) {
+	date, err := pgDate(day)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.q.DailyChargeReconciliation(ctx, db.DailyChargeReconciliationParams{
+		Day: date, DefaultDailyTokens: s.dailyTokens,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pg: 读取账号核销对账失败: %w", err)
+	}
+	accounts := make([]nowpay.AccountCharges, 0, len(rows))
+	for _, row := range rows {
+		accounts = append(accounts, nowpay.AccountCharges{
+			UserID: row.UserID, ChargeableTokens: chargeableTokens(row.SettledTokens, row.DailyTokens),
+			Applied: row.Applied, Charged: row.Charged,
+		})
+	}
+	return accounts, nil
+}
+
 // SetStatus 记录一次核销的结果，并返回这次的确认时刻：status 为空时只更新备注，
 // 流水停在原状态等下一次补查。核销成功之后写余额副本要用确认时刻做快照的下限，
 // 终态行的 updated_at 就是确认时间，比响应里的快照时刻晚，不取它这笔流水会被算成

@@ -163,7 +163,7 @@ func run(log *slog.Logger) error {
 		meter.Start(ctx)
 		go nowpay.SweepLoop(ctx, meter, log)
 		go nowpay.ChargeSweepLoop(ctx, chargePending, log)
-		go nowpay.MaintenanceLoop(ctx, nowpayMaintenance, cfg.Location, log)
+		go nowpay.MaintenanceLoop(ctx, nowpayMaintenance, cfg.Location, cfg.LLM.TokensPerPoint, log)
 	}
 	// 结算失败留下的预留每十分钟补退一次、每天清一次两天之前的在途预留；它不依赖
 	// 收款配置，配了数据库就启用（ADR-0086）。

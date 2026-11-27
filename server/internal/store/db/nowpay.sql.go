@@ -65,6 +65,72 @@ func (q *Queries) ClaimCharge(ctx context.Context, arg ClaimChargeParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const dailyChargeReconciliation = `-- name: DailyChargeReconciliation :many
+WITH usage AS (
+  SELECT user_id,
+         SUM(CASE WHEN kind = 'embedding' THEN embedding_billed_tokens ELSE tokens END)::bigint AS settled_tokens
+  FROM llm_usage
+  WHERE day = $2::date
+  GROUP BY user_id
+), charges AS (
+  SELECT user_id,
+         SUM(points) FILTER (WHERE status <> 'failed')::bigint AS applied,
+         SUM(points) FILTER (WHERE status = 'succeeded')::bigint AS charged
+  FROM nowpay_charge
+  WHERE day = $2::date AND user_id IS NOT NULL
+  GROUP BY user_id
+)
+SELECT usage.user_id, usage.settled_tokens,
+       COALESCE(quota.daily_tokens, $1::bigint)::bigint AS daily_tokens,
+       COALESCE(charges.applied, 0)::bigint AS applied,
+       COALESCE(charges.charged, 0)::bigint AS charged
+FROM usage
+LEFT JOIN llm_quota AS quota USING (user_id)
+LEFT JOIN charges USING (user_id)
+WHERE quota.daily_tokens IS NOT NULL OR $1::bigint > 0
+ORDER BY usage.user_id
+`
+
+type DailyChargeReconciliationParams struct {
+	DefaultDailyTokens int64
+	Day                pgtype.Date
+}
+
+type DailyChargeReconciliationRow struct {
+	UserID        string
+	SettledTokens int64
+	DailyTokens   int64
+	Applied       int64
+	Charged       int64
+}
+
+// 每个账号的已结算计费量与核销流水分别汇总，避免用途、密钥与流水的多行相乘。
+func (q *Queries) DailyChargeReconciliation(ctx context.Context, arg DailyChargeReconciliationParams) ([]DailyChargeReconciliationRow, error) {
+	rows, err := q.db.Query(ctx, dailyChargeReconciliation, arg.DefaultDailyTokens, arg.Day)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DailyChargeReconciliationRow{}
+	for rows.Next() {
+		var i DailyChargeReconciliationRow
+		if err := rows.Scan(
+			&i.UserID,
+			&i.SettledTokens,
+			&i.DailyTokens,
+			&i.Applied,
+			&i.Charged,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const dailyChargeTotals = `-- name: DailyChargeTotals :one
 
 SELECT COALESCE(SUM(points) FILTER (WHERE status <> 'failed'), 0)::bigint AS applied,

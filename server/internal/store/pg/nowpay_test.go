@@ -3,6 +3,7 @@ package pg
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -29,6 +30,42 @@ func TestChargeableTokensSubtractsTheFreeAllowance(t *testing.T) {
 					test.used, test.limit, got, test.want)
 			}
 		})
+	}
+}
+
+func TestPostgresDailyChargeReconciliation(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	st.dailyTokens = 10000
+	if _, err := st.pool.Exec(ctx, `
+INSERT INTO app_user (id, password_hash) VALUES ('u1', 'hash'), ('u2', 'hash');
+INSERT INTO llm_quota (user_id, daily_tokens) VALUES ('u1', 5000);
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, embedding_billed_tokens) VALUES
+  ('u1', '2026-11-26', 'chat', '', 13000, 900000, 0),
+  ('u1', '2026-11-26', 'embedding', 'key-a', 3000, 0, 7500),
+  ('u1', '2026-11-27', 'chat', '', 100000, 0, 0),
+  ('u2', '2026-11-26', 'chat', '', 40001, 0, 0);
+INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status) VALUES
+  ('nc_success', 'u1', '2026-11-26', 2, 20000, 'succeeded'),
+  ('nc_pending', 'u1', '2026-11-26', 1, 20000, 'pending'),
+  ('nc_processing', 'u1', '2026-11-26', 1, 20000, 'processing'),
+  ('nc_abandoned', 'u1', '2026-11-26', 1, 20000, 'abandoned'),
+  ('nc_failed', 'u1', '2026-11-26', 8, 20000, 'failed'),
+  ('nc_other_day', 'u1', '2026-11-27', 10, 20000, 'succeeded');`); err != nil {
+		t.Fatal(err)
+	}
+	want := []nowpay.AccountCharges{
+		{UserID: "u1", ChargeableTokens: 15500, Applied: 5, Charged: 2},
+		{UserID: "u2", ChargeableTokens: 30001},
+	}
+	got, err := st.DailyChargeReconciliation(ctx, "2026-11-26")
+	if err != nil || !slices.Equal(got, want) {
+		t.Fatalf("账号对账 = %+v, %v，应为 %+v", got, err, want)
+	}
+	st.dailyTokens = 0
+	got, err = st.DailyChargeReconciliation(ctx, "2026-11-26")
+	if err != nil || !slices.Equal(got, want[:1]) {
+		t.Fatalf("默认额度不限时只核对设置了覆盖值的账号，得到 %+v, %v", got, err)
 	}
 }
 

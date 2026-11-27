@@ -1,9 +1,11 @@
 package nowpay
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,6 +25,8 @@ type fakeMaintenance struct {
 	// instanceDay 是最近一次对账读实例账本时用的自然日。
 	instanceDay string
 	counts      map[string]int64
+	accounts    []AccountCharges
+	accountDay  string
 }
 
 func (f *fakeMaintenance) UnsettledGlobal(context.Context, time.Time, int) ([]Charge, error) {
@@ -53,6 +57,11 @@ func (f *fakeMaintenance) InstanceUsed(_ context.Context, day string) (int64, er
 	return f.instanceTokens, nil
 }
 
+func (f *fakeMaintenance) DailyChargeReconciliation(_ context.Context, day string) ([]AccountCharges, error) {
+	f.accountDay = day
+	return f.accounts, nil
+}
+
 func popBatch(batches *[]int64) int64 {
 	if len(*batches) == 0 {
 		return 0
@@ -76,7 +85,7 @@ func TestMaintenanceLoopReconcilesAndPrunesInBatches(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // 立刻结束，只跑启动那一次。
-	MaintenanceLoop(ctx, store, time.UTC, log)
+	MaintenanceLoop(ctx, store, time.UTC, 10000, log)
 	if store.reconcileCalls != 1 {
 		t.Fatalf("应在启动时记一次对账日志，实际 %d 次", store.reconcileCalls)
 	}
@@ -100,9 +109,31 @@ func TestMaintenanceLoopReconcilesTheConfiguredDay(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	MaintenanceLoop(ctx, store, loc, log)
-	if want := time.Now().In(loc).Format("2006-01-02"); store.instanceDay != want {
+	MaintenanceLoop(ctx, store, loc, 10000, log)
+	now := time.Now().In(loc)
+	if want := now.Format(time.DateOnly); store.instanceDay != want {
 		t.Fatalf("对账应按配置时区取当天，want %q got %q", want, store.instanceDay)
+	}
+	if want := now.AddDate(0, 0, -1).Format(time.DateOnly); store.accountDay != want {
+		t.Fatalf("账号对账应取上一自然日，want %q got %q", want, store.accountDay)
+	}
+}
+
+func TestReconcileAccountsReportsOnlyGapsOverOnePoint(t *testing.T) {
+	store := &fakeMaintenance{accounts: []AccountCharges{
+		{UserID: "one_point", ChargeableTokens: 20001, Applied: 2, Charged: 2},
+		{UserID: "missing_application", ChargeableTokens: 20001, Applied: 1, Charged: 1},
+		{UserID: "pending_confirmation", ChargeableTokens: 20001, Applied: 3, Charged: 1},
+	}}
+	var output bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&output, nil))
+	reconcileAccounts(context.Background(), store, "2026-11-26", 10000, log)
+	lines := strings.Split(strings.TrimSpace(output.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], "user_id=missing_application") ||
+		!strings.Contains(lines[0], "required_points=3 applied_points=1 charged_points=1 unapplied_points=2 uncharged_points=2") ||
+		!strings.Contains(lines[1], "user_id=pending_confirmation") ||
+		!strings.Contains(lines[1], "required_points=3 applied_points=3 charged_points=1 unapplied_points=0 uncharged_points=2") {
+		t.Fatalf("应分别记录漏申请和待确认差额，得到 %q", output.String())
 	}
 }
 

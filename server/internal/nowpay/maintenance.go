@@ -9,7 +9,7 @@ import (
 )
 
 // MaintenanceStore 是补查与保留期需要的存储，由 store/pg 实现。补查走核销流水，
-// 保留期删购买入口与终态流水，对账日志读流水状态计数与实例账本。
+// 保留期删购买入口与终态流水，对账读取账号用量、核销流水与实例账本。
 type MaintenanceStore interface {
 	// UnsettledGlobal 取全局创建早于 before、仍未终结的流水。
 	UnsettledGlobal(ctx context.Context, before time.Time, limit int) ([]Charge, error)
@@ -23,6 +23,15 @@ type MaintenanceStore interface {
 	ChargeStatusCounts(ctx context.Context) (map[string]int64, error)
 	// InstanceUsed 返回实例账本当天的用量。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
+	// DailyChargeReconciliation 返回指定记账日各账号的应核销计费量及流水汇总。
+	DailyChargeReconciliation(ctx context.Context, day string) ([]AccountCharges, error)
+}
+
+type AccountCharges struct {
+	UserID           string
+	ChargeableTokens int64
+	Applied          int64
+	Charged          int64
 }
 
 // 补查与保留期的参数。补查的间隔与宽限期按“核销最多晚一轮”估计；保留期按运维手册
@@ -131,32 +140,30 @@ func (m *Meter) Sweep(ctx context.Context, olderThan time.Time, limit int) (int,
 // 启动时先跑一次，之后每天一次；任何一步失败只记日志，不影响服务。与 SweepLoop
 // 一样会阻塞到 ctx 结束，调用方要用 goroutine 启动它。loc 是配置的自然日、
 // 与实例账本记 day 用的是同一个时区（ZHIXIN_TIMEZONE）。
-func MaintenanceLoop(ctx context.Context, store MaintenanceStore, loc *time.Location, log *slog.Logger) {
+func MaintenanceLoop(ctx context.Context, store MaintenanceStore, loc *time.Location, tokensPerPoint int64, log *slog.Logger) {
 	if store == nil {
 		return
+	}
+	if loc == nil {
+		loc = ChinaTime()
 	}
 	periodic.Run(ctx, 24*time.Hour, func() {
 		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), maintenanceLimit)
 		defer cancel()
-		reconcile(runCtx, store, loc, log)
+		now := time.Now().In(loc)
+		reconcile(runCtx, store, now.Format(time.DateOnly), log)
+		reconcileAccounts(runCtx, store, now.AddDate(0, 0, -1).Format(time.DateOnly), tokensPerPoint, log)
 		prune(runCtx, store, log)
 	})
 }
 
-// reconcile 记一条按日对账日志：核销流水按状态计数与实例账本当天的用量。它不修数据，
-// 只让积压、漏扣与实例账偏离在日志里看得见。
-func reconcile(ctx context.Context, store MaintenanceStore, loc *time.Location, log *slog.Logger) {
+// reconcile 记录核销流水按状态的计数与实例账本当天的用量。
+func reconcile(ctx context.Context, store MaintenanceStore, day string, log *slog.Logger) {
 	counts, err := store.ChargeStatusCounts(ctx)
 	if err != nil {
 		log.Error("read the nowpay charge counts", "error", err)
 		return
 	}
-	// 实例账本按配置的时区记 day，对账必须用同一个时区取当天，否则非东八区部署时
-	// 读到的是另一天的账。没有传时区时退回即刻收一侧使用的东八区。
-	if loc == nil {
-		loc = ChinaTime()
-	}
-	day := time.Now().In(loc).Format("2006-01-02")
 	instance, err := store.InstanceUsed(ctx, day)
 	if err != nil {
 		log.Error("read the instance tokens for the reconciliation", "day", day, "error", err)
@@ -170,6 +177,25 @@ func reconcile(ctx context.Context, store MaintenanceStore, loc *time.Location, 
 		"failed", counts[StatusFailed],
 		"abandoned", counts[StatusAbandoned],
 		"instance_tokens", instance)
+}
+
+// reconcileAccounts 核对已经结束的自然日，分别报告申请和确认核销的差额。
+func reconcileAccounts(ctx context.Context, store MaintenanceStore, day string, tokensPerPoint int64, log *slog.Logger) {
+	accounts, err := store.DailyChargeReconciliation(ctx, day)
+	if err != nil {
+		log.Error("read the nowpay account charges for reconciliation", "day", day, "error", err)
+		return
+	}
+	for _, account := range accounts {
+		required := Points(account.ChargeableTokens, tokensPerPoint)
+		unapplied, uncharged := required-account.Applied, required-account.Charged
+		if unapplied > 1 || uncharged > 1 {
+			log.Warn("nowpay account reconciliation gap",
+				"day", day, "user_id", account.UserID, "chargeable_tokens", account.ChargeableTokens,
+				"required_points", required, "applied_points", account.Applied, "charged_points", account.Charged,
+				"unapplied_points", unapplied, "uncharged_points", uncharged)
+		}
+	}
 }
 
 // prune 按保留期分批删除：购买入口按有效期过期 30 天，核销流水按终态更新时间 180 天，
