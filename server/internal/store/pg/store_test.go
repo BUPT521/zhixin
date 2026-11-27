@@ -1124,7 +1124,7 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 	}
 }
 
-func TestPostgresBackupsAndQuota(t *testing.T) {
+func TestPostgresBackups(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "a@b.cn"); err != nil {
@@ -1156,26 +1156,6 @@ func TestPostgresBackupsAndQuota(t *testing.T) {
 	}
 	if meta.Size != int64(len(data)) {
 		t.Fatalf("元数据大小应与字节一致: %d vs %d", meta.Size, len(data))
-	}
-
-	chat, emb := llmproxy.KindChat, llmproxy.KindEmbedding
-	if used, err := st.Used(ctx, "u1", "2026-11-15", chat); err != nil || used != 0 {
-		t.Fatalf("未用过的日子应为 0，得到 %d %v", used, err)
-	}
-	if err := st.Add(ctx, "u1", "2026-11-15", chat, 120); err != nil {
-		t.Fatalf("add: %v", err)
-	}
-	if err := st.Add(ctx, "u1", "2026-11-15", chat, 30); err != nil {
-		t.Fatalf("add again: %v", err)
-	}
-	if err := st.Add(ctx, "u1", "2026-11-15", emb, 9000); err != nil {
-		t.Fatalf("add embedding: %v", err)
-	}
-	if used, err := st.Used(ctx, "u1", "2026-11-15", chat); err != nil || used != 150 {
-		t.Fatalf("聊天用量应累加到 150，得到 %d %v", used, err)
-	}
-	if used, err := st.Used(ctx, "u1", "2026-11-15", emb); err != nil || used != 9000 {
-		t.Fatalf("嵌入用量应单独计，得到 %d %v", used, err)
 	}
 }
 

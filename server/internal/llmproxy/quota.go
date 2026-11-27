@@ -21,7 +21,6 @@ import (
 type Quota interface {
 	// Used 返回已结算的计费 token；kind 为空时返回两类合计。
 	Used(ctx context.Context, userID, day string, kind Kind) (int64, error)
-	Add(ctx context.Context, userID, day string, kind Kind, tokens int64) error
 	DailyLimit(ctx context.Context, userID string) (int64, bool, error)
 	// Reserve 原子预留 want 个计费 token，成功时返回 want。keyID 是这次调用用的
 	// 模型代理密钥编号，用访问令牌调用时为空字符串；用量按它分开记，额度仍按账号
@@ -234,17 +233,6 @@ func (m *MemoryQuota) accountUsageLocked(userID, day string, kind Kind) KeyUsage
 		}
 	}
 	return counts
-}
-
-func (m *MemoryQuota) Add(_ context.Context, userID, day string, kind Kind, tokens int64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	// Add 只用于按账号累加已结算用量，没有密钥可归；与访问令牌调用记在同一行。
-	key := memoryUsageKey{userID, day, kind, ""}
-	row := m.usage[key]
-	row.Tokens += tokens
-	m.usage[key] = row
-	return nil
 }
 
 // Reserve 在锁里完成比较与扣减，同一账号或同一天的并发请求不会各自读到旧值。
