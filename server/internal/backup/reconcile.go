@@ -25,9 +25,9 @@ const (
 	attachmentObjectPrefix = "attachments/"
 )
 
-// AttachmentKeys 列出附件索引里仍然有效的对象键，由附件存储实现。对账用它把
+// AttachmentKeys 列出仍然登记在附件索引里的对象键，由附件存储实现。对账用它把
 // attachments/ 下的对象分成仍登记与遗留字节；没有注入时 Reconcile 返回错误，
-// 不会只对账备份而把附件永久留在配额里。
+// 不会只对账备份而让附件遗留字节一直占着对象存储。
 type AttachmentKeys interface {
 	ListAllKeys(ctx context.Context) ([]string, error)
 }

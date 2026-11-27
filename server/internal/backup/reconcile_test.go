@@ -129,7 +129,7 @@ func TestReconcileAttachments(t *testing.T) {
 }
 
 // TestReconcileRequiresAttachmentKeys 守住装配遗漏：没有注入附件索引时对账
-// 返回错误，不会只处理 backups/、把 attachments/ 静默留在配额里。
+// 返回错误，不会只处理 backups/、让 attachments/ 下的遗留字节一直留着。
 func TestReconcileRequiresAttachmentKeys(t *testing.T) {
 	svc := NewService(NewMemoryStore(), 1<<20, 2, 27)
 	svc.SetObjects(objectstore.NewMemory())
