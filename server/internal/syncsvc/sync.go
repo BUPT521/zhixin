@@ -776,9 +776,6 @@ func SplitCapabilities(raw string) []string {
 	return out
 }
 
-// JoinCapabilities 与 SplitCapabilities 相反，写成逗号分隔的形式。
-func JoinCapabilities(names []string) string { return strings.Join(names, ",") }
-
 // bytesThrough 返回序号不大于 through 的提交占用的字节数，用于判断预算压力下的
 // 压缩是否真的能把待写入的提交装下。
 func (l *memoryLog) bytesThrough(through int64) int64 {

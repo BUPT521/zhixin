@@ -919,7 +919,10 @@ func (s *Service) DeleteAccountByID(ctx context.Context, userID string) error {
 	return s.store.DeleteUser(ctx, userID)
 }
 
-func (s *Service) issue(ctx context.Context, userID, device, checkedHash string) (Tokens, error) {
+// issue 生成一对令牌并写入会话。expectedPasswordHash 由调用方传入刚核对过的
+// 密码摘要，存储层在写会话的同一个事务或锁里再核对一次，登录核对密码与写会话
+// 之间如果重设了密码，这次登录不会留下会话。
+func (s *Service) issue(ctx context.Context, userID, device, expectedPasswordHash string) (Tokens, error) {
 	now := s.now()
 	access, refresh := newToken(), newToken()
 	sess := Session{
@@ -932,7 +935,7 @@ func (s *Service) issue(ctx context.Context, userID, device, checkedHash string)
 		RefreshExpires: now.Add(s.refreshTTL),
 		CreatedAt:      now,
 	}
-	if err := s.store.CreateSession(ctx, sess, s.maxSessions, checkedHash); err != nil {
+	if err := s.store.CreateSession(ctx, sess, s.maxSessions, expectedPasswordHash); err != nil {
 		return Tokens{}, err
 	}
 	return Tokens{

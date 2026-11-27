@@ -90,13 +90,6 @@ SELECT daily_tokens
 FROM llm_quota
 WHERE user_id = sqlc.arg(user_id);
 
--- 管理后台读取一个账号的覆盖行：与 LLMQuotaOverride 相比多出备注与保存时间。
--- 没有行时调用方按“没有覆盖”处理，回落到实例默认额度。
--- name: AccountQuota :one
-SELECT daily_tokens, note, updated_at
-FROM llm_quota
-WHERE user_id = sqlc.arg(user_id);
-
 -- 管理后台整体替换一个账号的覆盖值；两项额度都为空时调用方先删除这一行，不写
 -- 一条没有意义的记录。updated_at 在更新分支同样推进，页面据此看出最近一次保存。
 -- name: UpsertAccountQuota :exec

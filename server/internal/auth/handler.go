@@ -35,11 +35,6 @@ func MustPrincipal(ctx context.Context) Principal {
 	return p
 }
 
-// withPrincipal stores the caller for PrincipalFrom.
-func withPrincipal(ctx context.Context, p Principal) context.Context {
-	return context.WithValue(ctx, principalKey, p)
-}
-
 // Handler exposes the /v1/auth and /v1/me routes.
 type Handler struct {
 	svc      *Service

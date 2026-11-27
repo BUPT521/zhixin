@@ -35,9 +35,6 @@ func (s *Service) SetAccountBytes(limit int64) *Service {
 
 func (s *Service) MaxBytes() int64 { return s.maxBytes }
 
-// AccountBytes 是一个账号全部附件的总量上限，供装配与测试读取。
-func (s *Service) AccountBytes() int64 { return s.accountBytes }
-
 func (s *Service) Stat(ctx context.Context, userID, sha string) (int64, error) {
 	return s.store.Stat(ctx, userID, sha)
 }

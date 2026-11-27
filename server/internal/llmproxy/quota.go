@@ -178,7 +178,6 @@ type memoryUsageKey struct {
 
 type memoryUsageRow struct {
 	KeyUsageCounts
-	last Usage
 }
 
 // MemoryQuota is a Quota kept in process memory.
@@ -285,10 +284,6 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 	defer m.mu.Unlock()
 	key := memoryUsageKey{userID, day, kind, keyID}
 	row := m.usage[key]
-	// 退回一笔未发送的预留时没有上游用量，最近一次结算的样本继续保留。
-	if attempt.Attempts > 0 || usage.Total() > 0 {
-		row.last = usage
-	}
 	row.InputTokens += usage.Input
 	row.CachedTokens += usage.Cached
 	row.Attempts += max(0, attempt.Attempts)
@@ -311,14 +306,6 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 	}
 	m.instance[day] = max(0, m.instance[day]+instance)
 	return nil
-}
-
-// Split 返回账号当天某类模型最近一次结算记录下来的原始用量，只为核对缓存命中
-// 的统计口径；生产走 PostgreSQL，那里的拆分按天累加，这里只留最近一条。
-func (m *MemoryQuota) Split(userID, day string, kind Kind) Usage {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.usage[memoryUsageKey{userID, day, kind, ""}].last
 }
 
 func (m *MemoryQuota) InstanceUsed(_ context.Context, day string) (int64, error) {

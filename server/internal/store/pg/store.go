@@ -302,10 +302,11 @@ func (s *Store) DeleteUserObjects(ctx context.Context, userID string) error {
 	return s.objects.RemovePrefix(ctx, objectstore.BackupPrefix(userID))
 }
 
-// CreateSession 在一个事务里先锁住账号行、删掉超出上限的旧会话，再插入新会话。
-// 锁让同一账号的并发登录串行执行，会话数不会被并发推过上限；等待锁的时间很短，
-// 因为整个事务只碰会话表与锁住的那一行账号。
-func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser int, checkedHash string) error {
+// CreateSession 在一个事务里先锁住账号行、核对密码摘要、删掉超出上限的旧会话，
+// 再插入新会话。锁让同一账号的并发登录串行执行，会话数不会被并发推过上限；
+// expectedPasswordHash 非空时，登录核对密码之后密码被重设的这次登录也不会留下
+// 会话。等待锁的时间很短，因为整个事务只碰会话表与锁住的那一行账号。
+func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser int, expectedPasswordHash string) error {
 	if maxPerUser < 1 {
 		maxPerUser = 1
 	}
@@ -332,7 +333,7 @@ func (s *Store) CreateSession(ctx context.Context, sess auth.Session, maxPerUser
 		}
 		return err
 	}
-	if checkedHash != "" && currentHash != checkedHash {
+	if expectedPasswordHash != "" && currentHash != expectedPasswordHash {
 		return auth.ErrInvalidCredentials
 	}
 	if err := q.DeleteOldestSessions(ctx, db.DeleteOldestSessionsParams{
@@ -404,34 +405,6 @@ func (s *Store) DeleteSession(ctx context.Context, id string) error {
 	return err
 }
 
-// RotateSession 用 CAS 换掉令牌摘要。0 行说明这条会话的刷新令牌已经被换过，
-// 返回 ErrInvalidToken，让并发的第二个刷新请求失败。
-func (s *Store) RotateSession(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error {
-	access, err := pgTime(accessExpires)
-	if err != nil {
-		return err
-	}
-	refresh, err := pgTime(refreshExpires)
-	if err != nil {
-		return err
-	}
-	updated, err := s.q.RotateSession(ctx, db.RotateSessionParams{
-		NewAccessHash:  newAccessHash,
-		NewRefreshHash: newRefreshHash,
-		AccessExpires:  access,
-		RefreshExpires: refresh,
-		ID:             id,
-		OldRefreshHash: oldRefreshHash,
-	})
-	if err != nil {
-		return err
-	}
-	if updated == 0 {
-		return auth.ErrInvalidToken
-	}
-	return nil
-}
-
 // RotateSessionAndRecord 在一个事务里先做 CAS 轮换、再写重放记录：0 行说明轮换
 // 输给了并发的另一个请求，整个事务回滚；记录写入失败同样回滚轮换。客户端因此
 // 要么拿到新令牌且旧摘要已经记下，要么旧令牌仍然可用，不存在只换令牌、旧摘要
@@ -485,7 +458,7 @@ func (s *Store) RotateSessionAndRecord(ctx context.Context, id, oldRefreshHash, 
 	return tx.Commit(ctx)
 }
 
-// insertRefreshUsed 把一条重放记录写进给定的查询句柄，事务里与事务外共用。
+// insertRefreshUsed 把一条重放记录写进给定的查询句柄，轮换事务里共用两次。
 func insertRefreshUsed(ctx context.Context, q *db.Queries, u auth.RefreshUsed) error {
 	rotated, err := pgTime(u.RotatedAt)
 	if err != nil {
@@ -527,10 +500,6 @@ func (s *Store) UsedRefresh(ctx context.Context, tokenHash string) (auth.Refresh
 	}, nil
 }
 
-func (s *Store) RecordRefreshUsed(ctx context.Context, u auth.RefreshUsed) error {
-	return insertRefreshUsed(ctx, s.q, u)
-}
-
 func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 	return s.q.DeleteUserSessions(ctx, userID)
 }
@@ -566,10 +535,6 @@ func (s *Store) PruneUnverified(ctx context.Context, before time.Time) (int64, e
 		return 0, err
 	}
 	return s.q.DeleteUnverifiedUsersBefore(ctx, cutoff)
-}
-
-func (s *Store) UpdatePassword(ctx context.Context, userID, passwordHash string) error {
-	return s.q.UpdatePassword(ctx, db.UpdatePasswordParams{ID: userID, PasswordHash: passwordHash})
 }
 
 // ResetPassword 在一个事务里用掉验证码、换密码、确认那种登录方式、删会话。验证码

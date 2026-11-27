@@ -155,10 +155,11 @@ func TestMemoryPruneUnverified(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.RecordRefreshUsed(ctx, RefreshUsed{
-		TokenHash: "rh0", SessionID: "s-old", UserID: "old-unverified", RequestID: "req",
-		RotatedAt: now, GraceUntil: now.Add(time.Minute),
-	}); err != nil {
+	if err := st.RotateSessionAndRecord(ctx, "s-old", "rh", "ah", "rh2",
+		now.Add(2*time.Hour), now.Add(48*time.Hour), RefreshUsed{
+			TokenHash: "rh0", SessionID: "s-old", UserID: "old-unverified",
+			RequestID: "req", RotatedAt: now, GraceUntil: now.Add(time.Minute),
+		}); err != nil {
 		t.Fatal(err)
 	}
 

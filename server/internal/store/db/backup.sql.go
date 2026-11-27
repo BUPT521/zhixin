@@ -11,27 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const accountQuota = `-- name: AccountQuota :one
-SELECT daily_tokens, note, updated_at
-FROM llm_quota
-WHERE user_id = $1
-`
-
-type AccountQuotaRow struct {
-	DailyTokens pgtype.Int8
-	Note        string
-	UpdatedAt   pgtype.Timestamptz
-}
-
-// 管理后台读取一个账号的覆盖行：与 LLMQuotaOverride 相比多出备注与保存时间。
-// 没有行时调用方按“没有覆盖”处理，回落到实例默认额度。
-func (q *Queries) AccountQuota(ctx context.Context, userID string) (AccountQuotaRow, error) {
-	row := q.db.QueryRow(ctx, accountQuota, userID)
-	var i AccountQuotaRow
-	err := row.Scan(&i.DailyTokens, &i.Note, &i.UpdatedAt)
-	return i, err
-}
-
 const accountQuotasByUsers = `-- name: AccountQuotasByUsers :many
 SELECT user_id, daily_tokens, note, updated_at
 FROM llm_quota

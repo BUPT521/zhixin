@@ -12,10 +12,10 @@ import (
 )
 
 // WithPrincipal 把调用者放进请求上下文，供 PrincipalFrom 与 MustPrincipal 取回。
-// 鉴权中间件在生成路由的中间件链里被调用，装配处与测试也可以用它在鉴权之前
-// 注入一个调用者。
+// 鉴权中间件在认证之后调用它；装配处与测试也可以在鉴权之前用同一个入口注入
+// 调用者，不必再各自拼上下文。
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
-	return withPrincipal(ctx, p)
+	return context.WithValue(ctx, principalKey, p)
 }
 
 // Middleware 对除公开操作以外的已匹配路由校验 Bearer 令牌，并把调用者放进
@@ -111,10 +111,4 @@ func methodPattern(method, path string) string {
 		method = http.MethodGet
 	}
 	return method + " " + path
-}
-
-// needsAuth 保留给包内测试核对“HEAD 按 GET 判断、公开路由不要求令牌”的口径；
-// 实际判定见 requiresAuth。
-func needsAuth(method, path string) bool {
-	return !routepolicy.IsPublic(methodPattern(method, path))
 }

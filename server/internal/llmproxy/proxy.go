@@ -111,9 +111,6 @@ func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, points 
 	}
 }
 
-// Router 返回代理使用的路由器，管理接口与它共用同一份快照。
-func (p *Proxy) Router() *Router { return p.router }
-
 // dayTime 返回配置时区下的当前时间；自然日只从它取，响应里的 date 与用量
 // 记录的字符串因此不会落到不同的一天。
 func (p *Proxy) dayTime() time.Time { return p.now().In(p.loc) }

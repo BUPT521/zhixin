@@ -228,9 +228,9 @@ func TestConcurrentRefreshOneWins(t *testing.T) {
 	}
 }
 
-// TestRotateSessionCASAllowsOneWinner 核对存储层的 CAS：并发轮换同一会话只有
-// 一个成功，其余返回 ErrInvalidToken。
-func TestRotateSessionCASAllowsOneWinner(t *testing.T) {
+// TestRotateSessionAndRecordCASAllowsOneWinner 核对存储层的 CAS：并发轮换同一
+// 会话只有一个成功，其余返回 ErrInvalidToken。
+func TestRotateSessionAndRecordCASAllowsOneWinner(t *testing.T) {
 	ctx := context.Background()
 	s, _ := newTestService()
 	reg, err := s.Register(ctx, "a@b.cn", "password1", "")
@@ -249,9 +249,16 @@ func TestRotateSessionCASAllowsOneWinner(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			err := st.RotateSession(ctx, sess.ID, sess.RefreshHash,
+			err := st.RotateSessionAndRecord(ctx, sess.ID, sess.RefreshHash,
 				fmt.Sprintf("access-%d", i), fmt.Sprintf("refresh-%d", i),
-				now.Add(time.Hour), now.Add(24*time.Hour))
+				now.Add(time.Hour), now.Add(24*time.Hour), RefreshUsed{
+					TokenHash:  sess.RefreshHash,
+					SessionID:  sess.ID,
+					UserID:     sess.UserID,
+					RequestID:  fmt.Sprintf("req-%d", i),
+					RotatedAt:  now,
+					GraceUntil: now.Add(time.Minute),
+				})
 			switch {
 			case err == nil:
 				atomic.AddInt32(&wins, 1)

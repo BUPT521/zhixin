@@ -160,13 +160,14 @@ type Store interface {
 
 	// CreateSession 保存一条会话。maxPerUser 是这个账号保留的会话数上限，
 	// 超出时在同一个事务或锁内先删最旧的再插入，并发登录也守得住。
-	CreateSession(ctx context.Context, s Session, maxPerUser int, checkedHash string) error
+	//
+	// expectedPasswordHash 是登录时核对过的密码摘要。非空时，实现要在删除旧
+	// 会话与插入新会话的同一个事务或锁里再核对一次账号当前的密码摘要，不一致
+	// 返回 ErrInvalidCredentials：登录核对密码与写会话之间如果重设了密码，这次
+	// 登录不能发出新会话。空字符串表示不核对，供只写会话的装配与测试使用。
+	CreateSession(ctx context.Context, s Session, maxPerUser int, expectedPasswordHash string) error
 	SessionByAccessHash(ctx context.Context, hash string) (Session, error)
 	SessionByRefreshHash(ctx context.Context, hash string) (Session, error)
-	// RotateSession 用 CAS 换掉一条会话的两个令牌摘要：只有当前的 refresh_hash
-	// 仍等于 oldRefreshHash 时才更新。并发刷新因此只有一个成功，其余返回
-	// ErrInvalidToken。
-	RotateSession(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error
 	// RotateSessionAndRecord 在同一个事务或同一把锁里完成轮换与重放记录：CAS
 	// 换掉会话的两个令牌摘要，再写入旧摘要的重放记录。两步一起成功或一起不发
 	// 生，刷新因此没有“令牌换了但重放记录没写入”的中间状态：写记录失败时会话
@@ -180,9 +181,6 @@ type Store interface {
 	RotateSessionAndRecord(ctx context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time, used RefreshUsed) error
 	// UsedRefresh 返回已经轮换掉的刷新令牌摘要；没有记录时返回 ErrNotFound。
 	UsedRefresh(ctx context.Context, tokenHash string) (RefreshUsed, error)
-	// RecordRefreshUsed 保存已经轮换掉的刷新令牌摘要；同一个摘要重复写入时
-	// 更新“本次发出的令牌”，宽限截止时间与 request_id 保留第一次的值。
-	RecordRefreshUsed(ctx context.Context, u RefreshUsed) error
 	DeleteSession(ctx context.Context, id string) error
 	DeleteUserSessions(ctx context.Context, userID string) error
 
@@ -215,7 +213,6 @@ type Store interface {
 	// schema 的 ON DELETE CASCADE 一致；保留期内注册的账号与已确认的账号不受影响。
 	PruneUnverified(ctx context.Context, before time.Time) (int64, error)
 
-	UpdatePassword(ctx context.Context, userID, passwordHash string) error
 	// ResetPassword 在一个事务里用掉验证码、换密码、确认那种登录方式并删除该
 	// 账号的全部会话，四步要么一起成功，要么都不发生。验证码要同时匹配用途、
 	// 登录方式、摘要且未过期才算用掉，否则返回 ErrInvalidCode。
@@ -590,18 +587,6 @@ func (m *MemoryStore) TouchKey(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *MemoryStore) UpdatePassword(_ context.Context, userID, passwordHash string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	u, ok := m.users[userID]
-	if !ok {
-		return ErrNotFound
-	}
-	u.PasswordHash = passwordHash
-	m.users[userID] = u
-	return nil
-}
-
 // ResetPassword 在同一把锁里用完验证码、换密码、确认那种登录方式、删会话，
 // 四步要么都成要么都不成。
 func (m *MemoryStore) ResetPassword(_ context.Context, reset PasswordReset) error {
@@ -674,12 +659,13 @@ func (m *MemoryStore) DeleteCode(_ context.Context, purpose, kind, identifier st
 	return nil
 }
 
-// CreateSession 先按上限删掉最旧的会话再插入，两步在同一把锁内完成，同一个
-// 账号的并发登录不会把会话数推过上限。
-func (m *MemoryStore) CreateSession(_ context.Context, s Session, maxPerUser int, checkedHash string) error {
+// CreateSession 先核对密码摘要，再按上限删掉最旧的会话并插入新会话，三步在同一
+// 把锁内完成：同一个账号的并发登录不会把会话数推过上限，登录核对密码之后密码被
+// 重设时这次登录也不会留下会话。
+func (m *MemoryStore) CreateSession(_ context.Context, s Session, maxPerUser int, expectedPasswordHash string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if checkedHash != "" && m.users[s.UserID].PasswordHash != checkedHash {
+	if expectedPasswordHash != "" && m.users[s.UserID].PasswordHash != expectedPasswordHash {
 		return ErrInvalidCredentials
 	}
 	if maxPerUser < 1 {
@@ -787,22 +773,6 @@ func (m *MemoryStore) SessionByRefreshHash(_ context.Context, hash string) (Sess
 	return m.findSession(func(s Session) bool { return s.RefreshHash == hash })
 }
 
-// RotateSession 在锁内做 CAS：refresh_hash 还是旧摘要才换成新的一对。
-func (m *MemoryStore) RotateSession(_ context.Context, id, oldRefreshHash, newAccessHash, newRefreshHash string, accessExpires, refreshExpires time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	s, ok := m.sessions[id]
-	if !ok || s.RefreshHash != oldRefreshHash {
-		return ErrInvalidToken
-	}
-	s.AccessHash = newAccessHash
-	s.RefreshHash = newRefreshHash
-	s.AccessExpires = accessExpires
-	s.RefreshExpires = refreshExpires
-	m.sessions[id] = s
-	return nil
-}
-
 // RotateSessionAndRecord 在同一把锁里做 CAS 并写重放记录：轮换成功时会话与记录
 // 一起可见，CAS 失败或写记录前出错时一条都不落地，因此不存在“令牌换了但重放
 // 记录缺失”的窗口。
@@ -842,17 +812,9 @@ func (m *MemoryStore) UsedRefresh(_ context.Context, tokenHash string) (RefreshU
 	return u, nil
 }
 
-// RecordRefreshUsed 保存已经轮换掉的刷新令牌摘要。同一个摘要重复写入时只更新
-// “本次发出的令牌”，宽限截止时间与 request_id 保留第一次的值，重试因此不会
-// 延长宽限期，连续重试也仍然能按记录里的最新摘要再轮换。
-func (m *MemoryStore) RecordRefreshUsed(_ context.Context, u RefreshUsed) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.recordRefreshUsedLocked(u)
-	return nil
-}
-
-// recordRefreshUsedLocked 是写入重放记录的共同实现。调用方已持有锁。
+// recordRefreshUsedLocked 保存一条重放记录。同一个摘要重复写入时只更新“本次
+// 发出的令牌”，宽限截止时间与 request_id 保留第一次的值，重试因此不会延长宽限
+// 期，连续重试也仍然能按记录里的最新摘要再轮换。调用方已持有锁。
 func (m *MemoryStore) recordRefreshUsedLocked(u RefreshUsed) {
 	if old, ok := m.refreshUsed[u.TokenHash]; ok {
 		old.RotatedAt = u.RotatedAt

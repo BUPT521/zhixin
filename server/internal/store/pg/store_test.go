@@ -169,9 +169,6 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 	if byAccess, err := st.SessionByAccessHash(ctx, "ah"); err != nil || !byAccess.ContactVerified {
 		t.Fatalf("会话上的 ContactVerified 应为真：%+v %v", byAccess, err)
 	}
-	if err := st.UpdatePassword(ctx, u.ID, "hash-2"); err != nil {
-		t.Fatalf("update password: %v", err)
-	}
 	if err := st.DeleteCode(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn"); err != nil {
 		t.Fatalf("delete code: %v", err)
 	}
@@ -345,27 +342,23 @@ func TestPostgresRefreshRotation(t *testing.T) {
 		t.Fatalf("session: %v", err)
 	}
 
-	if err := st.RotateSession(ctx, "s1", "rh1", "ah2", "rh2", now.Add(2*time.Hour), now.Add(48*time.Hour)); err != nil {
+	used := auth.RefreshUsed{
+		TokenHash: "rh1", SessionID: "s1", UserID: u.ID, RequestID: "req-1",
+		RotatedAt: now, GraceUntil: now.Add(time.Minute),
+	}
+	if err := st.RotateSessionAndRecord(ctx, "s1", "rh1", "ah2", "rh2",
+		now.Add(2*time.Hour), now.Add(48*time.Hour), used); err != nil {
 		t.Fatalf("第一次轮换: %v", err)
 	}
-	// 用同一个旧摘要再轮换（并发输家）应当返回 ErrInvalidToken。
-	if err := st.RotateSession(ctx, "s1", "rh1", "ah3", "rh3", now.Add(3*time.Hour), now.Add(72*time.Hour)); !errors.Is(err, auth.ErrInvalidToken) {
+	// 用同一个旧摘要再轮换（并发输家）应当返回 ErrInvalidToken，会话与记录都不动。
+	loser := used
+	loser.RequestID = "req-2"
+	if err := st.RotateSessionAndRecord(ctx, "s1", "rh1", "ah3", "rh3",
+		now.Add(3*time.Hour), now.Add(72*time.Hour), loser); !errors.Is(err, auth.ErrInvalidToken) {
 		t.Fatalf("旧摘要再轮换应返回 ErrInvalidToken，得到 %v", err)
 	}
 	if _, err := st.SessionByRefreshHash(ctx, "rh2"); err != nil {
 		t.Fatalf("轮换后的刷新摘要应能查到: %v", err)
-	}
-
-	used := auth.RefreshUsed{
-		TokenHash: "rh1", SessionID: "s1", UserID: u.ID, RequestID: "req-1",
-		RotatedAt: now, GraceUntil: now.Add(time.Minute),
-		ReplacedAccessHash: "ah2", ReplacedRefreshHash: "rh2",
-	}
-	// 同一个摘要重复写入是并发重试的常态，应当忽略而不是报主键冲突。
-	for i := 0; i < 2; i++ {
-		if err := st.RecordRefreshUsed(ctx, used); err != nil {
-			t.Fatalf("第 %d 次记录旧令牌: %v", i+1, err)
-		}
 	}
 	got, err := st.UsedRefresh(ctx, "rh1")
 	if err != nil {
@@ -378,24 +371,29 @@ func TestPostgresRefreshRotation(t *testing.T) {
 		t.Fatalf("宽限截止时间应原样保存：%v vs %v", got.GraceUntil, used.GraceUntil)
 	}
 
-	// 重试路径会更新记录里“本次发出的令牌”，宽限截止时间与 request_id 保持
-	// 第一次的值。
-	updated := used
-	updated.RotatedAt = now.Add(5 * time.Second)
-	updated.ReplacedAccessHash, updated.ReplacedRefreshHash = "ah4", "rh4"
-	updated.GraceUntil = now.Add(30 * time.Second) // 不应被写入
-	if err := st.RecordRefreshUsed(ctx, updated); err != nil {
-		t.Fatalf("更新旧令牌记录: %v", err)
+	// 宽限期内的重试：客户端提交的是更早的 rh1，会话当前是 rh2。rh1 的记录只
+	// 更新“本次发出的令牌”，宽限截止时间与 request_id 保持第一次的值；rh2 也
+	// 留下一条指向同一对新令牌的记录。
+	updated := auth.RefreshUsed{
+		TokenHash: "rh1", SessionID: "s1", UserID: u.ID, RequestID: "req-1",
+		RotatedAt: now.Add(5 * time.Second), GraceUntil: now.Add(30 * time.Second),
+	}
+	if err := st.RotateSessionAndRecord(ctx, "s1", "rh2", "ah3", "rh3",
+		now.Add(2*time.Hour), now.Add(48*time.Hour), updated); err != nil {
+		t.Fatalf("重试轮换: %v", err)
 	}
 	afterUpdate, err := st.UsedRefresh(ctx, "rh1")
 	if err != nil {
 		t.Fatalf("更新后读取旧令牌记录: %v", err)
 	}
-	if afterUpdate.ReplacedRefreshHash != "rh4" || afterUpdate.ReplacedAccessHash != "ah4" {
+	if afterUpdate.ReplacedRefreshHash != "rh3" || afterUpdate.ReplacedAccessHash != "ah3" {
 		t.Fatalf("本次发出的令牌应更新，得到 %+v", afterUpdate)
 	}
 	if !afterUpdate.GraceUntil.Equal(used.GraceUntil) || afterUpdate.RequestID != "req-1" {
 		t.Fatalf("宽限截止时间与 request_id 不应被重试改写，得到 %+v", afterUpdate)
+	}
+	if current, err := st.UsedRefresh(ctx, "rh2"); err != nil || current.ReplacedRefreshHash != "rh3" {
+		t.Fatalf("这次消费的当前摘要也应留下指向新令牌的记录：%+v %v", current, err)
 	}
 
 	if err := st.DeleteSession(ctx, "s1"); err != nil {
