@@ -5,6 +5,7 @@
 package ratelimit
 
 import (
+	"container/list"
 	"math"
 	"sync"
 	"time"
@@ -16,8 +17,11 @@ import (
 type Limiter struct {
 	mu      sync.Mutex
 	buckets map[string]*entry
-	limit   rate.Limit
-	burst   int
+	// order 按最近一次使用排列：表头是最久没用的键，表尾是刚用过的键。到达键数
+	// 上限时从表头淘汰一个键，回收空闲键时也从表头往后走，两者都不再扫全表。
+	order *list.List
+	limit rate.Limit
+	burst int
 	// idle 是键多久不用就回收；为零时不回收。
 	idle time.Duration
 	// maxKeys 是保留的键数上限；为零时不设上限。
@@ -26,11 +30,15 @@ type Limiter struct {
 	// 都扫一遍表：按来源地址限流时表可以很大，逐个请求扫表会变成 CPU 热点。
 	lastReap time.Time
 	nowFn    func() time.Time
+	// disabled 表示关闭限流：判定直接放行，不建桶。
+	disabled bool
 }
 
 type entry struct {
+	key    string
 	tokens float64
 	seen   time.Time
+	elem   *list.Element
 }
 
 // New 建一个限流器：每秒补充 limit 个令牌，最多积到 burst 个。idle 是键多久不用
@@ -42,6 +50,7 @@ func New(limit rate.Limit, burst int, idle time.Duration, maxKeys ...int) *Limit
 	}
 	l := &Limiter{
 		buckets: map[string]*entry{},
+		order:   list.New(),
 		limit:   limit,
 		burst:   burst,
 		idle:    idle,
@@ -69,8 +78,9 @@ func NewGlobal(l Limit) *Limiter {
 	return New(rate.Limit(l.PerSecond), l.Burst, 15*time.Minute, 1)
 }
 
-// Disabled 返回一个永远放行的限流器，用于关闭限流或测试。
-func Disabled() *Limiter { return New(rate.Inf, 1, 0) }
+// Disabled 返回一个永远放行的限流器，用于关闭限流或测试。它不建桶，判定也不
+// 占内存：运维把限流速率设成 0 之后，随机标识符不会再让每个请求留下一个桶。
+func Disabled() *Limiter { return &Limiter{disabled: true, limit: rate.Inf, burst: 1} }
 
 // TakeOne 扣掉全局桶里的一个令牌，返回建议等待的秒数；0 表示放行。
 func (l *Limiter) TakeOne() int64 { return l.Take("global") }
@@ -84,6 +94,9 @@ func (l *Limiter) WouldBlock(keys ...string) int64 { return l.check(false, keys)
 // TakeRefundable 在开始密码校验前扣除一个令牌。退款只作用于这一次扣减所属的桶，
 // 已被回收的桶不会因较早的退款重新创建。
 func (l *Limiter) TakeRefundable(key string) (refund func(), delay int64) {
+	if l.disabled {
+		return func() {}, 0
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.nowFn()
@@ -98,6 +111,7 @@ func (l *Limiter) TakeRefundable(key string) (refund func(), delay int64) {
 		defer l.mu.Unlock()
 		if l.buckets[key] == bucket {
 			l.refill(bucket, l.nowFn())
+			l.order.MoveToBack(bucket.elem)
 			bucket.tokens = min(float64(l.burst), bucket.tokens+1)
 		}
 	}), 0
@@ -105,7 +119,7 @@ func (l *Limiter) TakeRefundable(key string) (refund func(), delay int64) {
 
 // check 是所有按键判定的共同实现；take 为假时只看不扣。
 func (l *Limiter) check(take bool, keys []string) int64 {
-	if len(keys) == 0 {
+	if l.disabled || len(keys) == 0 {
 		return 0
 	}
 	l.mu.Lock()
@@ -133,6 +147,7 @@ func (l *Limiter) check(take bool, keys []string) int64 {
 func (l *Limiter) bucketFor(key string, now time.Time) *entry {
 	if e, ok := l.buckets[key]; ok {
 		l.refill(e, now)
+		l.order.MoveToBack(e.elem)
 		return e
 	}
 	if l.maxKeys > 0 && len(l.buckets) >= l.maxKeys {
@@ -142,7 +157,8 @@ func (l *Limiter) bucketFor(key string, now time.Time) *entry {
 			l.evictOldest()
 		}
 	}
-	e := &entry{tokens: float64(l.burst), seen: now}
+	e := &entry{key: key, tokens: float64(l.burst), seen: now}
+	e.elem = l.order.PushBack(e)
 	l.buckets[key] = e
 	return e
 }
@@ -173,27 +189,34 @@ func (l *Limiter) reapIfDue(now time.Time) {
 	l.reap(now)
 }
 
-// reap 回收长时间没用的键，避免按地址限流时表无限增长。
+// reap 从最久没用的键开始回收，遇到仍在使用的键就停：order 按最近使用排列，
+// 后面的键只会更新，所以不需要遍历全表。
 func (l *Limiter) reap(now time.Time) {
-	for key, e := range l.buckets {
-		if now.Sub(e.seen) > l.idle {
-			delete(l.buckets, key)
+	for {
+		front := l.order.Front()
+		if front == nil {
+			return
 		}
+		e := front.Value.(*entry)
+		if now.Sub(e.seen) <= l.idle {
+			return
+		}
+		l.remove(e)
 	}
 }
 
-// evictOldest 删除最久没有用到的键，只在到达键数上限、且清理没有腾出空间时调用。
+// evictOldest 删除最久没有用到的键，只在到达键数上限、且清理没有腾出空间时
+// 调用。order 的表头就是最久未用的键，淘汰不再扫全表。
 func (l *Limiter) evictOldest() {
-	var oldestKey string
-	var oldest time.Time
-	for key, e := range l.buckets {
-		if oldestKey == "" || e.seen.Before(oldest) {
-			oldestKey, oldest = key, e.seen
-		}
+	if front := l.order.Front(); front != nil {
+		l.remove(front.Value.(*entry))
 	}
-	if oldestKey != "" {
-		delete(l.buckets, oldestKey)
-	}
+}
+
+// remove 把键从表与顺序里一起删掉。
+func (l *Limiter) remove(e *entry) {
+	delete(l.buckets, e.key)
+	l.order.Remove(e.elem)
 }
 
 // retryAfter 由剩余令牌数与补充速率算出建议等待的整秒数。速率为 0 时令牌不会

@@ -74,6 +74,10 @@ func TestDisabledAlwaysTakes(t *testing.T) {
 			t.Fatal("关闭限流后应一律放行")
 		}
 	}
+	// 关闭限流之后不再建桶：随机标识符不会把内存撑大。
+	if l.Len() != 0 {
+		t.Fatalf("关闭限流时不应保留桶，得到 %d", l.Len())
+	}
 }
 
 // TestWouldBlockDoesNotConsume 守住“先检查再决定”的语义：检查本身不扣令牌，
@@ -140,22 +144,25 @@ func TestConcurrentTakeIsSafe(t *testing.T) {
 // TestReapRunsAtMostEveryQuarterIdle 守住清理节奏：全表回收最多每 idle/4 一次，
 // 不是每次 Take 都扫一遍。
 func TestReapRunsAtMostEveryQuarterIdle(t *testing.T) {
-	now := time.Now()
+	start := time.Now()
+	now := start.Add(-5 * time.Minute)
 	l := New(rate.Limit(1), 1, 4*time.Minute)
 	l.nowFn = func() time.Time { return now }
-	l.lastReap = now
-	// 放一个空闲时间已超过 idle 的键，只有回收真正执行时才会被删。
-	l.buckets["old"] = &entry{tokens: 1, seen: now.Add(-5 * time.Minute)}
+	// 这个键的最后一次使用早于 idle，只有回收真正执行时才会被删。
+	if l.Take("old") != 0 {
+		t.Fatal("old 第一次应当放行")
+	}
+	l.lastReap = start
 
-	now = now.Add(10 * time.Second) // 不足 idle/4（1 分钟）
+	now = start.Add(10 * time.Second) // 不足 idle/4（1 分钟）
 	if l.Take("a") != 0 {
 		t.Fatal("新键第一次应当放行")
 	}
 	if l.Len() != 2 {
-		t.Fatalf("不足 idle/4 时不该扫表，得到 %d 个键", l.Len())
+		t.Fatalf("不足 idle/4 时不该回收，得到 %d 个键", l.Len())
 	}
 
-	now = now.Add(55 * time.Second) // 距上次回收 65 秒，超过 idle/4
+	now = start.Add(65 * time.Second) // 距上次回收超过 idle/4
 	if l.Take("b") != 0 {
 		t.Fatal("新键第一次应当放行")
 	}
@@ -224,6 +231,32 @@ func TestMaxKeysCleanupHappensBeforeEviction(t *testing.T) {
 	}
 }
 
+// TestMaxKeysEvictionKeepsRecentlyUsed 核对淘汰不看创建顺序，而看最近一次使用：
+// 到上限时被淘汰的是最久没用的键。
+func TestMaxKeysEvictionKeepsRecentlyUsed(t *testing.T) {
+	now := time.Now()
+	l := New(rate.Limit(0), 2, 0, 2)
+	l.nowFn = func() time.Time { return now }
+
+	if l.Take("a") != 0 || l.Take("b") != 0 {
+		t.Fatal("a 与 b 第一次应当放行")
+	}
+	now = now.Add(time.Second)
+	if l.Take("a") != 0 {
+		t.Fatal("a 还有令牌，第二次应当放行")
+	}
+	now = now.Add(time.Second)
+	if l.Take("c") != 0 {
+		t.Fatal("到上限之后新键仍应放行")
+	}
+	if _, ok := l.buckets["b"]; ok {
+		t.Fatal("b 最久没用，应被淘汰")
+	}
+	if _, ok := l.buckets["a"]; !ok {
+		t.Fatal("刚用过的 a 不该被淘汰")
+	}
+}
+
 // TestMaxKeysBoundsGrowth 守住表不会无限增长：连续访问大量不同的键之后，保留的
 // 键数不超过上限。
 func TestMaxKeysBoundsGrowth(t *testing.T) {
@@ -233,5 +266,18 @@ func TestMaxKeysBoundsGrowth(t *testing.T) {
 	}
 	if l.Len() != 5 {
 		t.Fatalf("键数应停在上限 5，得到 %d", l.Len())
+	}
+}
+
+// TestDisabledRefundableDoesNotCreateBucket 核对关闭限流时预扣与退款都不建桶。
+func TestDisabledRefundableDoesNotCreateBucket(t *testing.T) {
+	l := Disabled()
+	refund, delay := l.TakeRefundable("login:a@b.cn")
+	if delay != 0 || refund == nil {
+		t.Fatalf("关闭限流时应放行并给出可调用的退款，得到 delay=%d、退款为空=%v", delay, refund == nil)
+	}
+	refund()
+	if l.Len() != 0 {
+		t.Fatalf("关闭限流时不应保留桶，得到 %d", l.Len())
 	}
 }
