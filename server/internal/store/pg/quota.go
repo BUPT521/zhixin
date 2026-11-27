@@ -65,7 +65,7 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	}
 	freeRemaining := int64(0)
 	if limited {
-		freeRemaining = max(0, limit-used)
+		freeRemaining = llmproxy.FreeRemaining(limit, used)
 	}
 	// 免费额度不够这一次预留时才算余额：额度内的请求不读副本，也不触发查询。
 	if paidNeeded := want - freeRemaining; limited && paidNeeded > 0 {
@@ -93,7 +93,7 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	}
 	// 实例账本只累计免费额度内的部分：超出免费额度、由积分承担的量已经有收入
 	// 覆盖，不再占用给免费额度兜底的实例预算（ADR-0070）。
-	instance := instancePortion(want, freeRemaining, limited)
+	instance := llmproxy.InstancePortion(want, freeRemaining, limited)
 	if s.instanceDailyTokens > 0 {
 		instanceUsed, err := q.InstanceTokens(ctx, date)
 		if err != nil {
@@ -317,7 +317,7 @@ func (s *Store) settleTx(ctx context.Context, p settleParams, deleteID string) e
 			return nil
 		}
 	}
-	instanceDelta := p.actual - p.reserved
+	instanceDelta := llmproxy.InstanceDelta(p.reserved, p.actual, 0, false)
 	limit, limited, err := s.accountLimit(ctx, q, p.userID)
 	if err != nil {
 		return err
@@ -328,8 +328,8 @@ func (s *Store) settleTx(ctx context.Context, p settleParams, deleteID string) e
 		if err != nil {
 			return err
 		}
-		free := max(0, limit-max(0, used-p.reserved))
-		instanceDelta = min(p.actual, free) - min(p.reserved, free)
+		free := llmproxy.FreeRemaining(limit, max(0, used-p.reserved))
+		instanceDelta = llmproxy.InstanceDelta(p.reserved, p.actual, free, true)
 	}
 	rawEmbedding := int64(0)
 	if p.kind == llmproxy.KindEmbedding && p.actual > 0 {
@@ -483,13 +483,4 @@ func (s *Store) InstanceUsed(ctx context.Context, day string) (int64, error) {
 		return 0, fmt.Errorf("pg: 读取实例当日用量失败: %w", err)
 	}
 	return used, nil
-}
-
-// instancePortion 返回一次预留里应当记进实例账本的计费 token 数：只有免费额度
-// 内的部分占用实例预算，超出免费额度、由积分承担的部分不占（ADR-0070）。
-func instancePortion(reserved, freeRemaining int64, limited bool) int64 {
-	if !limited {
-		return reserved
-	}
-	return min(reserved, freeRemaining)
 }

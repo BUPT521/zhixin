@@ -58,7 +58,7 @@ var (
 	_ auth.Store           = (*Store)(nil)
 	_ syncsvc.Store        = (*Store)(nil)
 	_ backup.Store         = (*Store)(nil)
-	_ llmproxy.Quota       = (*Store)(nil)
+	_ llmproxy.QuotaStore  = (*Store)(nil)
 	_ feedback.Repository  = (*Store)(nil)
 	_ retention.Store      = (*Store)(nil)
 	_ retention.Reader     = (*Store)(nil)

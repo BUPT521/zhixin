@@ -15,7 +15,7 @@ import (
 
 // settleFailingQuota 让结算固定失败，用来核对 settle 不把错误就地吞掉。
 type settleFailingQuota struct {
-	Quota
+	QuotaStore
 	err error
 }
 
@@ -32,7 +32,8 @@ func TestSettleReturnsTheQuotaError(t *testing.T) {
 		t.Fatalf("reload: %v", err)
 	}
 	want := errors.New("结算超时")
-	p := NewRoutedHandler(baseConfig(), router, settleFailingQuota{Quota: NewMemoryQuota(), err: want}, time.UTC, log)
+	quota := settleFailingQuota{QuotaStore: NewMemoryQuota(), err: want}
+	p := NewRoutedHandler(baseConfig(), router, quota, quota, time.UTC, log)
 	r := httptest.NewRequest(http.MethodPost, "/v1/llm/responses", nil)
 	if err := p.settle(r, "u1", "2026-11-18", KindChat, "", 100, 50, Usage{}, attemptOf(false)); !errors.Is(err, want) {
 		t.Fatalf("settle 应把额度实现的错误交回调用方，得到 %v", err)

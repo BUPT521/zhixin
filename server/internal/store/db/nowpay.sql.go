@@ -374,8 +374,10 @@ SELECT balance.synced_at,
        COALESCE(SUM(charge.points) FILTER (WHERE charge.day = $1::date), 0)::bigint AS applied,
        COALESCE(SUM(charge.points) FILTER (WHERE charge.day = $1::date
            AND charge.status = 'succeeded'), 0)::bigint AS charged,
-       COALESCE(SUM(charge.points) FILTER (WHERE charge.status IN ('pending', 'processing', 'abandoned')
-           OR (charge.status = 'succeeded' AND charge.updated_at > balance.synced_at)), 0)::bigint AS unreflected
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.status IN ('pending', 'processing', 'abandoned')),
+           0)::bigint AS unsettled,
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.status = 'succeeded'
+           AND charge.updated_at > balance.synced_at), 0)::bigint AS succeeded_after_sync
 FROM (SELECT $2::text AS user_id) account
 LEFT JOIN nowpay_balance AS balance USING (user_id)
 LEFT JOIN nowpay_charge AS charge ON charge.user_id = account.user_id AND charge.status <> 'failed'
@@ -390,17 +392,19 @@ type PointLedgerWithBalanceParams struct {
 }
 
 type PointLedgerWithBalanceRow struct {
-	SyncedAt      pgtype.Timestamptz
-	BalancePoints int64
-	Applied       int64
-	Charged       int64
-	Unreflected   int64
+	SyncedAt           pgtype.Timestamptz
+	BalancePoints      int64
+	Applied            int64
+	Charged            int64
+	Unsettled          int64
+	SucceededAfterSync int64
 }
 
-// 在同一个查询快照中读余额与流水。余额扣减涵盖所有日期的待确认流水、补查已经放弃
-// 的流水及快照后成功的流水，已申请和已成功的积分只统计指定记账日。abandoned 算进
-// 未反映的核销：它有没有扣过不知道，宁可少放行也不让同一笔积分被花两次（ADR-0089）。
-// synced_at 为空表示从未同步。
+// 在同一个查询快照中读余额与流水，只返回原始量，折算留给 pg/points.go 的
+// pointBudgetFor。applied 与 charged 只统计指定记账日；unsettled 汇总所有记账日
+// 还没有结论的核销，succeeded_after_sync 汇总快照之后才确认成功的核销，两者由 Go
+// 侧合成“未反映”的量与可用余额（ADR-0073、ADR-0089）。abandoned 也算未反映：它有
+// 没有扣过不知道，宁可少放行也不让同一笔积分被花两次。synced_at 为空表示从未同步。
 func (q *Queries) PointLedgerWithBalance(ctx context.Context, arg PointLedgerWithBalanceParams) (PointLedgerWithBalanceRow, error) {
 	row := q.db.QueryRow(ctx, pointLedgerWithBalance, arg.Day, arg.UserID)
 	var i PointLedgerWithBalanceRow
@@ -409,7 +413,8 @@ func (q *Queries) PointLedgerWithBalance(ctx context.Context, arg PointLedgerWit
 		&i.BalancePoints,
 		&i.Applied,
 		&i.Charged,
-		&i.Unreflected,
+		&i.Unsettled,
+		&i.SucceededAfterSync,
 	)
 	return i, err
 }

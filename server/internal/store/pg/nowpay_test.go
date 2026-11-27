@@ -201,7 +201,7 @@ func TestPostgresReserveCountsChargesAndUnbilledTokens(t *testing.T) {
 	// 额度 100 之间还有 1,000 个 token 没有记进流水。
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: day, Tokens: 2000,
-	}, 2)
+	})
 	if err != nil || !ok || charge.Points != 2 {
 		t.Fatalf("应写入一笔两积分的流水: %+v %v %v", charge, ok, err)
 	}
@@ -482,7 +482,7 @@ func TestPostgresPointsAccountForPartialReservationsAndCappedCharges(t *testing.
 	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 1100, 2500, llmproxy.Usage{}, llmproxy.SettleAttempt{}); err != nil {
 		t.Fatalf("settle: %v", err)
 	}
-	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_capped", UserID: "u1", Day: day, Tokens: 2400}, 3)
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_capped", UserID: "u1", Day: day, Tokens: 2400})
 	if err != nil || !ok || charge.Points != 1 {
 		t.Fatalf("核销应受余额限制: %+v %v %v", charge, ok, err)
 	}
@@ -626,13 +626,13 @@ func TestPostgresReservePointsCapsAtTheBalanceCopy(t *testing.T) {
 	}
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
-	}, 20)
+	})
 	if err != nil || !ok || charge.Points != 5 {
 		t.Fatalf("应只申请副本里的五积分: %+v %v %v", charge, ok, err)
 	}
 	if _, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_2", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
-	}, 20); err != nil || ok {
+	}); err != nil || ok {
 		t.Fatalf("副本已被占满时不该再写流水: %v %v", ok, err)
 	}
 }
@@ -654,7 +654,7 @@ func TestPostgresReservePointsSharesTheBalanceAcrossDays(t *testing.T) {
 	results := make(chan result, 2)
 	for _, day := range []string{"2026-11-25", "2026-11-26"} {
 		go func() {
-			charge, _, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_" + day, UserID: "u1", Day: day, Tokens: 1000}, 1)
+			charge, _, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_" + day, UserID: "u1", Day: day, Tokens: 1000})
 			results <- result{points: charge.Points, err: err}
 		}()
 	}
@@ -684,7 +684,7 @@ func TestPostgresReservePointsSubtractsUnreflectedCharges(t *testing.T) {
 	}
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
-	}, 20)
+	})
 	if err != nil || !ok || charge.Points != 3 {
 		t.Fatalf("当天合计应只申请五积分，这次补三积分: %+v %v %v", charge, ok, err)
 	}
@@ -711,7 +711,7 @@ func TestPostgresReservePointsKeepsApplyingAfterTheDayTotalExceedsTheCopy(t *tes
 	}
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 100000,
-	}, 10)
+	})
 	if err != nil || !ok || charge.Points != 1 {
 		t.Fatalf("可用积分只剩一积分时应再申请一积分: %+v %v %v", charge, ok, err)
 	}
@@ -744,7 +744,7 @@ func TestChargeDeltaCapsTheDifference(t *testing.T) {
 		{"已申请超过应扣时不申请", 20, 25, 5, 0},
 	}
 	for _, c := range cases {
-		if got := chargeDelta(c.required, c.applied, c.available); got != c.want {
+		if got := pointBudgetFor(c.required*1000, c.applied, c.available, 1000).Due; got != c.want {
 			t.Errorf("%s: 应申请 %d，得到 %d", c.name, c.want, got)
 		}
 	}
@@ -773,7 +773,7 @@ func TestPostgresReservePointsCapsTheDifferenceNotTheDayTotal(t *testing.T) {
 	}
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 1500000,
-	}, 150)
+	})
 	if err != nil || !ok || charge.Points != 100 {
 		t.Fatalf("应只按副本剩余的一百积分收口: %+v %v %v", charge, ok, err)
 	}
@@ -790,7 +790,7 @@ func TestPostgresReservePointsWithoutBalanceCopyChargesInFull(t *testing.T) {
 	enablePaidQuota(t, st)
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
-	}, 20)
+	})
 	if err != nil || !ok || charge.Points != 20 {
 		t.Fatalf("没有副本时应整额申请二十积分: %+v %v %v", charge, ok, err)
 	}
@@ -810,7 +810,7 @@ func TestPostgresReservePointsZeroCopyWritesNothing(t *testing.T) {
 	}
 	if _, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
-	}, 20); err != nil || ok {
+	}); err != nil || ok {
 		t.Fatalf("副本为零时不该写流水: %v %v", ok, err)
 	}
 	var count int64
@@ -1014,7 +1014,8 @@ func TestPostgresUnreflectedChargesFollowTheSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger, err := st.readPointLedger(ctx, st.q, "u1", date)
-	if err != nil || ledger.balancePoints != 7 || ledger.applied != 6 || ledger.charged != 6 {
+	if err != nil || ledger.balance != 7 || ledger.applied != 6 || ledger.charged != 6 ||
+		ledger.unsettled != 1 || ledger.succeededAfterSync != 2 || ledger.available() != 4 {
 		t.Fatalf("余额应扣前一天待确认的 1 分和快照后成功的 2 分，当天只计成功的 6 分: %+v %v", ledger, err)
 	}
 }
@@ -1319,7 +1320,7 @@ func TestPostgresClaimCharge(t *testing.T) {
 	}
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 1000,
-	}, 2)
+	})
 	if err != nil || !ok {
 		t.Fatalf("写流水: ok=%v err=%v", ok, err)
 	}

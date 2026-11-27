@@ -42,6 +42,7 @@ type Proxy struct {
 	cfg          config.LLMConfig
 	router       *Router
 	quota        Quota
+	points       Points
 	usage        UsageStore
 	client       *http.Client
 	publicClient *http.Client
@@ -72,8 +73,9 @@ type Proxy struct {
 	mem *byteBudget
 }
 
-// NewRoutedHandler 使用服务端从数据库读出的路由快照。
-func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
+// NewRoutedHandler 使用服务端从数据库读出的路由快照。quota 负责预留与结算，
+// points 负责账号页的积分视图；两种能力由装配处按消费方分别注入。
+func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, points Points, loc *time.Location, log *slog.Logger) *Proxy {
 	if setter, ok := quota.(quotaLimits); ok {
 		setter.SetQuotaLimits(cfg.DailyTokens, cfg.InstanceDailyTokens)
 	}
@@ -100,7 +102,7 @@ func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *ti
 		publicClient = &http.Client{Transport: publicTransport, CheckRedirect: noRedirect}
 	}
 	return &Proxy{
-		cfg: cfg, router: router, quota: quota,
+		cfg: cfg, router: router, quota: quota, points: points,
 		// 不跟随重定向：同主机从 https 跳到 http 时标准库会带着 Authorization
 		// 再发一次，key 会以明文出现在网络上。来源的地址应当直接写对。
 		client: &http.Client{Transport: transport, CheckRedirect: noRedirect}, publicClient: publicClient,
@@ -232,7 +234,7 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 	// 积分只在开通收款的实例上有：当天已核销多少、副本里还剩多少，账号页按这两个
 	// 数写“免费额度用完之后今天用了多少、还剩多少”（ADR-0069）。两个字段各按自己
 	// 的数据是否可用决定返回与否：副本缺失时已核销积分照常返回，不跟着一起变 null。
-	points, err := p.quota.Points(r.Context(), pr.UserID, day)
+	points, err := p.points.Points(r.Context(), pr.UserID, day)
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
 		return

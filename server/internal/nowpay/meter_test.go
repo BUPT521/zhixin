@@ -32,6 +32,8 @@ type fakeLedger struct {
 	// confirmAt 是每次落状态返回的确认时刻；零值表示这次没有可用的确认时刻。
 	confirmAt time.Time
 
+	// perPoint 是一个积分覆盖的计费 token 数，与执行器的配置一致。
+	perPoint int64
 	// capAt 与 capped 模拟 ReservePoints 按余额副本收口：capped 为真时申请量截到
 	// capAt，capAt 为零表示副本没有余额，不写流水。
 	capAt  int64
@@ -51,11 +53,20 @@ type fakeLedger struct {
 	attemptIDs    []string
 }
 
-func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required int64) (Charge, bool, error) {
+func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge) (Charge, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.reserveErr != nil {
 		return Charge{}, false, f.reserveErr
+	}
+	// 用例按流水里的累计用量与积分折算比例算出应扣量，与生产实现同一条路径。
+	perPoint := f.perPoint
+	if perPoint <= 0 {
+		perPoint = 1000
+	}
+	required := charge.Tokens / perPoint
+	if charge.Tokens%perPoint != 0 {
+		required++
 	}
 	if f.capped {
 		if f.capAt <= 0 {
@@ -145,6 +156,7 @@ func (f *fakeLedger) last() statusChange {
 
 func newTestMeter(t *testing.T, ledger *fakeLedger, caller *fakeCaller) *Meter {
 	t.Helper()
+	ledger.perPoint = 1000
 	meter, err := NewMeter(newTestClient(t, caller), ledger, 1000, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)
@@ -182,7 +194,7 @@ func TestRecordDoesNotChargeAgainWhenTheSameDayIsSettledTwice(t *testing.T) {
 }
 
 func TestRecordChargesTheDaysCumulativeTotalOnce(t *testing.T) {
-	ledger := &fakeLedger{}
+	ledger := &fakeLedger{perPoint: 10000}
 	meter, err := NewMeter(newTestClient(t, &fakeCaller{}), ledger, 10000,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {

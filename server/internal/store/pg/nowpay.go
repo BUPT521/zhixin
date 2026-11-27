@@ -136,14 +136,13 @@ func (s *Store) RefreshPoints(ctx context.Context, userID string) (bool, error) 
 // ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。账号的积分
 // 余额跨日通用，所以同一账号的核销申请按账号串行，包括跨日结算。
 //
-// 余额副本也在同一个事务与同一把锁里读，按可用积分收口申请量（ADR-0073）：先算当天
-// 还没有申请的差额（累计应扣减去已经申请的积分），再按可用积分截断这个差额。已经申请
-// 的积分有一部分已经成功、体现在副本里，另一部分待确认、计入了可用积分的扣减，所以
-// 截断的对象只能是差额，不能再拿已经申请的量去减一次可用积分。可用积分为零时不写
-// 流水、不调用即刻收；差额大于可用积分时只申请可用积分的那一部分，差额等余额补上之后
-// 的下一次结算再算。没有副本时按当天尚未申请的差额核销。
-func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, required int64) (nowpay.Charge, bool, error) {
-	if required <= 0 || charge.UserID == "" || charge.ID == "" {
+// 余额副本也在同一个事务与同一把锁里读，按 pointBudgetFor 算出的应申请积分收口
+// 申请量（ADR-0073）：应扣量由当天累计超额用量与积分折算比例算出，再减去已经申请
+// 的积分、按可用积分截断。可用积分为零时不写流水、不调用即刻收；差额大于可用积分
+// 时只申请可用积分的那一部分，差额等余额补上之后的下一次结算再算。没有副本时按
+// 当天尚未申请的差额核销。
+func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge) (nowpay.Charge, bool, error) {
+	if charge.Tokens <= 0 || charge.UserID == "" || charge.ID == "" {
 		return nowpay.Charge{}, false, nil
 	}
 	date, err := pgDate(charge.Day)
@@ -167,9 +166,9 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 	// available 为负表示副本未知，按整额申请处理。
 	available := int64(-1)
 	if ledger.balanceKnown {
-		available = ledger.balancePoints
+		available = ledger.available()
 	}
-	points := chargeDelta(required, ledger.applied, available)
+	points := pointBudgetFor(charge.Tokens, ledger.applied, available, s.nowpay.TokensPerPoint()).Due
 	if points <= 0 {
 		return nowpay.Charge{}, false, nil
 	}
@@ -184,18 +183,6 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 		return nowpay.Charge{}, false, fmt.Errorf("pg: 提交积分核销流水失败: %w", err)
 	}
 	return charge, true, nil
-}
-
-// chargeDelta 算出这次要写进流水的积分：当天还没有申请的差额（累计应扣减去已经申请
-// 的积分），再按可用积分截断，截断之后不为负。available 为负表示余额副本未知，按整额
-// 申请。已经申请的量不能再从 available 里减一次，因为成功的部分已经反映在副本里、
-// 待确认的部分已经计入 available 的扣减，再从差额上减一遍会少申请（ADR-0073）。
-func chargeDelta(required, applied, available int64) int64 {
-	points := required - applied
-	if available >= 0 {
-		points = min(points, available)
-	}
-	return max(points, 0)
 }
 
 // ClaimCharge 认领一笔核销流水：把 claimed_at 推到当前时刻，只有这笔流水仍是

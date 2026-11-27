@@ -83,7 +83,7 @@ func newTestServer(t *testing.T, cfg config.LLMConfig, setup func(*MemoryCatalog
 	if err := router.Reload(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	proxy := NewRoutedHandler(cfg, router, quota, time.UTC, log)
+	proxy := NewRoutedHandler(cfg, router, quota, quota, time.UTC, log)
 	c := testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
 		httpx.RequestID,
@@ -1405,7 +1405,7 @@ func newHardeningTestServer(t *testing.T, cfg config.LLMConfig, upstreamURL stri
 	if err := router.Reload(ctx); err != nil {
 		t.Fatal(err)
 	}
-	proxy := NewRoutedHandler(cfg, router, quota, time.UTC, log)
+	proxy := NewRoutedHandler(cfg, router, quota, quota, time.UTC, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
 		httpx.RequestID,

@@ -40,11 +40,12 @@ type Charge struct {
 }
 
 // Ledger 保存核销流水，由 store/pg 实现。ReservePoints 必须在同一个事务里比较当天
-// 已申请量与 required 再决定写不写，否则两个并发结算会各按旧值再扣一次；余额副本
+// 已申请量与应扣量再决定写不写，否则两个并发结算会各按旧值再扣一次；余额副本
 // 也要在同一个事务与同一把锁里读，收口之后的申请量不会被并发的余额更新推翻
-// （ADR-0073）。
+// （ADR-0073）。应扣量由流水里的当天累计超额用量与积分折算比例算出，调用方不再
+// 另算一遍。
 type Ledger interface {
-	ReservePoints(ctx context.Context, charge Charge, required int64) (Charge, bool, error)
+	ReservePoints(ctx context.Context, charge Charge) (Charge, bool, error)
 	Unsettled(ctx context.Context, userID string, limit int) ([]Charge, error)
 	// UnsettledGlobal 取全局创建早于 before 且仍未终结的流水，供每十分钟一次的补查
 	// 兜底；它不按账号过滤。
@@ -188,15 +189,14 @@ func (m *Meter) loop(ctx context.Context, queue <-chan job) {
 // 一整天多记的积分也不超过一个。余额副本已知时由 ReservePoints 在同一个事务里按
 // 可用积分收口，余额不足的申请不会每轮重复写一条流水、再核销失败一次（ADR-0073）。
 func (m *Meter) Record(ctx context.Context, userID, day string, chargeableTokens int64) {
-	required := Points(chargeableTokens, m.perPoint)
-	if required <= 0 {
+	if chargeableTokens <= 0 {
 		return
 	}
 	charge := Charge{
 		ID: newChargeID(), UserID: userID, Day: day,
 		Tokens: chargeableTokens, Status: StatusPending,
 	}
-	reserved, ok, err := m.ledger.ReservePoints(ctx, charge, required)
+	reserved, ok, err := m.ledger.ReservePoints(ctx, charge)
 	if err != nil {
 		m.log.Error("reserve nowpay points", "user_id", userID, "day", day, "error", err)
 		return

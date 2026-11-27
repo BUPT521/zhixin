@@ -41,17 +41,11 @@ type Quota interface {
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
-	// Points 返回账号当天核销成功的积分和余额中尚未占用的整积分。两个数各自有一个“已知”
-	// 标记：没有开通收款时都给不出，余额副本还没建好或账号还没有副本时只给已核销
-	// 积分，接口据此分别决定哪个字段回 null，见 ADR-0073。
-	Points(ctx context.Context, userID, day string) (Points, error)
-	// PointCharges 返回账号最近的核销流水，新到旧，供管理后台查看；没有开通收款时
-	// 返回空。只读，不改变流水状态。
-	PointCharges(ctx context.Context, userID string, limit int) ([]PointCharge, error)
-	// RefreshPoints 同步查询一次即刻收的余额并覆盖本地副本，供管理后台的“刷新余额”
-	// 使用；没有开通收款时返回 false，表示这次没有查询。
-	RefreshPoints(ctx context.Context, userID string) (bool, error)
+}
 
+// QuotaAdmin 是管理后台调整账号额度用的写读接口。它与转发路径的 Quota 分开：
+// 后台的列表、保存与清除不改变放行语义，也不该被代理依赖。
+type QuotaAdmin interface {
 	// QuotaOverrides 批量读取管理后台用到的额度覆盖行。它只返回有覆盖的账号，
 	// 没有出现说明这一类额度走实例默认值；一次读回一页账号，避免逐行查询。
 	QuotaOverrides(ctx context.Context, userIDs []string) (map[string]QuotaOverride, error)
@@ -59,6 +53,29 @@ type Quota interface {
 	SetQuotaOverride(ctx context.Context, userID string, daily *int64, note string) error
 	// ClearQuotaOverride 删除覆盖行，这个账号回到实例默认额度。
 	ClearQuotaOverride(ctx context.Context, userID string) error
+}
+
+// Points 是积分与余额的只读查询接口，供账号页与管理后台使用。它与 Quota 分开：
+// 只有开通即刻收的实例才有积分，内存实现因此可以明确地报告没有这项能力。
+type Points interface {
+	// Points 返回账号当天核销成功的积分和余额中尚未占用的整积分。两个数各自有一个“已知”
+	// 标记：没有开通收款时都给不出，余额副本还没建好或账号还没有副本时只给已核销
+	// 积分，接口据此分别决定哪个字段回 null，见 ADR-0073。
+	Points(ctx context.Context, userID, day string) (PointsView, error)
+	// PointCharges 返回账号最近的核销流水，新到旧，供管理后台查看；没有开通收款时
+	// 返回空。只读，不改变流水状态。
+	PointCharges(ctx context.Context, userID string, limit int) ([]PointCharge, error)
+	// RefreshPoints 同步查询一次即刻收的余额并覆盖本地副本，供管理后台的“刷新余额”
+	// 使用；没有开通收款时返回 false，表示这次没有查询。
+	RefreshPoints(ctx context.Context, userID string) (bool, error)
+}
+
+// QuotaStore 是两种存储实现共同满足的完整额度接口，用于装配与类型断言；
+// 消费方只接收自己用到的那个窄接口。
+type QuotaStore interface {
+	Quota
+	QuotaAdmin
+	Points
 }
 
 // QuotaOverride 是管理后台看到的一个账号额度覆盖行。指针为空表示这一项没有
@@ -89,11 +106,11 @@ func attemptOf(failed bool) SettleAttempt {
 	return out
 }
 
-// Points 是账号的积分视图，用于账号页与管理后台展示。Charged 是当天已经落库成功
+// PointsView 是账号的积分视图，用于账号页与管理后台展示。Charged 是当天已经落库成功
 // 的核销，Remaining 是可用积分，与额度放行用同一个口径。ChargedKnown 为真表示收款
 // 已经开通、Charged 有效；RemainingKnown 为真表示余额副本可用、Remaining 有效。
 // SyncedAt 是这份副本对应的快照时刻，零值表示没有副本。
-type Points struct {
+type PointsView struct {
 	Charged        int64
 	Remaining      int64
 	ChargedKnown   bool
@@ -183,6 +200,8 @@ type MemoryQuota struct {
 	instanceTokens int64
 }
 
+var _ QuotaStore = (*MemoryQuota)(nil)
+
 func NewMemoryQuota() *MemoryQuota {
 	return &MemoryQuota{
 		usage:        make(map[memoryUsageKey]memoryUsageRow),
@@ -243,14 +262,14 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	free := int64(0)
 	if limited {
 		counts := m.accountUsageLocked(userID, day, "")
-		free = max(0, limit-counts.Tokens-counts.ReservedTokens)
+		free = FreeRemaining(limit, counts.Tokens+counts.ReservedTokens)
 	}
 	if limited && want > free {
 		return 0, &QuotaExceededError{Reason: QuotaReasonAccount}
 	}
 	// 实例账本只累计免费额度内的部分：超出免费额度、由积分承担的量已经有收入
 	// 覆盖，不再占用给免费额度兜底的实例预算（ADR-0070）。
-	instance := instancePortion(want, free, limited)
+	instance := InstancePortion(want, free, limited)
 	if m.instanceTokens > 0 && instance > max(0, m.instanceTokens-m.instance[day]) {
 		return 0, &QuotaExceededError{Reason: QuotaReasonInstance}
 	}
@@ -276,12 +295,12 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 	row.Failures += max(0, attempt.Failures)
 
 	// 实例账本只加减免费额度内的部分。
-	instance := actual - reserved
+	instance := InstanceDelta(reserved, actual, 0, false)
 	if limit, limited := m.accountLimitLocked(userID); limited {
 		counts := m.accountUsageLocked(userID, day, "")
 		before := max(0, counts.Tokens+counts.ReservedTokens-reserved)
-		free := max(0, limit-before)
-		instance = min(actual, free) - min(reserved, free)
+		free := FreeRemaining(limit, before)
+		instance = InstanceDelta(reserved, actual, free, true)
 	}
 	row.ReservedTokens = max(0, row.ReservedTokens-reserved)
 	row.Tokens = max(0, row.Tokens+actual)
@@ -309,8 +328,8 @@ func (m *MemoryQuota) InstanceUsed(_ context.Context, day string) (int64, error)
 }
 
 // Points 在内存实现里没有积分：本地联调不配即刻收，返回未知，接口不回这两个数。
-func (m *MemoryQuota) Points(context.Context, string, string) (Points, error) {
-	return Points{}, nil
+func (m *MemoryQuota) Points(context.Context, string, string) (PointsView, error) {
+	return PointsView{}, nil
 }
 
 // PointCharges 在内存实现里没有积分流水：本地联调不配即刻收，后台的积分一节只显示
@@ -324,13 +343,32 @@ func (m *MemoryQuota) RefreshPoints(context.Context, string) (bool, error) {
 	return false, nil
 }
 
-// instancePortion 返回一次预留里应当记进实例账本的计费 token 数：只有免费额度
-// 内的部分占用实例预算，超出免费额度、由积分承担的量不占（ADR-0070）。
-func instancePortion(reserved, freeRemaining int64, limited bool) int64 {
+// InstancePortion 返回一次预留里应当记进实例账本的计费 token 数：只有免费额度
+// 内的部分占用实例预算，超出免费额度、由积分承担的量不占（ADR-0070）。内存与
+// PostgreSQL 两种实现都调用它，免费额度的口径只维护这一处。
+func InstancePortion(reserved, freeRemaining int64, limited bool) int64 {
 	if !limited {
 		return reserved
 	}
 	return min(reserved, freeRemaining)
+}
+
+// FreeRemaining 返回免费额度在已经占用量之后还剩多少。used 是这次请求开始之前
+// 已经结算与在途预留的合计；两种存储都从这里取剩余量，额度口径只维护一处。
+func FreeRemaining(limit, used int64) int64 {
+	return max(0, limit-used)
+}
+
+// InstanceDelta 返回一次结算应当给实例账本加的量：预留与结算都只调整免费额度
+// 内的那一段，差额因此是“实际量在免费段内的部分”减去“预留量在免费段内的部分”。
+// freeRemaining 是这次请求开始时免费额度的剩余量，由各存储按自己的账目算出；
+// limited 为假表示不限额度，整笔都进实例账本（ADR-0070）。
+func InstanceDelta(reserved, actual, freeRemaining int64, limited bool) int64 {
+	if !limited {
+		return actual - reserved
+	}
+	free := max(0, freeRemaining)
+	return min(actual, free) - min(reserved, free)
 }
 
 // accountLimitLocked 返回账号当天的额度：覆盖值优先，其次配置的默认值；都没有

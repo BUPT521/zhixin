@@ -69,7 +69,7 @@ func TestPostgresPendingChargeIsSwept(t *testing.T) {
 	}
 
 	// 假执行器不写流水，待办还在；补上流水之后补查只删除待办，不再申请一次。
-	if _, ok, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_1", UserID: "u1", Day: day, Tokens: 2900}, 3); err != nil || !ok {
+	if _, ok, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_1", UserID: "u1", Day: day, Tokens: 2900}); err != nil || !ok {
 		t.Fatalf("写入核销流水: ok=%v err=%v", ok, err)
 	}
 	if _, err := st.SweepPendingCharges(ctx, time.Now().Add(time.Minute), 10); err != nil {

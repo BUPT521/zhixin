@@ -49,6 +49,8 @@ type AccountStore interface {
 type Admin struct {
 	accounts     AccountStore
 	quota        llmproxy.Quota
+	quotaAdmin   llmproxy.QuotaAdmin
+	points       llmproxy.Points
 	delete       func(ctx context.Context, userID string) error
 	dailyDefault int64
 	loc          *time.Location
@@ -57,12 +59,16 @@ type Admin struct {
 	maxJSON      int64
 }
 
-// New 组装账号管理接口。del 由 server.Build 注入 auth.Service 的注销方法。
-func New(accounts AccountStore, quota llmproxy.Quota, del func(context.Context, string) error,
-	dailyDefault int64, loc *time.Location, log *slog.Logger, maxJSON int64) *Admin {
+// New 组装账号管理接口。quota、quotaAdmin 与 points 由 server.Build 分别注入，
+// 这里同时用到用量读取、额度覆盖与积分视图，三者的演进互不影响。del 由
+// server.Build 注入 auth.Service 的注销方法。
+func New(accounts AccountStore, quota llmproxy.Quota, quotaAdmin llmproxy.QuotaAdmin, points llmproxy.Points,
+	del func(context.Context, string) error, dailyDefault int64, loc *time.Location, log *slog.Logger, maxJSON int64) *Admin {
 	return &Admin{
 		accounts:     accounts,
 		quota:        quota,
+		quotaAdmin:   quotaAdmin,
+		points:       points,
 		delete:       del,
 		dailyDefault: dailyDefault,
 		loc:          loc,
@@ -105,7 +111,7 @@ func (a *Admin) List(w http.ResponseWriter, r *http.Request, params api.GetAdmin
 	for _, record := range records {
 		ids = append(ids, record.User.ID)
 	}
-	overrides, err := a.quota.QuotaOverrides(r.Context(), ids)
+	overrides, err := a.quotaAdmin.QuotaOverrides(r.Context(), ids)
 	if err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
@@ -156,7 +162,7 @@ func (a *Admin) RefreshPoints(w http.ResponseWriter, r *http.Request, id string)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), pointsQueryTimeout)
 	defer cancel()
-	enabled, err := a.quota.RefreshPoints(ctx, id)
+	enabled, err := a.points.RefreshPoints(ctx, id)
 	if err != nil {
 		a.log.Warn("refresh the nowpay balance", "user_id", id, "error", err)
 		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed,
@@ -195,7 +201,7 @@ func (a *Admin) PutQuota(w http.ResponseWriter, r *http.Request, id string) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "daily_tokens: at least 1, or null for the instance default")
 		return
 	}
-	if err := a.quota.SetQuotaOverride(r.Context(), id, in.DailyTokens, note); err != nil {
+	if err := a.quotaAdmin.SetQuotaOverride(r.Context(), id, in.DailyTokens, note); err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
 	}
@@ -216,7 +222,7 @@ func (a *Admin) DeleteQuota(w http.ResponseWriter, r *http.Request, id string) {
 	if _, ok := a.loadUser(w, r, id); !ok {
 		return
 	}
-	if err := a.quota.ClearQuotaOverride(r.Context(), id); err != nil {
+	if err := a.quotaAdmin.ClearQuotaOverride(r.Context(), id); err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
 	}
@@ -272,7 +278,7 @@ func (a *Admin) load(w http.ResponseWriter, r *http.Request, id string) (auth.Ac
 }
 
 func (a *Admin) override(ctx context.Context, id string) (llmproxy.QuotaOverride, error) {
-	overrides, err := a.quota.QuotaOverrides(ctx, []string{id})
+	overrides, err := a.quotaAdmin.QuotaOverrides(ctx, []string{id})
 	if err != nil {
 		return llmproxy.QuotaOverride{}, err
 	}
@@ -300,7 +306,7 @@ func (a *Admin) usage(ctx context.Context, id string, now time.Time) (api.AdminA
 // 没有开通收款时三项都为空，页面据此说明这个实例不卖积分；开通了收款但账号还没有
 // 副本时只给已核销积分，可用积分等副本同步之后再显示，不把缺失写成零（ADR-0073）。
 func (a *Admin) pointsView(ctx context.Context, id, day string) (*api.AdminAccountPoints, error) {
-	points, err := a.quota.Points(ctx, id, day)
+	points, err := a.points.Points(ctx, id, day)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +325,7 @@ func (a *Admin) pointsView(ctx context.Context, id, day string) (*api.AdminAccou
 	if !view.Enabled {
 		return view, nil
 	}
-	charges, err := a.quota.PointCharges(ctx, id, maxCharges)
+	charges, err := a.points.PointCharges(ctx, id, maxCharges)
 	if err != nil {
 		return nil, err
 	}
