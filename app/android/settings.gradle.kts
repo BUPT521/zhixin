@@ -19,7 +19,7 @@ pluginManagement {
 
 plugins {
     id("dev.flutter.flutter-plugin-loader") version "1.0.0"
-    id("com.android.application") version "9.5.1" apply false
+    id("com.android.application") version "9.5.3" apply false
     // built-in Kotlin 用这里的 KGP 版本作编译器；apply false 表示只锁版本，不应用 KGP。
     id("org.jetbrains.kotlin.android") version "2.4.21" apply false
 }
