@@ -94,14 +94,11 @@ class _LearningPageState extends State<LearningPage> {
   bool _delayed = false;
   String? _draftAttemptId;
 
-  /// 保存草稿与提交各保留一个请求编号：写入失败后用户再点一次时沿用同一个
-  /// 编号，数据层按提交去重，不会重复写一条草稿或多提交一次作答。
-  String? _draftUid;
-  String? _draftUidAttemptId;
-  String? _submitUid;
-  String? _submitUidAttemptId;
-  String? _assessUid;
-  String? _assessUidAttemptId;
+  /// 保存草稿、提交与模型判断各保留一个请求身份：写入失败后用户再点一次时
+  /// 沿用同一个编号，数据层按提交去重，不会重复写一条草稿或多提交一次作答。
+  final _draftRequest = _RequestIdentity();
+  final _submitRequest = _RequestIdentity();
+  final _assessRequest = _RequestIdentity();
 
   /// 用户选择先不看上次答案重做时，隐藏历次尝试，求助不带入旧讨论回答与困难。
   bool _independentRedo = false;
@@ -217,13 +214,14 @@ class _LearningPageState extends State<LearningPage> {
       return;
     }
     _draftAttemptId = attempt?.id;
-    _answerDraft.text = attempt?.userAnswer ?? '';
-    _solutionDraft.text = attempt?.solution ?? '';
-    _feedbackDraft.text = attempt?.feedback ?? '';
-    _checkableDraft.text = _checkableOf(attempt?.id);
-    _correct = attempt?.isCorrect;
-    _independent = helped ? null : attempt?.independent;
-    _delayed = attempt?.delayed ?? false;
+    final draft = _AnswerDraft.from(attempt, _checkableOf);
+    _answerDraft.text = draft.answer;
+    _solutionDraft.text = draft.solution;
+    _feedbackDraft.text = draft.feedback;
+    _checkableDraft.text = draft.checkable;
+    _correct = draft.correct;
+    _independent = draft.independent;
+    _delayed = draft.delayed;
   }
 
   /// 草稿里已经填过核对依据时带回来；之后的修改直接覆盖同一条判断。
@@ -236,77 +234,32 @@ class _LearningPageState extends State<LearningPage> {
     return '';
   }
 
-  bool get _hasDraftContent =>
-      _answerDraft.text.trim().isNotEmpty ||
-      _solutionDraft.text.trim().isNotEmpty ||
-      _feedbackDraft.text.trim().isNotEmpty ||
-      _checkableDraft.text.trim().isNotEmpty ||
-      _correct != null ||
-      _independent != null ||
-      _delayed;
-
-  /// 已经存下的草稿是否有内容；没有时离开页面不必再写一条空草稿。
-  bool _savedDraftHasContent(Attempt? attempt) {
-    if (attempt == null) return false;
-    return (attempt.userAnswer?.trim().isNotEmpty ?? false) ||
-        (attempt.solution?.trim().isNotEmpty ?? false) ||
-        (attempt.feedback?.trim().isNotEmpty ?? false) ||
-        attempt.isCorrect != null ||
-        attempt.independent != null ||
-        attempt.delayed ||
-        _checkableOf(attempt.id).isNotEmpty;
-  }
-
-  /// 当前表单与已经保存的草稿是否有差别；没有差别时不重复写提交。
-  bool _draftDiffersFromSaved(Attempt? attempt) {
-    if (attempt == null) return _hasDraftContent;
-    final savedIndependent = attempt.helps.isEmpty ? attempt.independent : null;
-    return (attempt.userAnswer ?? '') != _answerDraft.text.trim() ||
-        (attempt.solution ?? '') != _solutionDraft.text.trim() ||
-        (attempt.feedback ?? '') != _feedbackDraft.text.trim() ||
-        attempt.isCorrect != _correct ||
-        savedIndependent != _independent ||
-        attempt.delayed != _delayed ||
-        _checkableOf(attempt.id) != _checkableDraft.text.trim();
-  }
+  /// 页面当前这一份草稿；文本、自评与独立性只在值对象上比较一次。
+  _AnswerDraft get _draft => _AnswerDraft(
+    answer: _answerDraft.text,
+    solution: _solutionDraft.text,
+    feedback: _feedbackDraft.text,
+    checkable: _checkableDraft.text,
+    correct: _correct,
+    independent: _independent,
+    delayed: _delayed,
+  );
 
   /// 保存整份草稿；检查、提交与离开学习页之前都先调用它。
   ///
   /// 同一次动作重试沿用同一个提交身份，换了一条尝试就换身份；身份是动作开始时
   /// 生成的一个 UUIDv7（ADR-0053 决定第 3 条）。
-  String _uidForDraft(String attemptId) {
-    if (_draftUidAttemptId != attemptId) {
-      _draftUidAttemptId = attemptId;
-      _draftUid = newUuidV7();
-    }
-    return _draftUid!;
-  }
-
-  String _uidForSubmit(String attemptId) {
-    if (_submitUidAttemptId != attemptId) {
-      _submitUidAttemptId = attemptId;
-      _submitUid = newUuidV7();
-    }
-    return _submitUid!;
-  }
-
-  String _uidForAssess(String attemptId) {
-    if (_assessUidAttemptId != attemptId) {
-      _assessUidAttemptId = attemptId;
-      _assessUid = newUuidV7();
-    }
-    return _assessUid!;
-  }
-
   Future<bool> _saveDraft({bool notify = true}) async {
     final open = _view?.openAttempt;
-    if (!_hasDraftContent && !_savedDraftHasContent(open)) {
+    final draft = _draft;
+    final saved = _AnswerDraft.from(open, _checkableOf);
+    if (!draft.hasContent && !saved.hasContent) {
       if (notify && mounted) {
         showToast(context, '还没有写下草稿');
       }
       return true;
     }
-    if (!_draftDiffersFromSaved(open)) {
+    if (draft == saved) {
       if (notify && mounted) {
         showToast(context, '草稿已保存，可继续补充');
       }
@@ -324,11 +277,10 @@ class _LearningPageState extends State<LearningPage> {
         delayed: _delayed,
         feedback: _feedbackDraft.text,
         checkable: _checkableDraft.text,
-        uid: _uidForDraft(attempt.id),
+        uid: _draftRequest.uidFor(attempt.id),
       );
       // 写成功之后这一次请求结束；下一次保存换新的编号。
-      _draftUid = null;
-      _draftUidAttemptId = null;
+      _draftRequest.clear();
       if (!mounted) return true;
       _draftAttemptId = attempt.id;
       if (notify) {
@@ -587,10 +539,9 @@ class _LearningPageState extends State<LearningPage> {
         delayed: _delayed,
         feedback: _feedbackDraft.text,
         checkable: _checkableDraft.text,
-        uid: _uidForSubmit(attempt.id),
+        uid: _submitRequest.uidFor(attempt.id),
       );
-      _submitUid = null;
-      _submitUidAttemptId = null;
+      _submitRequest.clear();
       if (!mounted) return;
       // 提交之后这条尝试不再可改：表单的复位由订阅回填新的一屏完成。
       setState(() {
@@ -1224,11 +1175,10 @@ class _LearningPageState extends State<LearningPage> {
         questionId: widget.questionId,
         attemptId: attempt.id,
         broughtIdentities: app.broughtSources.identities,
-        uid: _uidForAssess(attempt.id),
+        uid: _assessRequest.uidFor(attempt.id),
       );
       app.broughtSources.clear();
-      _assessUid = null;
-      _assessUidAttemptId = null;
+      _assessRequest.clear();
       if (!mounted) return;
       showToast(context, '模型判断已记录');
     } catch (error, stack) {
@@ -1263,7 +1213,7 @@ class _LearningPageState extends State<LearningPage> {
   }
 }
 
-/// 学习页的时间线取数：帮助、记忆、说明与回执都从当前未提交尝试读。
+/// 学习页时间线的取数：帮助、记忆、说明与回执都从当前未提交尝试读。
 class _LearningTimeline extends BuddyTimelineAdapter {
   _LearningTimeline(this._state);
 
@@ -1347,4 +1297,100 @@ class _LearningTimeline extends BuddyTimelineAdapter {
 
   @override
   void undoMemory(MemoryItemView item) => _state._undoMemory(item);
+}
+
+/// 作答草稿的七项内容：四段文字、自评、独立性与间隔标记。
+///
+/// 有没有内容、与已经保存的草稿是否一致，都在这一个值对象上判断一次；原先
+/// `_hasDraftContent`、`_savedDraftHasContent` 与 `_draftDiffersFromSaved`
+/// 逐项比较同一批字段，改一处容易漏另一处。文本比较去掉首尾空白，避免只差
+/// 空格的草稿反复写提交。
+class _AnswerDraft {
+  const _AnswerDraft({
+    this.answer = '',
+    this.solution = '',
+    this.feedback = '',
+    this.checkable = '',
+    this.correct,
+    this.independent,
+    this.delayed = false,
+  });
+
+  /// 从已经保存的尝试读回；有应用内帮助时不再记独立完成。
+  factory _AnswerDraft.from(
+    Attempt? attempt,
+    String Function(String? attemptId) checkableOf,
+  ) {
+    if (attempt == null) return const _AnswerDraft();
+    return _AnswerDraft(
+      answer: attempt.userAnswer ?? '',
+      solution: attempt.solution ?? '',
+      feedback: attempt.feedback ?? '',
+      checkable: checkableOf(attempt.id),
+      correct: attempt.isCorrect,
+      independent: attempt.helps.isEmpty ? attempt.independent : null,
+      delayed: attempt.delayed,
+    );
+  }
+
+  final String answer;
+  final String solution;
+  final String feedback;
+  final String checkable;
+  final bool? correct;
+  final bool? independent;
+  final bool delayed;
+
+  bool get hasContent =>
+      answer.trim().isNotEmpty ||
+      solution.trim().isNotEmpty ||
+      feedback.trim().isNotEmpty ||
+      checkable.trim().isNotEmpty ||
+      correct != null ||
+      independent != null ||
+      delayed;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _AnswerDraft &&
+      other.answer.trim() == answer.trim() &&
+      other.solution.trim() == solution.trim() &&
+      other.feedback.trim() == feedback.trim() &&
+      other.checkable.trim() == checkable.trim() &&
+      other.correct == correct &&
+      other.independent == independent &&
+      other.delayed == delayed;
+
+  @override
+  int get hashCode => Object.hash(
+    answer.trim(),
+    solution.trim(),
+    feedback.trim(),
+    checkable.trim(),
+    correct,
+    independent,
+    delayed,
+  );
+}
+
+/// 一次动作的请求身份：同一条尝试上重试沿用同一个编号，换一条就换编号。
+///
+/// 保存草稿、提交作答与模型判断原先各写两个字段加一个取号方法，成功后各自
+/// 置空；现在三处各持一个实例，取值与复位只在这里。
+class _RequestIdentity {
+  String? _attemptId;
+  String? _uid;
+
+  String uidFor(String attemptId) {
+    if (_attemptId != attemptId) {
+      _attemptId = attemptId;
+      _uid = newUuidV7();
+    }
+    return _uid!;
+  }
+
+  void clear() {
+    _attemptId = null;
+    _uid = null;
+  }
 }
