@@ -93,6 +93,26 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 	}
 }
 
+// TestObjectPrefixesAndKeysShareOneDefinition 核对键规则只有一处：前缀常量、
+// 账号前缀与完整键逐层拼出来，后台对账扫描的前缀因此与写入方一致。
+func TestObjectPrefixesAndKeysShareOneDefinition(t *testing.T) {
+	if got, want := BackupPrefix("u1"), BackupObjectPrefix+"u1/"; got != want {
+		t.Fatalf("BackupPrefix = %q，want %q", got, want)
+	}
+	if got, want := BackupKey("u1", "b1"), BackupPrefix("u1")+"b1.zip"; got != want {
+		t.Fatalf("BackupKey = %q，want %q", got, want)
+	}
+	if got, want := AttachmentPrefix("u1"), AttachmentObjectPrefix+"u1/"; got != want {
+		t.Fatalf("AttachmentPrefix = %q，want %q", got, want)
+	}
+	if got, want := AttachmentKey("u1", "aa"), AttachmentPrefix("u1")+"aa"; got != want {
+		t.Fatalf("AttachmentKey = %q，want %q", got, want)
+	}
+	if !strings.HasPrefix(BackupKey("u1", "b1"), BackupObjectPrefix) || !strings.HasPrefix(AttachmentKey("u1", "aa"), AttachmentObjectPrefix) {
+		t.Fatal("完整键必须落在对账扫描的前缀下")
+	}
+}
+
 func TestMemory(t *testing.T) {
 	testStore(t, func(*testing.T) Store { return NewMemory() })
 }

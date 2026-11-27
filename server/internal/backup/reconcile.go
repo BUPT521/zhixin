@@ -16,15 +16,6 @@ import (
 // 一致。
 const ReconcileGrace = time.Hour
 
-const (
-	// backupObjectPrefix 是全部备份对象共用的键前缀，已知集合是 backup 表的
-	// (账号, id)。
-	backupObjectPrefix = "backups/"
-	// attachmentObjectPrefix 是全部附件对象共用的键前缀，已知集合是 attachment
-	// 表的 (账号, sha256)。
-	attachmentObjectPrefix = "attachments/"
-)
-
 // AttachmentKeys 列出仍然登记在附件索引里的对象键，由附件存储实现。对账用它把
 // attachments/ 下的对象分成仍登记与遗留字节；没有注入时 Reconcile 返回错误，
 // 不会只对账备份而让附件遗留字节一直占着对象存储。
@@ -79,8 +70,8 @@ func (s *Service) Reconcile(ctx context.Context) (int, error) {
 		prefix string
 		known  []string
 	}{
-		{prefix: backupObjectPrefix, known: backupKeys},
-		{prefix: attachmentObjectPrefix, known: attachmentKeys},
+		{prefix: objectstore.BackupObjectPrefix, known: backupKeys},
+		{prefix: objectstore.AttachmentObjectPrefix, known: attachmentKeys},
 	} {
 		count, err := s.removeOrphans(ctx, scope.prefix, scope.known, cutoff)
 		removed += count

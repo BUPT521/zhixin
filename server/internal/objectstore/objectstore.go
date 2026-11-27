@@ -30,13 +30,22 @@ type Object struct {
 // ErrNotFound 表示键下没有对象。
 var ErrNotFound = errors.New("objectstore: 对象不存在")
 
+// 对象键的公共前缀只在这里定义：备份与附件的键、删除账号时的账号前缀，以及
+// 后台对账扫描的前缀都从这两个常量拼出来，键规则因此只有一处（ADR-0037）。
+const (
+	// BackupObjectPrefix 是全部整库备份对象共用的键前缀。
+	BackupObjectPrefix = "backups/"
+	// AttachmentObjectPrefix 是全部附件对象共用的键前缀。
+	AttachmentObjectPrefix = "attachments/"
+)
+
 // BackupKey 是整库备份在对象存储里的键：backups/<账号>/<id>.zip。
 func BackupKey(userID, id string) string {
 	return BackupPrefix(userID) + id + ".zip"
 }
 
 // BackupPrefix 是一个账号全部备份的前缀，删除账号时按它清理。
-func BackupPrefix(userID string) string { return "backups/" + userID + "/" }
+func BackupPrefix(userID string) string { return BackupObjectPrefix + userID + "/" }
 
 // AttachmentKey 是附件在对象存储里的键：attachments/<账号>/<sha256>。
 func AttachmentKey(userID, sha string) string {
@@ -45,7 +54,7 @@ func AttachmentKey(userID, sha string) string {
 
 // AttachmentPrefix 是一个账号全部附件的前缀。
 func AttachmentPrefix(userID string) string {
-	return "attachments/" + userID + "/"
+	return AttachmentObjectPrefix + userID + "/"
 }
 
 // Store 是三种实现共用的接口。
