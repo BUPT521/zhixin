@@ -90,6 +90,7 @@ func MemoryStores() Stores {
 	objects := objectstore.NewMemory()
 	blobStore := blobs.NewStore(objects)
 	quotaStore := llmproxy.NewMemoryQuota()
+	quotaStore.SetKeyLookup(authStore.KeysByUser)
 	cacheStore := llmproxy.NewMemoryEmbeddingCache()
 	return Stores{
 		Auth:      authStore,

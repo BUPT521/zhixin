@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>知新 · 模型后台</title>
+<title>知新 · 管理后台</title>
 <link rel="icon" href="/admin/mark.png" type="image/png">
 <link rel="stylesheet" href="/admin/app.css">
 </head>
@@ -13,7 +13,7 @@
   <div class="top-inner">
     <div class="brand">
       <img src="/admin/mark.png" width="36" height="36" alt="">
-      <strong>知新</strong><span>模型后台</span>
+      <strong>知新</strong><span>管理后台</span>
     </div>
     <div id="session" class="session" hidden>
       <span class="badge ok">已连接</span>
@@ -34,21 +34,26 @@
 </main>
 
 <div id="app" class="workspace" hidden>
-  <nav class="tabs" role="tablist" aria-label="模型后台">
-    <button type="button" role="tab" id="nav-providers" data-tab="providers" aria-selected="true" aria-controls="tab-providers">
-      <span class="tab-icon icon-sources" aria-hidden="true"></span>模型来源
+  <nav class="tabs" role="tablist" aria-label="后台功能">
+    <div class="tab-group" role="presentation">模型服务</div>
+    <button type="button" role="tab" id="nav-models" data-tab="models" aria-selected="true" aria-controls="tab-models">
+      <span class="tab-icon icon-routes" aria-hidden="true"></span>模型调度
     </button>
-    <button type="button" role="tab" id="nav-models" data-tab="models" aria-selected="false" aria-controls="tab-models" tabindex="-1">
-      <span class="tab-icon icon-routes" aria-hidden="true"></span>模型与路由
+    <button type="button" role="tab" id="nav-providers" data-tab="providers" aria-selected="false" aria-controls="tab-providers" tabindex="-1">
+      <span class="tab-icon icon-sources" aria-hidden="true"></span>上游来源
     </button>
     <button type="button" role="tab" id="nav-usage" data-tab="usage" aria-selected="false" aria-controls="tab-usage" tabindex="-1">
-      <span class="tab-icon icon-usage" aria-hidden="true"></span>用量统计
+      <span class="tab-icon icon-usage" aria-hidden="true"></span>路由统计
+    </button>
+    <div class="tab-group" role="presentation">运营管理</div>
+    <button type="button" role="tab" id="nav-accounts" data-tab="accounts" aria-selected="false" aria-controls="tab-accounts" tabindex="-1">
+      <span class="tab-icon icon-accounts" aria-hidden="true"></span>账号管理
+    </button>
+    <button type="button" role="tab" id="nav-key-usage" data-tab="key-usage" aria-selected="false" aria-controls="tab-key-usage" tabindex="-1">
+      <span class="tab-icon icon-usage" aria-hidden="true"></span>密钥用量
     </button>
     <button type="button" role="tab" id="nav-retention" data-tab="retention" aria-selected="false" aria-controls="tab-retention" tabindex="-1">
       <span class="tab-icon icon-retention" aria-hidden="true"></span>留存
-    </button>
-    <button type="button" role="tab" id="nav-accounts" data-tab="accounts" aria-selected="false" aria-controls="tab-accounts" tabindex="-1">
-      <span class="tab-icon icon-accounts" aria-hidden="true"></span>账号管理
     </button>
     <button type="button" role="tab" id="nav-feedback" data-tab="feedback" aria-selected="false" aria-controls="tab-feedback" tabindex="-1">
       <span class="tab-icon icon-feedback" aria-hidden="true"></span>反馈
@@ -56,10 +61,10 @@
   </nav>
 
 <main>
-  <section id="tab-providers" class="panel" role="tabpanel" aria-labelledby="nav-providers">
+  <section id="tab-providers" class="panel" role="tabpanel" aria-labelledby="nav-providers" hidden>
     <div class="panel-head">
       <div class="panel-intro">
-        <h1 class="panel-title">模型来源</h1>
+        <h1 class="panel-title">上游来源</h1>
         <p class="hint">配置 OpenAI 兼容的服务地址和密钥。密钥加密保存，列表仅显示末四位。</p>
         <p id="provider-summary" class="summary" aria-live="polite"></p>
       </div>
@@ -71,11 +76,11 @@
     </table></div>
   </section>
 
-  <section id="tab-models" class="panel" role="tabpanel" aria-labelledby="nav-models" hidden>
+  <section id="tab-models" class="panel" role="tabpanel" aria-labelledby="nav-models">
     <div class="panel-head">
       <div class="panel-intro">
-        <h1 class="panel-title">对外模型与路由</h1>
-        <p class="hint">请求先尝试主用组，再按顺序尝试备用组。冷却中的来源留到最后。嵌入模型的多条路由必须使用同一个向量空间。</p>
+        <h1 class="panel-title">模型调度</h1>
+        <p class="hint">请求按优先组选择健康且具备所需能力的路由。当前健康权重反映组内配置与健康状态，会话可能沿用之前接手的路由。</p>
         <p id="model-summary" class="summary" aria-live="polite"></p>
       </div>
       <div class="panel-actions">
@@ -100,7 +105,7 @@
   <section id="tab-usage" class="panel" role="tabpanel" aria-labelledby="nav-usage" hidden>
     <div class="panel-head usage-head">
       <div>
-        <h1 class="panel-title">用量统计</h1>
+        <h1 class="panel-title">路由统计</h1>
         <p id="usage-period" class="hint"></p>
       </div>
       <div class="usage-controls">
@@ -118,7 +123,7 @@
         <button id="clear-usage-filters" type="button" class="link" hidden>清除筛选</button>
       </div>
       <dl class="usage-metrics">
-        <div><dt>Token 用量</dt><dd id="usage-tokens"></dd><dd id="usage-estimate" class="usage-detail"></dd><dd id="usage-cache" class="usage-detail"></dd></div>
+        <div><dt>上游 Token</dt><dd id="usage-tokens"></dd><dd id="usage-estimate" class="usage-detail"></dd><dd id="usage-cache" class="usage-detail"></dd></div>
         <div><dt>路由尝试</dt><dd id="usage-attempts"></dd><dd id="usage-attempt-detail" class="usage-detail"></dd><dd id="usage-unsuccessful" class="usage-detail"></dd></div>
         <div><dt>路由成功率</dt><dd id="usage-success-rate"></dd><dd id="usage-successes" class="usage-detail"></dd></div>
       </dl>
@@ -144,7 +149,7 @@
       <section class="usage-card" aria-labelledby="usage-breakdown">
         <div class="usage-card-head">
           <div class="usage-breakdown-heading">
-            <h2 id="usage-breakdown">用量明细</h2>
+            <h2 id="usage-breakdown">路由明细</h2>
             <span id="usage-table-scope" class="hint"></span>
             <button id="clear-usage-day" class="link" type="button" hidden>查看整个区间</button>
           </div>
@@ -158,20 +163,42 @@
         </table></div>
         <p class="hint usage-note">每次请求的第一条实际执行路由计入首次尝试，失败后执行的后续路由计入故障切换，嵌入拆批仍按一次尝试计算。</p>
       </section>
+    </div>
+  </section>
+
+  <section id="tab-key-usage" class="panel" role="tabpanel" aria-labelledby="nav-key-usage" hidden>
+    <div class="panel-head usage-head">
+      <div>
+        <h1 class="panel-title">密钥用量</h1>
+        <p class="hint" id="key-usage-period"></p>
+      </div>
+      <div class="usage-controls">
+        <label>统计范围<select id="key-usage-days"><option value="1">今天</option><option value="7" selected>最近 7 天</option><option value="30">最近 30 天</option></select></label>
+        <button id="refresh-key-usage" class="ghost" type="button">刷新</button>
+      </div>
+    </div>
+    <form id="key-usage-filter" class="usage-filters" autocomplete="off">
+      <label>账号编号<input id="key-usage-user" type="search" maxlength="128" placeholder="填写完整账号编号" spellcheck="false"></label>
+      <button type="submit" class="ghost">筛选</button>
+      <button id="clear-key-usage-user" type="button" class="link" hidden>清除筛选</button>
+    </form>
+    <p id="key-usage-status" class="hint" role="status" hidden></p>
+    <div id="key-usage-report" hidden>
+      <dl class="usage-metrics">
+        <div><dt>聊天计费 Token</dt><dd id="key-usage-chat"></dd><dd id="key-usage-ratio" class="usage-detail"></dd></div>
+        <div><dt>嵌入计费 Token</dt><dd id="key-usage-embedding"></dd><dd id="key-usage-reserved" class="usage-detail"></dd></div>
+        <div><dt>尝试次数</dt><dd id="key-usage-attempts"></dd><dd id="key-usage-failures" class="usage-detail"></dd></div>
+      </dl>
       <section class="usage-card" aria-labelledby="key-usage-title">
         <div class="usage-card-head">
-          <div class="usage-breakdown-heading">
-            <h2 id="key-usage-title">按密钥计费</h2>
-            <span id="key-usage-scope" class="hint"></span>
-          </div>
-          <p id="key-usage-ratio" class="hint"></p>
+          <h2 id="key-usage-title">结算明细</h2>
+          <label class="usage-group">日期<select id="key-usage-day"></select></label>
         </div>
-        <p id="key-usage-status" class="empty" role="status" hidden></p>
         <div class="scroll" role="region" aria-labelledby="key-usage-title" tabindex="0"><table class="grid usage-table key-usage-table">
-          <thead><tr><th scope="col">密钥</th><th scope="col">账号</th><th scope="col">对话 Token</th><th scope="col">约合积分</th><th scope="col">嵌入 Token</th><th scope="col">尝试</th><th scope="col">未成功</th><th scope="col">在途</th><th scope="col">每日趋势</th><th scope="col">最近使用</th><th scope="col">状态</th></tr></thead>
+          <thead><tr><th scope="col">密钥</th><th scope="col">账号</th><th scope="col">聊天 Token</th><th scope="col">约合积分</th><th scope="col">嵌入 Token</th><th scope="col">尝试</th><th scope="col">未成功</th><th scope="col">在途 Token</th><th scope="col">每日趋势</th><th scope="col">最近使用</th><th scope="col">状态</th></tr></thead>
           <tbody id="key-usage-rows"></tbody>
         </table></div>
-        <p class="hint usage-note">对话的计费 token 是上游报告用量按缓存命中折算之后的数量；约合积分按核销同一比例折算并向上取整，没有扣当天的免费额度，只作对账参考，嵌入只占每日免费额度，不计入积分。尝试与未成功是调用次数：失败按 0 结算，不产生 token，只看 token 分不出一直在失败的密钥与没有用过的密钥。在途是还没有结算的预留，撤销超过保留期的密钥显示为已清理。</p>
+        <p class="hint usage-note">约合积分按聊天计费 Token 折算，未扣除每日免费额度。实际核销请查看账号详情。发起上游尝试前取消的请求不计入尝试。</p>
       </section>
     </div>
   </section>
@@ -223,7 +250,7 @@
     <div class="panel-head">
       <div class="panel-intro">
         <h1 class="panel-title">账号管理</h1>
-        <p class="hint">按邮箱或账号编号查找账号，调整这个账号的每日模型额度，或注销账号。注销会删除账号与全部云端数据，无法恢复。</p>
+        <p class="hint">按邮箱或账号编号查找账号，核对登录方式、用量、额度和积分。</p>
         <p id="account-summary" class="summary" aria-live="polite"></p>
       </div>
       <div class="panel-actions"><button id="refresh-accounts" class="ghost" type="button">刷新</button></div>
@@ -403,17 +430,22 @@
   <form id="quota-form" method="dialog">
     <header class="dialog-head">
       <div class="dialog-heading">
-        <h2 id="quota-title">额度与积分</h2>
-        <p id="quota-desc" class="dialog-sub">额度按计费 token 计，保存之后下一次模型请求生效；积分只读，扣减由即刻收完成。</p>
+        <h2 id="quota-title">账号详情</h2>
+        <p id="quota-desc" class="dialog-sub">每日额度按计费 Token 计算，保存后在下一次模型请求生效。</p>
       </div>
       <button type="button" class="icon-button" data-close="quota-dialog" aria-label="关闭">×</button>
     </header>
     <div class="dialog-body">
       <div class="account-detail">
         <p id="quota-account" class="account-line"></p>
+        <ul id="quota-identities" class="account-identities" aria-label="登录方式"></ul>
+        <div class="section-head">
+          <h3>已结算用量 <span id="quota-usage-day" class="hint"></span></h3>
+          <button type="button" class="link" id="quota-key-usage">查看历史用量</button>
+        </div>
         <dl class="account-usage">
-          <div><dt>聊天今日</dt><dd id="quota-chat-used"></dd></div>
-          <div><dt>嵌入今日</dt><dd id="quota-embedding-used"></dd></div>
+          <div><dt>聊天</dt><dd id="quota-chat-used"></dd></div>
+          <div><dt>嵌入</dt><dd id="quota-embedding-used"></dd></div>
         </dl>
       </div>
       <section class="form-section" aria-labelledby="quota-points-title">
@@ -535,7 +567,7 @@
   </div>
 </dialog>
 
-<script src="/admin/app.js"></script>
+<script type="module" src="/admin/app.js"></script>
 </body>
 </html>
 

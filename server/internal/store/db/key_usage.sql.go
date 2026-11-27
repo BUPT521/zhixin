@@ -32,12 +32,16 @@ SELECT
 FROM llm_usage u
 LEFT JOIN api_key k ON k.id = u.api_key_id
 WHERE u.day BETWEEN $1::date AND $2::date
+  AND ($3::text = '' OR u.user_id = $3::text)
+  AND (u.tokens <> 0 OR u.reserved_tokens <> 0 OR u.input_tokens <> 0
+       OR u.cached_tokens <> 0 OR u.attempts <> 0 OR u.failures <> 0)
 ORDER BY u.day, u.user_id, u.api_key_id, u.kind
 `
 
 type ListKeyUsageParams struct {
 	FromDay pgtype.Date
 	ToDay   pgtype.Date
+	UserID  string
 }
 
 type ListKeyUsageRow struct {
@@ -72,7 +76,7 @@ type ListKeyUsageRow struct {
 // 按天列出区间内每把密钥的已结算与在途用量。行按账号、密钥、自然日与用途分开
 // 返回，聚合交给调用方：后台要按密钥合计，测试要核对单日单用途的数字。
 func (q *Queries) ListKeyUsage(ctx context.Context, arg ListKeyUsageParams) ([]ListKeyUsageRow, error) {
-	rows, err := q.db.Query(ctx, listKeyUsage, arg.FromDay, arg.ToDay)
+	rows, err := q.db.Query(ctx, listKeyUsage, arg.FromDay, arg.ToDay, arg.UserID)
 	if err != nil {
 		return nil, err
 	}

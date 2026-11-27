@@ -1263,6 +1263,10 @@ paths:
           in: query
           description: 包含今天，按服务端时区计算
           schema: { type: integer, minimum: 1, maximum: 30, default: 7 }
+        - name: user_id
+          in: query
+          description: 只查这个账号编号的用量，省略时查全部账号
+          schema: { type: string, minLength: 1, maxLength: 128 }
       responses:
         "200":
           description: 按密钥汇总的用量
@@ -1882,9 +1886,11 @@ components:
           additionalProperties: { $ref: "#/components/schemas/AdminKeyUsageDay" }
     AdminKeyUsageReport:
       type: object
-      required: [timezone, tokens_per_point, keys]
+      required: [timezone, from_day, to_day, tokens_per_point, keys]
       properties:
         timezone: { type: string }
+        from_day: { type: string, format: date, description: 统计区间的首日 }
+        to_day: { type: string, format: date, description: 统计区间的末日 }
         tokens_per_point: { type: integer, format: int64, description: 一个积分覆盖的计费 token 数，与核销同一配置 }
         keys:
           type: array

@@ -123,6 +123,13 @@ body { margin: 0; background: var(--paper); color: var(--ink); }
   border: 1px solid var(--line);
   border-radius: var(--card-radius);
 }
+.tab-group {
+  padding: 8px 12px 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.tab-group:not(:first-child) { margin-top: 6px; border-top: 1px solid var(--line); }
+
 .tabs button {
   justify-content: start;
   gap: 10px;
@@ -615,6 +622,9 @@ label.check input { flex: 0 0 auto; }
 .key-spark { display: inline-flex; align-items: flex-end; gap: 2px; height: 18px; min-width: 64px; }
 .key-spark-bar { width: 4px; border-radius: 1px; background: var(--accent); opacity: 0.55; }
 .key-spark-empty { background: var(--line); opacity: 1; }
+.account-identities { padding: 0; margin: 0 0 12px; list-style: none; }
+.account-identities li { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; overflow-wrap: anywhere; }
+#key-usage-user { max-width: 430px; }
 
 @container (max-width: 820px) {
   .list-surface { border: 0; border-radius: 0; background: transparent; }
@@ -651,6 +661,7 @@ label.check input { flex: 0 0 auto; }
 @media (max-width: 760px) {
   :root {
     --header-height: 56px;
+    --nav-height: 108px;
     --page-inset: 16px;
     scroll-padding-bottom: calc(var(--nav-height) + env(safe-area-inset-bottom) + 12px);
   }
@@ -670,6 +681,7 @@ label.check input { flex: 0 0 auto; }
     border-width: 1px 0 0;
     border-radius: 0;
   }
+  .tab-group { display: none; }
   .tabs button { flex-direction: column; justify-content: center; gap: 4px; padding: 3px 0; font-size: 12px; white-space: normal; }
   .tabs button[aria-selected="true"] { background: transparent; color: var(--accent); }
   .tabs button:hover:not(:disabled) { background: var(--raised); }

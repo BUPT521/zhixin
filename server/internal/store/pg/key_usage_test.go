@@ -47,7 +47,7 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 		t.Fatalf("revoke key: %v", err)
 	}
 
-	rows, err := st.KeyUsage(ctx, day1, day3)
+	rows, err := st.KeyUsage(ctx, day1, day3, "")
 	if err != nil {
 		t.Fatalf("key usage: %v", err)
 	}
@@ -84,9 +84,21 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 	}
 
 	// 区间按自然日过滤：只要 day2 时只剩这一行。
-	rows, err = st.KeyUsage(ctx, day2, day2)
+	rows, err = st.KeyUsage(ctx, day2, day2, "")
 	if err != nil || len(rows) != 1 || rows[0].Day != day2 || rows[0].Tokens != 60 {
 		t.Fatalf("按区间过滤：%+v %v", rows, err)
+	}
+
+	other := auth.User{ID: user.ID + "-other", PasswordHash: "hash"}
+	if err := createAccount(ctx, st, other, "other-key-usage@b.cn"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Settle(ctx, other.ID, day2, llmproxy.KindChat, "", 0, 9, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = st.KeyUsage(ctx, day2, day2, user.ID)
+	if err != nil || len(rows) != 1 || rows[0].UserID != user.ID {
+		t.Fatalf("按完整账号编号过滤：%+v %v", rows, err)
 	}
 
 	// 名字为空的密钥仍然是在用的：客户端允许名字留空，名字空、key_present 真，
@@ -98,7 +110,7 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 	if err := st.Settle(ctx, user.ID, day2, llmproxy.KindChat, blank.ID, 0, 30, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 		t.Fatalf("settle with the blank key: %v", err)
 	}
-	rows, err = st.KeyUsage(ctx, day2, day2)
+	rows, err = st.KeyUsage(ctx, day2, day2, "")
 	if err != nil {
 		t.Fatalf("key usage for the blank key: %v", err)
 	}
@@ -126,7 +138,7 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 		llmproxy.SettleAttempt{Attempts: 1, Failures: 1}); err != nil {
 		t.Fatalf("settle the failed call: %v", err)
 	}
-	rows, err = st.KeyUsage(ctx, day2, day2)
+	rows, err = st.KeyUsage(ctx, day2, day2, "")
 	if err != nil {
 		t.Fatalf("key usage for the failed call: %v", err)
 	}
@@ -149,7 +161,7 @@ func TestKeyUsageJoinsKeys(t *testing.T) {
 	if _, err := st.pool.Exec(ctx, `DELETE FROM api_key WHERE id = $1`, key.ID); err != nil {
 		t.Fatalf("delete key: %v", err)
 	}
-	rows, err = st.KeyUsage(ctx, day1, day1)
+	rows, err = st.KeyUsage(ctx, day1, day1, "")
 	if err != nil {
 		t.Fatalf("key usage after prune: %v", err)
 	}

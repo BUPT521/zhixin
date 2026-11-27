@@ -317,12 +317,18 @@ func TestStickyRoutesRespectHealthAndCapabilities(t *testing.T) {
 	})
 	router := env.proxy.router
 	m := mustModel(t, env)
-	router.rememberTakeover("s", healthKey{provider: "b", upstream: "b"})
+	router.rememberTakeover("s", routeHealthKey(m, m.Live[1]))
 
 	if got := routeIDs(router.candidates(m, "s", capabilities{})); got != "b,a" {
 		t.Fatalf("接手的路由应排在最前：%s", got)
 	}
 	if got := routeIDs(router.candidates(m, "s", capabilities{tools: true})); got != "a" {
 		t.Fatalf("缺少函数调用能力的路由不应因粘滞重新进入候选：%s", got)
+	}
+
+	other := *m
+	other.Name = "other-model"
+	if got := routeIDs(router.candidates(&other, "s", capabilities{})); got != "a,b" {
+		t.Fatalf("同一讨论改用另一模型时应按该模型的路由配置选择：%s", got)
 	}
 }

@@ -1,6 +1,5 @@
 // Package admin 是管理后台的入口：/admin/ 下的静态页面与 /admin/v1/ 管理接口
-// 的令牌校验。管理接口的处理器在各业务包里（目前只有 llmproxy 的模型来源与
-// 路由），这里不碰业务数据。
+// 的令牌校验。管理接口的处理器在各业务包里。
 //
 // 管理令牌来自 ZHIXIN_ADMIN_TOKEN，为空时整个 /admin 返回 404，看不出后台是否
 // 存在。令牌与账号体系无关：服务器只有一位管理员（docs/04 D7），单独的令牌
@@ -104,7 +103,12 @@ func RegisterUI(mux *http.ServeMux, guard func(http.Handler) http.Handler) {
 		http.Redirect(w, r, "/admin/", http.StatusMovedPermanently)
 	})))
 	mux.Handle("GET /admin/{$}", guard(serve("index.html", "text/html; charset=utf-8")))
-	mux.Handle("GET /admin/app.js", guard(serve("app.js", "text/javascript; charset=utf-8")))
+	for _, name := range []string{
+		"app.js", "shared.js", "catalog.js", "usage.js", "key-usage.js",
+		"accounts.js", "retention.js", "feedback.js",
+	} {
+		mux.Handle("GET /admin/"+name, guard(serve(name, "text/javascript; charset=utf-8")))
+	}
 	mux.Handle("GET /admin/app.css", guard(serve("app.css", "text/css; charset=utf-8")))
 	mux.Handle("GET /admin/mark.png", guard(serve("mark.png", "image/png")))
 }

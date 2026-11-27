@@ -79,10 +79,9 @@ type Router struct {
 	warned map[string]bool
 	// shuffle 打乱同一优先级内的候选，测试里换成确定的顺序。
 	shuffle func([]liveRoute)
-	// sticky 记录故障期间接手的来源，键是调度键；超过有效期之后按会话顺序重新
-	// 分配。数量有上限，见 pruneSticky。
+	// sticky 按会话和模型记录故障期间接手的路由，超过有效期后恢复原调度顺序。
 	stickyMu sync.Mutex
-	sticky   map[string]stickyRoute
+	sticky   map[stickySession]stickyRoute
 	now      func() time.Time
 }
 
@@ -93,6 +92,11 @@ const (
 	stickyAfterTakeover = 10 * time.Minute
 	maxStickySessions   = 4096
 )
+
+type stickySession struct {
+	session, model string
+	kind           Kind
+}
 
 // stickyRoute 是某条讨论当前偏好的路由，until 之后失效。
 type stickyRoute struct {
@@ -220,7 +224,7 @@ func (r *Router) candidates(m *liveModel, session string, need capabilities) []l
 		}
 		start = end
 	}
-	r.preferSticky(session, usable)
+	r.preferSticky(stickySession{session: session, model: m.Name, kind: m.Kind}, usable)
 	return usable
 }
 
@@ -233,18 +237,18 @@ func (r *Router) rememberTakeover(session string, key healthKey) {
 	r.stickyMu.Lock()
 	defer r.stickyMu.Unlock()
 	if r.sticky == nil {
-		r.sticky = make(map[string]stickyRoute)
+		r.sticky = make(map[stickySession]stickyRoute)
 	}
 	if len(r.sticky) >= maxStickySessions {
 		r.pruneSticky()
 	}
-	r.sticky[session] = stickyRoute{provider: key.provider, upstream: key.upstream, until: r.now().Add(stickyAfterTakeover)}
+	r.sticky[stickySession{session: session, model: key.model, kind: key.kind}] = stickyRoute{provider: key.provider, upstream: key.upstream, until: r.now().Add(stickyAfterTakeover)}
 }
 
 // preferSticky 把这条讨论接手的路由提到候选最前面。健康状态、启用状态与本次需要
 // 的能力在进入候选时已经筛过，接手的路由不可用就仍按原顺序落到下一条。
-func (r *Router) preferSticky(session string, usable []liveRoute) {
-	if session == "" || len(usable) < 2 {
+func (r *Router) preferSticky(session stickySession, usable []liveRoute) {
+	if session.session == "" || len(usable) < 2 {
 		return
 	}
 	r.stickyMu.Lock()

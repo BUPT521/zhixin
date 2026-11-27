@@ -161,14 +161,14 @@ func TestMemoryQuotaAttributesUsageToKey(t *testing.T) {
 			t.Fatalf("密钥 %q 预留应为 %d，得到 %d %v", call.keyID, call.want, got, err)
 		}
 	}
-	q.mu.Lock()
-	reservedByKey := map[string]int64{}
-	for key, tokens := range q.reserved {
-		if key[0] == "u1" && key[1] == day && key[2] == string(KindChat) {
-			reservedByKey[key[3]] = tokens
-		}
+	rows, err := q.KeyUsage(ctx, day, day, "u1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	q.mu.Unlock()
+	reservedByKey := map[string]int64{}
+	for _, row := range rows {
+		reservedByKey[row.KeyID] = row.ReservedTokens
+	}
 	if reservedByKey["key-a"] != 100 || reservedByKey["key-b"] != 50 || reservedByKey[""] != 20 {
 		t.Fatalf("在途预留应按密钥分开记，得到 %+v", reservedByKey)
 	}
@@ -181,14 +181,14 @@ func TestMemoryQuotaAttributesUsageToKey(t *testing.T) {
 			t.Fatalf("settle %q: %v", call.keyID, err)
 		}
 	}
-	q.mu.Lock()
-	byKey := map[string]int64{}
-	for key, tokens := range q.used {
-		if key[0] == "u1" && key[1] == day && key[2] == string(KindChat) {
-			byKey[key[3]] = tokens
-		}
+	rows, err = q.KeyUsage(ctx, day, day, "u1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	q.mu.Unlock()
+	byKey := map[string]int64{}
+	for _, row := range rows {
+		byKey[row.KeyID] = row.Tokens
+	}
 	if byKey["key-a"] != 100 || byKey["key-b"] != 50 || byKey[""] != 20 {
 		t.Fatalf("已结算用量应按密钥分开记，得到 %+v", byKey)
 	}
