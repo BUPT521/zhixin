@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import '../../domain/models/backup_error.dart';
 import '../../domain/models/result.dart';
 import '../attachment_store.dart';
-import '../db/app_database.dart';
 import '../db/database_gate.dart';
 import '../db/raw_executor.dart';
 import '../revisions/asset_store.dart';
@@ -205,32 +204,15 @@ class DataVersionService {
 
   /// 恢复数据包前的预检：先确认包能通过校验，再返回包内规模。
   ///
-  /// 不是版本库备份时交给旧数据包的校验；校验失败按 [Result] 返回，界面据此
-  /// 拒绝恢复。
+  /// 版本库备份与当前数据包都返回同一个 [RestoreInspection]，两个预检各自给出
+  /// 包内已经校验过的版本与规模，这里不再逐字段搬一遍。
   Future<Result<RestoreInspection>> inspectRestorePackage(Uint8List bytes) =>
       _expected(() => _inspectRestorePackage(bytes));
 
   Future<RestoreInspection> _inspectRestorePackage(Uint8List bytes) async {
     final repository = await revisionPackages.inspectRepository(bytes);
-    if (repository != null) {
-      return RestoreInspection(
-        kind: RestorePackageKind.repository,
-        schemaVersion: zhixinSchemaVersion,
-        appVersion: repository.appVersion,
-        exportedAt: repository.exportedAt,
-        head: repository.head,
-        commitCount: repository.commitCount,
-        namedCount: repository.namedCount,
-      );
-    }
-    final data = await dataPackages.inspectPackage(bytes);
-    return RestoreInspection(
-      kind: RestorePackageKind.currentData,
-      schemaVersion: data.schemaVersion,
-      appVersion: data.appVersion,
-      exportedAt: data.exportedAt,
-      rowCount: data.rowCount,
-    );
+    if (repository != null) return repository;
+    return dataPackages.inspectPackage(bytes);
   }
 
   /// 当前库的规模；恢复前的说明与恢复点里的记录共用这一份。

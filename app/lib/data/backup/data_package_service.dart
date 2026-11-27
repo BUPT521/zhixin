@@ -12,6 +12,7 @@ import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
 import '../revisions/revision_engine.dart' show versionedTableNames;
 import 'backup_manifest.dart';
+import 'restore_inspection.dart';
 import 'restore_journal.dart';
 import 'restore_validation.dart';
 
@@ -43,10 +44,12 @@ class DataPackageService {
   final PackageBudget budget;
   final Clock clock;
 
-  /// 预检旧格式的数据包：核对 manifest、schema、图片与暂存库，返回导出信息。
+  /// 预检旧格式的数据包：核对 manifest、schema、图片与暂存库，返回包内规模。
   ///
   /// 恢复入口先调用它，确认包能恢复再让用户确认覆盖；校验失败时不碰当前库。
-  Future<DataPackageInspection> inspectPackage(Uint8List bytes) async {
+  /// 结果与版本库备份共用 [RestoreInspection]，`schemaVersion` 取 manifest 里
+  /// 已经核对过的值，不用当前常量顶替。
+  Future<RestoreInspection> inspectPackage(Uint8List bytes) async {
     final archive = _decodeArchive(bytes);
     final manifest = _readManifest(archive);
     if (manifest.schemaVersion != schemaVersion) {
@@ -76,7 +79,8 @@ class DataPackageService {
         manifestSchemaVersion: manifest.schemaVersion,
       );
       final counts = await _countRows(stagedDbPath);
-      return DataPackageInspection(
+      return RestoreInspection(
+        kind: RestorePackageKind.currentData,
         schemaVersion: manifest.schemaVersion,
         appVersion: manifest.appVersion,
         exportedAt: manifest.exportedAt,
@@ -515,19 +519,4 @@ class DataPackageService {
       // 清理失败不影响数据正确性。
     }
   }
-}
-
-/// 旧格式数据包预检的结果：导出信息与业务表行数，用于恢复前的影响说明。
-class DataPackageInspection {
-  const DataPackageInspection({
-    required this.schemaVersion,
-    required this.appVersion,
-    required this.exportedAt,
-    required this.rowCount,
-  });
-
-  final int schemaVersion;
-  final String appVersion;
-  final String exportedAt;
-  final int rowCount;
 }

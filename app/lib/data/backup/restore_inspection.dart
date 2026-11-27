@@ -2,6 +2,9 @@
 enum RestorePackageKind { repository, currentData }
 
 /// 整库恢复之前的预检结果：包内规模，用于恢复前的影响说明。
+///
+/// 版本库备份与当前数据包都经这一个模型报告，不再各自声明一份形状相同的结果：
+/// 两种包的 `schemaVersion` 都取包内已经校验过的值，恢复入口不再用当前常量顶替。
 class RestoreInspection {
   const RestoreInspection({
     required this.kind,
