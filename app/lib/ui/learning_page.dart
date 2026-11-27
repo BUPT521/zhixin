@@ -604,7 +604,8 @@ class _LearningPageState extends State<LearningPage> {
       onData: _onQuestion,
       onError: _onQuestionError,
       builder: (context, data, loading) {
-        final view = data ?? _view;
+        // 只用订阅传进来的这一份：页面字段只给回调读，不参与这次渲染。
+        final view = data;
         if (view == null) {
           final theme = context.zhixin;
           // 加载与首读失败都带同一条标题栏，读完标题不变，页面不跳。
