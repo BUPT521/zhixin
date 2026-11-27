@@ -1,5 +1,4 @@
 import 'package:forui/forui.dart' as forui;
-import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
@@ -15,9 +14,7 @@ import '../application/prefetch_service.dart';
 import '../application/settings_service.dart';
 import '../application/update_check_service.dart';
 import '../domain/rules/time_policy.dart';
-import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
-import '../platform/diagnostics_store.dart';
 import 'accent_picker.dart';
 import 'account_dialogs.dart';
 import 'failure_feedback.dart';
@@ -171,9 +168,7 @@ class _SettingsPageState extends State<SettingsPage> {
           // 模型列表只用于提示；读不到时保持空，不打断设置页。
         }
       }
-      final reportCrashes = await DiagnosticsStore(scope.devicePaths.filesDir)
-          .read(fallback: !kReleaseMode);
-      CrashLog.reportEnabled = reportCrashes;
+      final reportCrashes = await scope.settings.edit.crashReporting();
       final reportUsage = await scope.accountServices.activeReport.enabled();
       final themeMode = scope.themeMode.value;
       final embedding = await _readEmbeddingSummary(scope);
@@ -847,16 +842,13 @@ class _SettingsPageState extends State<SettingsPage> {
                   value: _reportCrashes,
                   onChange: (value) async {
                     final previous = _reportCrashes;
+                    final settings = AppScope.of(context).settings.edit;
                     setState(() => _reportCrashes = value);
-                    CrashLog.reportEnabled = value;
                     try {
-                      await DiagnosticsStore(
-                        AppScope.of(context).devicePaths.filesDir,
-                      ).write(value);
+                      await settings.setCrashReporting(value);
                     } catch (_) {
                       if (!context.mounted) return;
                       setState(() => _reportCrashes = previous);
-                      CrashLog.reportEnabled = previous;
                       _report(
                         SettingsArea.diagnostics,
                         '设置没有保存，可以再试一次',

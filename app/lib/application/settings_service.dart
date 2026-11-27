@@ -7,12 +7,14 @@ import '../data/db/write_transactions.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/repository/settings_repository.dart';
 import '../domain/rules/revision_actions.dart';
+import '../data/diagnostics/crash_log.dart';
 import '../data/revisions/revision_engine.dart';
 import '../domain/models/result.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/day_key.dart';
 import '../domain/rules/revision_retention.dart';
 import '../domain/rules/time_policy.dart';
+import 'crash_reporting.dart';
 import 'screen_tables.dart';
 import 'service_runtime.dart';
 import 'time_policy_controller.dart';
@@ -39,6 +41,8 @@ class SettingsService {
     required this.runtime,
     required this.timePolicy,
     required this.dataVersions,
+    required this.diagnostics,
+    this.crashReportingDefault = true,
     this.authorizeConfig,
   });
 
@@ -56,6 +60,14 @@ class SettingsService {
 
   /// 整库恢复与清空；写路径只有数据版本服务一个入口。
   final DataVersionService dataVersions;
+
+  /// 崩溃报告的开关；设备级位置，不随账号空间切换。
+  final CrashReportingSwitch diagnostics;
+
+  /// 开关文件读不出来时的默认值：发布包默认关闭，调试包默认开启。
+  ///
+  /// 取值由装配处按构建模式给出，应用层不引 `package:flutter`。
+  final bool crashReportingDefault;
 
   /// 拍照方式的设置键；值为 '1' 表示用系统相机，其余用应用内相机。
   static const String systemCameraKey = 'capture_system_camera';
@@ -153,6 +165,31 @@ class SettingsService {
       );
       return txn.result();
     }, label: changeRetentionDaysAction);
+  }
+
+  /// 崩溃报告的开关：本机诊断文件里的那一项。
+  ///
+  /// 与启动时读的是同一个文件；读失败按 [crashReportingDefault] 处理，并同步
+  /// [CrashLog.reportEnabled]，让本次运行的上报开关与页面显示一致。
+  Future<bool> crashReporting() async {
+    final enabled = await diagnostics.read(fallback: crashReportingDefault);
+    CrashLog.reportEnabled = enabled;
+    return enabled;
+  }
+
+  /// 保存崩溃报告开关：先改 [CrashLog.reportEnabled]，写存储失败时恢复原值。
+  ///
+  /// 页面先把开关拨到新值并调用这里；失败时把异常交回页面，由它把开关拨回去
+  /// 并提示，顺序与页面原来自己写时一致。
+  Future<void> setCrashReporting(bool value) async {
+    final previous = CrashLog.reportEnabled;
+    CrashLog.reportEnabled = value;
+    try {
+      await diagnostics.write(value);
+    } catch (_) {
+      CrashLog.reportEnabled = previous;
+      rethrow;
+    }
   }
 
   String exportFileName() {

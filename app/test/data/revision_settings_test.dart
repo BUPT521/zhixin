@@ -5,6 +5,7 @@ import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';
 import 'package:zhixin/application/service_runtime.dart';
 import 'package:zhixin/application/settings_service.dart';
+import 'package:zhixin/platform/diagnostics_store.dart';
 import 'package:zhixin/application/time_policy_controller.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/data_version_service.dart';
@@ -55,6 +56,7 @@ SettingsService _settingsService(TestRig rig) {
       clock: _fixedNow,
       onChanged: () {},
     ),
+    diagnostics: DiagnosticsStore(rig.filesDir),
     dataVersions: DataVersionService(
       gate: rig.db.gate,
       revisions: rig.revisions,

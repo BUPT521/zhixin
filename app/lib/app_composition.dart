@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/foundation.dart' show ValueNotifier, kReleaseMode;
 
 import 'ai/ai_chat_service.dart';
 import 'ai/llm_config.dart';
@@ -75,6 +75,7 @@ import 'data/vector/embedding_config_store.dart';
 import 'domain/rules/schema_version.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_info.dart';
+import 'platform/diagnostics_store.dart';
 import 'platform/app_paths.dart';
 import 'platform/release_signing_key.dart';
 import 'platform/secure_secret_store.dart';
@@ -557,6 +558,8 @@ class AppComposition {
     runtime: _runtime,
     timePolicy: _timePolicy,
     dataVersions: _dataVersions,
+    diagnostics: DiagnosticsStore(devicePaths.filesDir),
+    crashReportingDefault: !kReleaseMode,
     authorizeConfig: (config) => account.prepareModelConfig(config),
   );
 

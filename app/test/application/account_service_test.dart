@@ -18,6 +18,7 @@ import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/embedding_client.dart';
 import 'package:zhixin/application/service_runtime.dart';
 import 'package:zhixin/application/settings_service.dart';
+import 'package:zhixin/platform/diagnostics_store.dart';
 import 'package:zhixin/application/time_policy_controller.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/data_version_service.dart';
@@ -358,6 +359,7 @@ void main() {
         onChanged: () {},
       ),
       dataVersions: _settingsDataVersions(rig),
+      diagnostics: DiagnosticsStore(rig.filesDir),
       authorizeConfig: account.prepareModelConfig,
     );
 
