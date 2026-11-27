@@ -1,5 +1,5 @@
 # 依赖更新的定期检查。4 个人各自在自己电脑上开发，靠它把能升的依赖开成 PR，
-# 不必像 2026-11-09 那样手工盘一遍 pub、Gradle 与 action 的版本。
+# 不必像 2026-11-09 那样手工盘一遍 pub、Gradle、action、Go 模块与镜像标签的版本。
 # 合并前按 CONTRIBUTING 第 1 节把标题改成“类型: 中文说明”，并按第 7 节在本地跑一遍
 # dart format、flutter analyze 与 flutter test；Flutter SDK 的版本只在 ci.yml 的
 # FLUTTER_VERSION 一处维护，这里不管。
@@ -44,3 +44,31 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+
+  # 服务端的 Go 模块。此前只有 pub、gradle 与 action 被覆盖，Go 模块与镜像标签
+  # 只能靠手工盘点；次要版本与补丁合成一个 PR，主版本单独判断。
+  - package-ecosystem: "gomod"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 4
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # Dockerfile 的基础镜像：换 golang 或 distroless 的标签之后要重新构建并冒烟一次。
+  - package-ecosystem: "docker"
+    directory: "/server"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 2
+    commit-message:
+      prefix: "chore"
+      include: "scope"
