@@ -474,6 +474,58 @@ class InlineNotice extends StatelessWidget {
   }
 }
 
+/// 同一张卡片里两组内容之间的分隔线：1 像素高，上下各留一档间距。
+///
+/// 设置页、引导页与购买面板原先各写一份同样的 `Padding` 加 `ColoredBox`；
+/// 默认上下各留 `space.md`，紧凑的分组传 `space.sm`。线色取
+/// [ZhixinColors.outlineVariant]，与卡片、列表项的描边同一档。
+class CardDivider extends StatelessWidget {
+  const CardDivider({super.key, this.gap});
+
+  /// 上下各留的间距；为空时取 `space.md`。
+  final double? gap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: gap ?? theme.space.md),
+      child: SizedBox(
+        height: 1,
+        child: ColoredBox(color: theme.colors.outlineVariant),
+      ),
+    );
+  }
+}
+
+/// 一次操作之后的说明：失败用带可选重试的就地说明，成功用一行小字。
+///
+/// 账号页、云端备份页、我的页与设置页原先各自拼这两种呈现，连间距也各写一份；
+/// 页面只保存消息、是否失败与可选的重试动作，由这里决定用哪一种。
+/// [failed] 为真时通过 [InlineNotice] 显示，[onRetry] 为空就没有重试按钮。
+class ResultNotice extends StatelessWidget {
+  const ResultNotice({
+    super.key,
+    required this.message,
+    this.failed = false,
+    this.onRetry,
+  });
+
+  final String message;
+  final bool failed;
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    if (failed) return InlineNotice(message: message, onRetry: onRetry);
+    return Padding(
+      padding: EdgeInsets.only(bottom: theme.space.sm),
+      child: Text(message, style: theme.text.bodySmall),
+    );
+  }
+}
+
 /// 列表底部“读取更多”的统一样式：正在读时转圈，否则给一个文字按钮。
 class LoadMoreFooter extends StatelessWidget {
   const LoadMoreFooter({

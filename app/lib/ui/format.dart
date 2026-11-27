@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../domain/models/time_values.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/weekdays.dart';
@@ -105,3 +107,63 @@ String statusLabel(String status) => switch (status) {
   'correct' => '做对过',
   _ => status,
 };
+
+/// 设备标识脱敏：去掉首尾空白，只保留前 [keep] 位，短的标识原样返回。
+///
+/// 设备标识只用于区分来源，界面不显示整串（ADR-0048）；需要省略整段说明时
+/// 判断返回值是否为空串。数据版本页与账号页原先各写一份，这里只留一处。
+String maskedDeviceId(String? deviceId, {int keep = 8}) {
+  assert(keep > 0, '至少保留一位');
+  final value = deviceId?.trim() ?? '';
+  if (value.isEmpty || value.length <= keep) return value;
+  return value.substring(0, keep);
+}
+
+/// 字节数的界面写法：不足 1 KiB 写 B，1 KiB 起写整数 KB，1 MiB 起写一位小数
+/// 的 MB，1 GiB 起写一位小数的 GB。
+///
+/// 每一档都四舍五入，1025 B 在任何页面都写成 `1 KB`；云备份页、数据版本页与
+/// 数据包的容量说明原先用 `.ceil()`、`.round()` 与不同的小数位，同一个大小会
+/// 读出两个结果，这里统一成一种写法。
+String formatBytes(int bytes) {
+  if (bytes < 1024) return '$bytes B';
+  if (bytes < 1024 * 1024) return '${(bytes / 1024).round()} KB';
+  if (bytes < 1024 * 1024 * 1024) {
+    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
+  }
+  return '${(bytes / 1024 / 1024 / 1024).toStringAsFixed(1)} GB';
+}
+
+/// 防抖的默认等待：输入停下这么久之后才发起查找，免得每敲一个字都读一遍库。
+const Duration kDebounceDelay = Duration(milliseconds: 250);
+
+/// 输入停下之后再动作的定时器；连续调用只保留最后一次。
+///
+/// 材料页、材料列表与材料选择器原先各写一份 `Timer` 与取消逻辑，这里合成一个
+/// 对象：`call` 换成新的等待，[cancel] 撤掉尚未执行的一次，[dispose] 供
+/// `State.dispose` 调用。
+class Debouncer {
+  Debouncer({this.duration = kDebounceDelay});
+
+  /// 从最后一次调用起等待的时长。
+  final Duration duration;
+
+  Timer? _timer;
+
+  /// 是否还有一次等待没有执行。
+  bool get isPending => _timer?.isActive ?? false;
+
+  /// 重新计时；之前排着的那一次不再执行。
+  void call(void Function() action) {
+    _timer?.cancel();
+    _timer = Timer(duration, action);
+  }
+
+  /// 撤掉尚未执行的一次；已经执行的不受影响。
+  void cancel() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  void dispose() => cancel();
+}
