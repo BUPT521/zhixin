@@ -10,7 +10,9 @@ import '../platform/app_paths.dart' show LocalSpace;
 
 import '../app_scope.dart';
 import '../application/account_service.dart';
+import '../application/account_summary.dart';
 import '../application/prefetch_service.dart';
+import '../application/sync_flow.dart';
 import '../application/sync_service.dart';
 import '../data/cloud/account_store.dart' show AccountIdentity;
 import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
@@ -25,13 +27,6 @@ import 'failure_feedback.dart';
 import 'format.dart';
 import 'zhixin_header.dart';
 import 'workspace_widgets.dart';
-
-/// 一级界面切进来之后预读的账号页首屏；字段与预读任务返回的记录一致。
-typedef _AccountPrewarm = ({
-  AccountSnapshot snapshot,
-  SyncStatus sync,
-  ServerQuota? quota,
-});
 
 /// 账号与云同步：服务地址、登录注册、同步状态与云端数据操作。
 ///
@@ -110,7 +105,7 @@ class _AccountPageState extends State<AccountPage> {
     // 进入“我的”时已经在后台读过账号、同步状态与额度；先用这一份，
     // 这一次完整读取再把邮箱验证与额度刷新到最新。
     final prewarm = AppScope.of(context).prefetch
-        .take<_AccountPrewarm>(PrefetchKey.accountPage);
+        .take<AccountSummary>(PrefetchKey.accountPage);
     if (prewarm != null) {
       _snapshot = prewarm.snapshot;
       _sync = prewarm.sync;
@@ -130,42 +125,38 @@ class _AccountPageState extends State<AccountPage> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  /// 账号摘要的唯一读取入口：账号页顺带核对一次登录方式并读今日额度。
+  AccountSummaryReader get _reader {
+    final services = AppScope.of(context).accountServices;
+    return AccountSummaryReader(account: services.account, sync: services.sync);
+  }
+
+  /// 读账号摘要、本机空间并刷新页面。
+  ///
+  /// [keepNotice] 为真时读取失败只记诊断、不改页面提示：这类读取跟在一次操作
+  /// 之后，刚给出的结论比后台读取失败更该留在页面上。
+  Future<void> _load({bool keepNotice = false}) async {
     final scope = AppScope.of(context);
     try {
-      // 顺带核对一次邮箱验证状态；没有登录或服务端不可达时沿用本机记录。
-      final snapshot = await scope.accountServices.account.refreshAccount();
-      final sync = await scope.accountServices.sync.status();
-      ServerQuota? quota;
-      String? localDeviceId;
-      if (snapshot.signedIn) {
-        try {
-          quota = await scope.accountServices.account.quota();
-        } catch (_) {
-          // 额度只用于显示；读不到时这一块给一句说明，不影响同步与备份。
-        }
-        try {
-          localDeviceId = await scope.accountServices.account.deviceId();
-        } catch (_) {
-          // 读不到设备标识时设备一节不标“本机”，其他内容照常显示。
-        }
-        // 设备一节直接读同步服务缓存的名册；读取失败只记诊断，不阻塞本页。
-        await scope.accountServices.sync.refreshDevices();
-      }
+      final summary = await _reader.read(refresh: true, withQuota: true);
       final spaces = await scope.spaces?.list() ?? const <LocalSpace>[];
       if (!mounted) return;
       setState(() {
         _spaces = spaces;
-        _snapshot = snapshot;
-        _sync = sync;
+        _snapshot = summary.snapshot;
+        _sync = summary.sync;
         // 这一次没读到额度时保留上一次的数字：瞬时失败不该把已经读到的额度清空，
         // 否则页面看起来像额度没了。
-        _quota = quota ?? _quota;
-        _localDeviceId = localDeviceId;
+        _quota = summary.quota ?? _quota;
+        _localDeviceId = summary.localDeviceId;
         _loading = false;
       });
     } catch (error, stack) {
       if (!mounted) return;
+      if (keepNotice) {
+        setState(() => _loading = false);
+        return;
+      }
       setState(() {
         _loading = false;
         _notice = describeFailure(
@@ -429,98 +420,23 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
+  /// 立即同步：确认顺序与执行在 [SyncFlow] 里，页面只提供确认框与结论文案。
   Future<void> _syncNow() async {
     if (_busy) return;
-    final scope = AppScope.of(context);
-    var confirmBaseline = false;
-    try {
-      final status = await scope.accountServices.sync.status();
-      if (status.restoreNeedsConfirmation) {
-        if (!mounted) return;
-        final confirmed = await confirmRestoreAlignment(context);
-        if (!confirmed) {
-          if (!mounted) return;
-          _report('已取消同步；恢复后的内容仍在本机，需要时可以再点“立即同步”');
-          await _load();
-          return;
-        }
-        confirmBaseline = true;
-      } else if (status.baselineNeedsConfirmation) {
-        if (!mounted) return;
-        final confirmed = await confirmBaselineUpload(
-          context,
-          localCommits: status.localHead,
-        );
-        if (!confirmed) {
-          // 取消就不上传，并把自动同步停下来；恢复要在开关上再确认一次。
-          await scope.accountServices.account.setAutoSync(false);
-          if (!mounted) return;
-          _report('已取消首次同步，没有上传本机记录；自动同步已暂停');
-          await _load();
-          return;
-        }
-        confirmBaseline = true;
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取同步状态',
-          kind: 'account_sync_status',
-          kept: '本机记录没有改动',
-          next: '可以稍后再试',
-        ),
-        failed: true,
-      );
-      return;
-    }
-    if (!mounted) return;
+    final sync = AppScope.of(context).accountServices.sync;
     setState(() => _busy = true);
     try {
-      // 云端历史被压缩时同步会抛出 SyncSnapshotProblem（code 为
-      // confirmationRequired）：先说明再确认，确认之后带 confirmReclone 再跑一轮，
-      // 本机数据不在未确认时被替换（3.7）。
-      var confirmReclone = false;
-      while (true) {
-        try {
-          final result = await scope.accountServices.sync.syncNow(
-            confirmBaseline: confirmBaseline,
-            confirmReclone: confirmReclone,
-          );
-          // 同步结束之后先就地更新“待修复”标记，再给结论：完整状态随后由后台
-          // 重读补齐，提示与状态卡不会在几帧里互相矛盾（ADR-0045）。
-          final mismatch = await scope.accountServices.sync.digestMismatch();
-          if (!mounted) return;
-          setState(() => _sync = _sync?.withDigestMismatch(mismatch));
-          _report(
-            result.changed
-                ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
-                      '上传 ${result.uploadedAssets}、下载 ${result.downloadedAssets} 个附件'
-                : (_sync?.digestMismatch ?? false)
-                ? '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式'
-                : '同步完成，本机与云端已经一致',
-          );
-          unawaited(_load());
-          return;
-        } on SyncSnapshotProblem catch (problem) {
-          if (problem.code != SyncSnapshotCode.confirmationRequired) rethrow;
-          if (!mounted) return;
-          final confirmed = await confirmSnapshotRebuild(
-            context,
-            localCommits: problem.localCommits,
-          );
-          if (!confirmed) {
-            if (!mounted) return;
-            _report('已取消同步；本机数据保持不变，需要时可以再点“立即同步”');
-            await _load();
-            return;
-          }
-          confirmReclone = true;
-        }
+      final flow = await sync.flow.run(
+        confirm: (confirmation) => confirmSyncStep(context, confirmation),
+      );
+      if (!mounted) return;
+      // 同步结束之后先就地更新“待修复”标记，再给结论：完整状态由随后的重读补齐，
+      // 提示与状态卡不会在几帧里互相矛盾（ADR-0045）。
+      if (flow.digestMismatch case final mismatch?) {
+        setState(() => _sync = _sync?.withDigestMismatch(mismatch));
       }
+      _report(syncResultNotice(flow));
+      unawaited(_load(keepNotice: true));
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -535,7 +451,7 @@ class _AccountPageState extends State<AccountPage> {
         ),
         failed: true,
       );
-      await _load();
+      unawaited(_load(keepNotice: true));
     } finally {
       if (mounted) setState(() => _busy = false);
     }

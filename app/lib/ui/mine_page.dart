@@ -5,7 +5,9 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
 import '../application/account_service.dart';
+import '../application/account_summary.dart';
 import '../application/prefetch_service.dart';
+import '../application/sync_flow.dart';
 import '../application/sync_service.dart';
 import '../data/cloud/server_client.dart' show ServerQuota;
 import '../platform/app_info.dart';
@@ -111,48 +113,51 @@ class _MinePageState extends State<MinePage> {
   }
 
   /// 读登录状态、同步状态与今日额度；后一次读取会丢掉前一次还没回来的结果。
-  Future<void> _load() async {
+  ///
+  /// 读法走账号摘要的唯一入口：先读本机就能拿到的账号与同步状态，账号卡立刻
+  /// 出现，额度这一步要走网络，回来再补上。
+  ///
+  /// [keepNotice] 为真时读取失败只记诊断、不改账号卡下方的说明：这类读取跟在
+  /// 一次操作之后，刚给出的结论比后台读取失败更该留在页面上。
+  Future<void> _load({bool keepNotice = false}) async {
     final scope = AppScope.of(context);
     final services = scope.accountServices;
+    final reader = AccountSummaryReader(
+      account: services.account,
+      sync: services.sync,
+    );
     final sequence = ++_loadSequence;
     try {
-      final account = await services.account.snapshot();
-      final sync = await services.sync.status();
+      final summary = await reader.read();
       if (!mounted || sequence != _loadSequence) return;
       setState(() {
-        _account = account;
-        _sync = sync;
+        _account = summary.snapshot;
+        _sync = summary.sync;
         _loaded = true;
-        if (!account.signedIn) _quota = null;
-        _quotaLoading = account.signedIn;
+        if (!summary.signedIn) _quota = null;
+        _quotaLoading = summary.signedIn;
       });
-      if (!account.signedIn) {
+      if (!summary.signedIn) {
         // 账号页读的是同一份数据，留给它之后打开直接用。
-        scope.prefetch.put(PrefetchKey.accountPage, (
-          snapshot: account,
-          sync: sync,
-          quota: null,
-        ));
+        scope.prefetch.put(PrefetchKey.accountPage, summary);
         return;
       }
-      ServerQuota? remaining;
-      try {
-        remaining = await services.account.quota();
-      } catch (_) {
-        // 额度只用于显示；读不到时写“暂时无法读取”，不打断其余内容。
-      }
+      final remaining = await reader.readQuota();
       if (!mounted || sequence != _loadSequence) return;
       setState(() {
         _quota = remaining;
         _quotaLoading = false;
       });
-      scope.prefetch.put(PrefetchKey.accountPage, (
-        snapshot: account,
-        sync: sync,
-        quota: remaining,
-      ));
+      scope.prefetch.put(
+        PrefetchKey.accountPage,
+        summary.copyWith(quota: remaining),
+      );
     } catch (error, stack) {
       if (!mounted || sequence != _loadSequence) return;
+      if (keepNotice) {
+        setState(() => _loaded = true);
+        return;
+      }
       setState(() {
         _loaded = true;
         _notice = describeFailure(
@@ -176,101 +181,23 @@ class _MinePageState extends State<MinePage> {
     await _load();
   }
 
+  /// 立即同步：确认顺序与执行在 [SyncFlow] 里，页面只提供确认框与结论文案。
   Future<void> _syncNow() async {
     if (_syncing) return;
     final services = AppScope.of(context).accountServices;
-    var confirmBaseline = false;
-    try {
-      final status = await services.sync.status();
-      if (status.restoreNeedsConfirmation) {
-        if (!mounted) return;
-        final confirmed = await confirmRestoreAlignment(context);
-        if (!confirmed) {
-          if (!mounted) return;
-          setState(() {
-            _failed = false;
-            _notice = '已取消同步；恢复后的内容仍在本机，需要时可以再点“立即同步”';
-          });
-          await _load();
-          return;
-        }
-        confirmBaseline = true;
-      } else if (status.baselineNeedsConfirmation) {
-        if (!mounted) return;
-        final confirmed = await confirmBaselineUpload(
-          context,
-          localCommits: status.localHead,
-        );
-        if (!confirmed) {
-          await services.account.setAutoSync(false);
-          if (!mounted) return;
-          setState(() {
-            _failed = false;
-            _notice = '已取消首次同步，没有上传本机记录；自动同步已暂停';
-          });
-          await _load();
-          return;
-        }
-        confirmBaseline = true;
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(() {
-        _failed = true;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取同步状态',
-          kind: 'mine_sync_status',
-          kept: '本机记录没有改动',
-          next: '可以稍后再试',
-        );
-      });
-      return;
-    }
-    if (!mounted) return;
     setState(() {
       _syncing = true;
       _notice = null;
     });
     try {
-      // 云端历史被压缩时同步会抛出 SyncSnapshotProblem（code 为
-      // confirmationRequired）：先说明再确认，确认之后带 confirmReclone 再跑一轮，
-      // 本机数据不在未确认时被替换（3.7）。
-      var confirmReclone = false;
-      while (true) {
-        try {
-          final result = await services.sync.syncNow(
-            confirmBaseline: confirmBaseline,
-            confirmReclone: confirmReclone,
-          );
-          if (!mounted) return;
-          setState(() {
-            _failed = false;
-            _notice = result.changed
-                ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交'
-                : '同步完成，没有需要推送的改动';
-          });
-          break;
-        } on SyncSnapshotProblem catch (problem) {
-          if (problem.code != SyncSnapshotCode.confirmationRequired) rethrow;
-          if (!mounted) return;
-          final confirmed = await confirmSnapshotRebuild(
-            context,
-            localCommits: problem.localCommits,
-          );
-          if (!confirmed) {
-            if (!mounted) return;
-            setState(() {
-              _failed = false;
-              _notice = '已取消同步；本机数据保持不变，需要时可以再点“立即同步”';
-            });
-            break;
-          }
-          confirmReclone = true;
-        }
-      }
+      final flow = await services.sync.flow.run(
+        confirm: (confirmation) => confirmSyncStep(context, confirmation),
+      );
+      if (!mounted) return;
+      setState(() {
+        _failed = false;
+        _notice = syncResultNotice(flow);
+      });
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {
@@ -288,7 +215,7 @@ class _MinePageState extends State<MinePage> {
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
-    if (mounted) await _load();
+    if (mounted) await _load(keepNotice: true);
   }
 
   @override

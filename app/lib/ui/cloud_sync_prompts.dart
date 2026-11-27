@@ -1,8 +1,54 @@
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
+import '../application/sync_flow.dart';
 import 'theme.dart';
 import 'zhixin_dialog.dart';
+
+/// 同步过程中要用户确认的一次：按种类弹对应的确认框。
+///
+/// 账号页与“我的”页把这一份当作 [SyncFlow.run] 的确认回调，两个页面的确认顺序、
+/// 确认框与文案因此只有一处（A22）。
+Future<bool> confirmSyncStep(
+  BuildContext context,
+  SyncConfirmation confirmation,
+) => switch (confirmation) {
+  SyncRestoreAlignment() => confirmRestoreAlignment(context),
+  SyncBaselineUpload(:final localCommits) => confirmBaselineUpload(
+    context,
+    localCommits: localCommits,
+  ),
+  SyncSnapshotRebuild(:final localCommits) => confirmSnapshotRebuild(
+    context,
+    localCommits: localCommits,
+  ),
+};
+
+/// 一轮同步结束之后的说明：完成写提交与附件数量，取消写下一步。
+///
+/// 账号页原先多写附件数、取消说明也另说一句，“我的”页只说提交数，同一件事在
+/// 两页读出两个结果；这里只写一份，两页共用（A22）。
+String syncResultNotice(SyncFlowResult flow) => switch (flow.outcome) {
+  SyncOutcome.cancelledRestoreAlignment => '已取消同步；恢复后的内容仍在本机，需要时可以再点“立即同步”',
+  SyncOutcome.cancelledBaselineUpload => '已取消首次同步，没有上传本机记录；自动同步已暂停',
+  SyncOutcome.cancelledSnapshotRebuild => '已取消同步；本机数据保持不变，需要时可以再点“立即同步”',
+  SyncOutcome.completed => _completedNotice(flow),
+};
+
+String _completedNotice(SyncFlowResult flow) {
+  final result = flow.result;
+  if (result == null || !result.changed) {
+    // 摘要不一致时不能声称两边已经一致：修复入口与说明在账号页的同步卡上。
+    return flow.digestMismatch == true
+        ? '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式'
+        : '同步完成，本机与云端已经一致';
+  }
+  final assets = result.uploadedAssets == 0 && result.downloadedAssets == 0
+      ? ''
+      : '，上传 ${result.uploadedAssets}、下载 ${result.downloadedAssets} 个附件';
+  return '同步完成：拉取 ${result.pulledCommits} 条、'
+      '推送 ${result.pushedCommits} 条提交$assets';
+}
 
 /// 云端历史已经压缩、本机要用快照重建之前的确认（改进方案 3.7）。
 ///

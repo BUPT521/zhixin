@@ -20,6 +20,7 @@ import '../data/revisions/revision_shadow.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
 import 'account_service.dart';
+import 'failure_notice.dart';
 
 part 'sync_devices.dart';
 part 'sync_refs.dart';
@@ -1626,14 +1627,12 @@ class SyncService {
   String _actorOf(String actor) =>
       const {'user', 'ai', 'system'}.contains(actor) ? actor : 'user';
 
-  String _describe(Object error) => switch (error) {
-    ServerProblem(:final userMessage) => userMessage,
-    AccountSignedOut(:final userMessage) => userMessage,
-    SyncSchemaMismatch() => error.toString(),
-    SyncIdentityChanged() => error.toString(),
-    BaselineConfirmationRequired(:final message) => message,
-    SyncSnapshotProblem(:final message) => message,
-    SyncHistoryCompacted(:final userMessage) => userMessage,
-    _ => '同步没有完成',
-  };
+  /// 同步失败的界面说明：与账号页、数据版本页共用 failure_notice 的一张已知类型
+  /// 表，这里不再维护第二份（A22）。
+  String _describe(Object error) => failureNotice(
+    error,
+    action: '同步',
+    kept: '本机记录没有改动，已经同步的部分保留',
+    next: '可以检查网络后重试',
+  );
 }
