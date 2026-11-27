@@ -283,7 +283,9 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		SetDeviceActive(cfg.SyncDeviceActive).
 		SetLogger(log).
 		SetSnapshotBytes(cfg.MaxAttachmentBytes)
-	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
+	// 提交推送的请求体上限就是整批推送上限，不再用 16*MaxJSONBytes 另写一个表达式：
+	// 后者默认恰好等于 16 MiB，调整 MaxJSONBytes 之后两层会给出不同结论（S27）。
+	syncHandler := syncsvc.NewHandler(syncSvc, log, syncsvc.MaxPushBytes)
 
 	backupSvc := backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
 	// 备份的元数据与字节分两步写，中断会留下没有元数据的对象：按周期对账一次，
