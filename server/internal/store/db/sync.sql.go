@@ -82,29 +82,16 @@ func (q *Queries) ClearAttachmentsOrphaned(ctx context.Context, userID string) e
 }
 
 const commitsAfter = `-- name: CommitsAfter :many
-WITH page AS MATERIALIZED (
-  SELECT p.seq AS page_seq, octet_length(p.changes::text)::bigint + octet_length(p.action)
-    + octet_length(p.uid) + octet_length(p.device_id) + octet_length(p.kind) + 256 AS bytes
-  FROM sync_commit p
-  WHERE p.user_id = $1 AND p.seq > $3
-  ORDER BY p.seq
-  LIMIT $4
-), budget AS (
-  SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
-)
-SELECT c.seq, c.uid, c.kind, c.device_id, c.schema_version, c.actor, c.action,
-  c.created_at, c.received_at, c.changes, c.state_digest, c.table_digests
-FROM sync_commit c
-WHERE c.user_id = $1 AND c.seq IN (
-  SELECT budget.page_seq FROM budget
-  WHERE budget.total <= $2::bigint
-)
-ORDER BY c.seq
+SELECT seq, uid, kind, device_id, schema_version, actor, action,
+  created_at, received_at, changes, state_digest, table_digests
+FROM sync_commit
+WHERE user_id = $1 AND seq > $2
+ORDER BY seq
+LIMIT $3
 `
 
 type CommitsAfterParams struct {
 	UserID    string
-	MaxBytes  int64
 	AfterSeq  int64
 	PageLimit int32
 }
@@ -124,13 +111,10 @@ type CommitsAfterRow struct {
 	TableDigests  []byte
 }
 
+// 一页只按条数取：页预算由服务层按序列化之后的大小裁剪，SQL 不再用
+// octet_length 估算一遍，同一条提交不会在一页里被序列化两次（S25）。
 func (q *Queries) CommitsAfter(ctx context.Context, arg CommitsAfterParams) ([]CommitsAfterRow, error) {
-	rows, err := q.db.Query(ctx, commitsAfter,
-		arg.UserID,
-		arg.MaxBytes,
-		arg.AfterSeq,
-		arg.PageLimit,
-	)
+	rows, err := q.db.Query(ctx, commitsAfter, arg.UserID, arg.AfterSeq, arg.PageLimit)
 	if err != nil {
 		return nil, err
 	}

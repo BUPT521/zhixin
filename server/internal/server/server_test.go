@@ -713,7 +713,7 @@ func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit,
 	return syncsvc.AppendResult{}, errors.New("database is down")
 }
 
-func (failingSyncStore) After(context.Context, string, int64, int, int64) ([]syncsvc.Commit, error) {
+func (failingSyncStore) After(context.Context, string, int64, int) ([]syncsvc.Commit, error) {
 	return nil, errors.New("database is down")
 }
 

@@ -209,7 +209,7 @@ func (s *Service) Pull(
 	if position+1 < state.EarliestSeq {
 		return PullResult{}, &CompactedError{State: state}
 	}
-	commits, err := s.store.After(ctx, userID, position, pageSize, s.maxPullBytes)
+	commits, err := s.store.After(ctx, userID, position, pageSize)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -235,7 +235,8 @@ func (s *Service) Pull(
 	}, nil
 }
 
-// trimPullBytes 按实际序列化后的累计字节数截断本页。
+// trimPullBytes 按实际序列化后的累计字节数截断本页，是拉取页预算唯一的一道裁剪：
+// 存储只按条数取行，序列化与截断都在这里完成。
 func trimPullBytes(commits []Commit, maxBytes int64) []Commit {
 	var total int64
 	for i := range commits {

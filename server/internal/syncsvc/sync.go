@@ -180,8 +180,10 @@ type Store interface {
 	// that device's position, otherwise every device named by a commit is
 	// ensured. A rejected push leaves the roster untouched.
 	Append(ctx context.Context, userID string, base int64, commits []Commit, policy CompactPolicy, roster DeviceRoster) (AppendResult, error)
-	// After bounds the page before loading commit contents.
-	After(ctx context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error)
+	// After returns commits with seq greater than after, at most limit of them,
+	// in sequence order. Bounding the page by bytes is the service's job: it
+	// serializes a page once and trims it there, so the store returns rows only.
+	After(ctx context.Context, userID string, after int64, limit int) ([]Commit, error)
 	// RegisterSnapshot stores the newest snapshot pointer, marks the old
 	// attachment as orphaned when the pointer moves to another hash, and, when
 	// policy allows it, compacts commits the snapshot makes unnecessary without
@@ -452,7 +454,7 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 	return AppendResult{Head: l.head(), Seqs: plan.Seqs}, nil
 }
 
-func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error) {
+func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int) ([]Commit, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.logs[userID]
@@ -467,7 +469,7 @@ func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit
 		return nil, nil
 	}
 	end := min(start+int64(limit), int64(len(l.commits)))
-	return append([]Commit(nil), trimPullBytes(l.commits[start:end], maxBytes)...), nil
+	return append([]Commit(nil), l.commits[start:end]...), nil
 }
 
 func (m *MemoryStore) RegisterSnapshot(_ context.Context, userID string, snap Snapshot, policy CompactPolicy) (State, error) {

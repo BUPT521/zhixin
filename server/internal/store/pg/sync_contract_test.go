@@ -44,7 +44,7 @@ func TestPostgresAppendReturnsSeqs(t *testing.T) {
 	if err != nil || replay.Head != 4 || len(replay.Seqs) != 3 || replay.Seqs[0] != 1 || replay.Seqs[2] != 3 {
 		t.Fatalf("整批重放: %+v %v", replay, err)
 	}
-	commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes)
+	commits, err := st.After(ctx, "u1", 0, 10)
 	if err != nil || len(commits) != 4 {
 		t.Fatalf("重放不应追加提交: %d %v", len(commits), err)
 	}
@@ -89,7 +89,7 @@ func TestPostgresTableDigestsRoundTrip(t *testing.T) {
 	if _, err := st.Append(ctx, "u1", 0, commits, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
-	pulled, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes)
+	pulled, err := st.After(ctx, "u1", 0, 10)
 	if err != nil || len(pulled) != 2 {
 		t.Fatalf("pull: %d %v", len(pulled), err)
 	}
