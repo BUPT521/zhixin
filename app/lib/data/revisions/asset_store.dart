@@ -263,14 +263,7 @@ class AttachmentCache {
       return file;
     }
     await Directory(directory()).create(recursive: true);
-    final temporary = File('${file.path}${AtomicFile.temporarySuffix}');
-    try {
-      await temporary.writeAsBytes(bytes, flush: true);
-      await temporary.rename(file.path);
-    } catch (_) {
-      if (await temporary.exists()) await temporary.delete();
-      rethrow;
-    }
+    await AtomicFile(file.path).writeBytes(bytes);
     return file;
   }
 

@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import '../../domain/rules/package_budget.dart';
 import '../../domain/rules/time_policy.dart';
+import '../atomic_file.dart';
 import '../backup/backup_manifest.dart';
 import '../../domain/models/restore_inspection.dart';
 import '../backup/restore_validation.dart';
@@ -168,9 +169,7 @@ class RevisionPackageService {
   Future<void> backupRepository(RawDatabase db, String outputPath) async {
     final output = File(outputPath);
     await output.parent.create(recursive: true);
-    final temporaryDb = File(
-      '${output.path}.partial-${clock().millisecondsSinceEpoch}.db',
-    );
+    final temporaryDb = File('${output.path}${AtomicFile.temporarySuffix}.db');
     if (await temporaryDb.exists()) await temporaryDb.delete();
     RawDatabase? copy;
     try {
