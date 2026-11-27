@@ -2,6 +2,7 @@ import '../data/repository/conversation_repository.dart';
 import '../data/repository/study_plan_repository.dart';
 import '../domain/models/study_plan.dart';
 import 'context_service.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 
 /// 首页“继续上次”的一条入口：一份进行中的计划或一条讨论。
@@ -59,23 +60,9 @@ class ContinueService {
 
   final ServiceRuntime runtime;
 
-  /// 首页摘要读到的表：计划行、步骤、材料、目标、讨论、消息、作答与待办。
-  ///
-  /// 一次提交常同时改到其中几张表，整屏读法只重跑一次，回填的也一定是同一
-  /// 时刻的数据（ADR-0014）。
-  static const Set<String> _homeTables = {
-    'study_plan',
-    'plan_item',
-    'material',
-    'learning_goal',
-    'conversation',
-    'message',
-    'attempt',
-  };
-
   /// 跟随写入更新的首页摘要；页面订阅之后不再在写入或跳转返回之后重读。
   Stream<NowHome> watchHome({int limit = 4}) => runtime.watch(
-    tables: _homeTables,
+    tables: ScreenTables.home,
     read: () => loadHome(limit: limit),
   );
 

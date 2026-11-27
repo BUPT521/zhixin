@@ -5,6 +5,7 @@ import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import '../../domain/rules/uuid_v7.dart';
 import 'plan_search.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 
 /// 安排页的事项与目标。
@@ -33,19 +34,17 @@ class PlanService {
   /// 全部目标，当前有效的排在前面；不能靠 [loadOverview] 的页面从这里读。
   Future<List<LearningGoal>> goals() => tasks.goals();
 
-  Stream<PlanOverview> watchOverview() => runtime.watch(
-    tables: const {'plan_item', 'learning_goal'},
-    read: loadOverview,
-  );
+  Stream<PlanOverview> watchOverview() =>
+      runtime.watch(tables: ScreenTables.planOverview, read: loadOverview);
 
   /// 跟随写入更新的目标列表；归属选择与筛选条用它。
   Stream<List<LearningGoal>> watchGoals() =>
-      runtime.watch(tables: const {'learning_goal'}, read: goals);
+      runtime.watch(tables: ScreenTables.goals, read: goals);
 
   /// 跟随写入更新的已完成事项分页；展开列表之后每页都是一个订阅。
   Stream<List<PlanItem>> watchDoneItems({int limit = 30, int offset = 0}) =>
       runtime.watch(
-        tables: const {'plan_item'},
+        tables: ScreenTables.planItems,
         read: () => doneItems(limit: limit, offset: offset),
       );
 

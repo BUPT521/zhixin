@@ -13,6 +13,7 @@ import '../domain/models/write_result.dart';
 import '../domain/rules/day_key.dart';
 import '../domain/rules/revision_retention.dart';
 import '../domain/rules/time_policy.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 import 'time_policy_controller.dart';
 import '../../domain/rules/uuid_v7.dart';
@@ -109,15 +110,12 @@ class SettingsService {
   Future<bool> useSystemCamera() async =>
       await settings.metadata(systemCameraKey) == '1';
 
-  /// 设置页读到的表：截止小时与拍照方式都在 app_meta 里。
-  static const Set<String> _settingsTables = {'app_meta'};
-
   /// 跟随写入更新的设置项读取；页面订阅之后不再在保存之后自己重读。
   ///
   /// 截止小时保存成一条提交，提交收尾通知 app_meta，页面因此立刻用新值；
   /// 拍照方式写在 app_meta 里，整库恢复与导入时随全部表一起补发（ADR-0014）。
   Stream<SettingsView> watchSettings() => runtime.watch(
-    tables: _settingsTables,
+    tables: ScreenTables.settings,
     read: () async => SettingsView(
       cutoffHour: await cutoffHour(),
       useSystemCamera: await useSystemCamera(),

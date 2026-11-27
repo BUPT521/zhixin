@@ -17,6 +17,7 @@ import 'answer_pipeline.dart';
 import 'buddy_answer.dart';
 import 'context_request.dart';
 import 'context_service.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 import 'user_failure.dart';
 import '../../domain/rules/uuid_v7.dart';
@@ -146,17 +147,11 @@ class StudyPlanService {
     return StudyPlanView(plan: plan, steps: steps);
   }
 
-  /// 系统学习页一屏读到的表：任一表被写入之后整屏重读一次（ADR-0014）。
-  static const Set<String> _screenTables = {
-    'study_plan',
-    'plan_item',
-    'material',
-    'study_session',
-  };
-
   /// 跟随写入更新的系统学习页一屏；页面订阅之后不再自己重读。
-  Stream<StudyPlanScreen> watchScreen(String planId) =>
-      runtime.watch(tables: _screenTables, read: () => loadScreen(planId));
+  Stream<StudyPlanScreen> watchScreen(String planId) => runtime.watch(
+    tables: ScreenTables.studyPlan,
+    read: () => loadScreen(planId),
+  );
 
   /// 读取计划、步骤和各步骤最近一次结束的场次。
   Future<StudyPlanScreen> loadScreen(String planId) async {
@@ -168,7 +163,7 @@ class StudyPlanService {
   }
 
   Stream<List<StudyPlan>> watchList() =>
-      runtime.watch(tables: _screenTables, read: () => list());
+      runtime.watch(tables: ScreenTables.studyPlan, read: () => list());
 
   /// 每个步骤最近一次结束的场次，给步骤卡显示完成时间、结果与困难。
   Future<Map<String, StudySession>> latestSessionsForSteps(

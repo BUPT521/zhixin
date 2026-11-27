@@ -87,11 +87,7 @@ extension SyncNamedRefs on SyncService {
         );
       }
       for (final ref in dirty) {
-        await txn.execute(
-          "UPDATE revision_ref SET sync_state = 'clean' "
-          'WHERE name = ? AND commit_uid = ? AND updated_at = ? AND note IS ?',
-          [ref.name, ref.commitUid, ref.toRow()['updated_at'], ref.note],
-        );
+        await engine.markRefSynced(txn, ref);
       }
       await deleteRows(txn, 'revision_ref', where: "sync_state = 'clean'");
       final pendingDeletes = (await engine.tombstones(txn))

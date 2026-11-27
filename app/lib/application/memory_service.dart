@@ -6,6 +6,7 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 import '../../domain/rules/uuid_v7.dart';
 
@@ -151,17 +152,9 @@ class MemoryService {
   final WriteTransactions transactions;
   final ServiceRuntime runtime;
 
-  /// 记忆页一屏读到的表：记忆条目、目标与材料标题，材料列表还读页码数量。
-  static const Set<String> _pageTables = {
-    'memory',
-    'learning_goal',
-    'material',
-    'material_page',
-  };
-
   /// 跟随写入更新的记忆页一屏；页面订阅之后不再在保存、删除与撤销之后重读。
   Stream<MemoryPageView> watchMemories() =>
-      runtime.watch(tables: _pageTables, read: loadPage);
+      runtime.watch(tables: ScreenTables.memoryPage, read: loadPage);
 
   /// 读一屏记忆：条目、目标与材料同时发出，范围名字在结果回来之后拼好。
   Future<MemoryPageView> loadPage() async {

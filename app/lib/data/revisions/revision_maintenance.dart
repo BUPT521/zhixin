@@ -59,6 +59,19 @@ mixin RevisionMaintenanceMixin {
     return rows.map(RevisionRefTombstone.fromRow).toList(growable: false);
   }
 
+  /// 推送成功之后把这条命名版本标成已同步。
+  ///
+  /// 同步收尾在事务里调用：按名字、指向的提交与更新时间匹配，笔记按 `IS`
+  /// 比较，避免把另一台设备刚改过的行标错。条件写成查询放在数据层，应用层
+  /// 不再直接拼 `UPDATE revision_ref`（A31）。
+  Future<void> markRefSynced(RawExecutor txn, RevisionRef ref) => updateRow(
+    txn,
+    'revision_ref',
+    {'sync_state': RevisionRefSyncState.clean.value},
+    where: 'name = ? AND commit_uid = ? AND updated_at = ? AND note IS ?',
+    whereArgs: [ref.name, ref.commitUid, ref.toRow()['updated_at'], ref.note],
+  );
+
   /// 命名版本名与提交编号的对应；本机已经没有这条提交时值为空（只剩标签）。
   Future<Map<String, int?>> refCommitIds(RawExecutor executor) async {
     final rows = await executor.rawQuery(
