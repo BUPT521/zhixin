@@ -474,12 +474,6 @@ func (s *Store) currentHead(ctx context.Context, userID string) (int64, error) {
 	return row.Head, nil
 }
 
-// EnsureDevice 补一行设备；已有行只更新最近出现时间，快照能力、位置与别名保持
-// 原样。
-func (s *Store) EnsureDevice(ctx context.Context, userID, deviceID string) error {
-	return s.q.EnsureSyncDevice(ctx, db.EnsureSyncDeviceParams{UserID: userID, DeviceID: deviceID})
-}
-
 // Devices 按最近出现时间倒序列出名册，最多 limit 条。
 func (s *Store) Devices(ctx context.Context, userID string, limit int) ([]syncsvc.Device, error) {
 	rows, err := s.q.SyncDevices(ctx, db.SyncDevicesParams{UserID: userID, RowLimit: int32(limit)})

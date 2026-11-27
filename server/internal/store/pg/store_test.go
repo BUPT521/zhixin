@@ -1041,11 +1041,13 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 		t.Fatalf("回收之后待回收行应删除: %v %v", orphans, err)
 	}
 
-	// 设备名册：带标识的请求更新最近出现时间与能力，补行不动已有能力。
+	// 设备名册：带标识的请求更新最近出现时间与能力，补行不动已有能力。补行走
+	// Append 事务里的 DeviceRoster.Ensure，名册与提交同一次写入。
 	if err := st.TouchDevice(ctx, "u1", "d1", true, 0); err != nil {
 		t.Fatalf("记录 d1: %v", err)
 	}
-	if err := st.EnsureDevice(ctx, "u1", "d2"); err != nil {
+	if _, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")},
+		syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{Ensure: []string{"d2"}}); err != nil {
 		t.Fatalf("补行 d2: %v", err)
 	}
 	devices, err := st.Devices(ctx, "u1", 50)

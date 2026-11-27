@@ -425,16 +425,6 @@ func (s *Service) TouchDevice(ctx context.Context, userID, deviceID string, snap
 	return s.store.TouchDevice(ctx, userID, deviceID, snapshotCapable, position)
 }
 
-// EnsureDevice 在名册里补一行推送中出现的设备标识，快照能力、位置与别名留空
-// （ADR-0048）。
-func (s *Service) EnsureDevice(ctx context.Context, userID, deviceID string) error {
-	deviceID = strings.TrimSpace(deviceID)
-	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
-		return ErrInvalid
-	}
-	return s.store.EnsureDevice(ctx, userID, deviceID)
-}
-
 // Devices 返回账号名册，按最近出现时间倒序，最多 50 条（ADR-0048）。
 func (s *Service) Devices(ctx context.Context, userID string) ([]Device, error) {
 	return s.store.Devices(ctx, userID, deviceListLimit)

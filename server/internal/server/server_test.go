@@ -737,10 +737,6 @@ func (failingSyncStore) TouchDevice(context.Context, string, string, bool, int64
 	return errors.New("database is down")
 }
 
-func (failingSyncStore) EnsureDevice(context.Context, string, string) error {
-	return errors.New("database is down")
-}
-
 func (failingSyncStore) Devices(context.Context, string, int) ([]syncsvc.Device, error) {
 	return nil, errors.New("database is down")
 }

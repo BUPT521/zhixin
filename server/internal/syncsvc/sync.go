@@ -208,10 +208,6 @@ type Store interface {
 	// synced position moves to the larger of the stored one and position,
 	// bounded by the current head (ADR-0048, ADR-0054).
 	TouchDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) error
-	// EnsureDevice adds a device seen in a push without a device header. An
-	// existing row keeps its alias, capability and position and only moves
-	// last_seen.
-	EnsureDevice(ctx context.Context, userID, deviceID string) error
 	// Devices lists the roster, newest first, at most limit rows.
 	Devices(ctx context.Context, userID string, limit int) ([]Device, error)
 	// RenameDevice changes the alias of a known device and returns the updated
@@ -580,16 +576,8 @@ func (l *memoryLog) touchDevice(deviceID string, snapshotCapable bool, position 
 	}
 }
 
-// EnsureDevice 补一行设备；已有行只更新最近出现时间，能力、位置与别名保持原样。
-func (m *MemoryStore) EnsureDevice(_ context.Context, userID, deviceID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	l := m.ensure(userID)
-	l.ensureDevice(deviceID, m.now().UTC())
-	return nil
-}
-
-// ensureDevice 在已经持有锁的情况下补一行设备。
+// ensureDevice 在已经持有锁的情况下补一行设备：已有行只更新最近出现时间，能力、
+// 位置与别名保持原样。DeviceRoster.Ensure 用它在推送事务里补行。
 func (l *memoryLog) ensureDevice(deviceID string, now time.Time) {
 	if d, ok := l.devices[deviceID]; ok {
 		d.lastSeen = now
