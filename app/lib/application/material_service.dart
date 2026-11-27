@@ -5,6 +5,7 @@ import '../domain/models/material.dart';
 import '../domain/models/write_result.dart';
 import '../../domain/rules/uuid_v7.dart';
 import 'docx_import.dart';
+import 'user_failure.dart';
 import 'screen_tables.dart';
 import 'service_runtime.dart';
 
@@ -104,7 +105,7 @@ class MaterialService {
   }) {
     return transactions.run((txn) {
       if (runtime.dataEpoch != expectedEpoch) {
-        throw StateError('数据版本已变更，请重新选择 Word 文件');
+        throw UserFailure('数据版本已变更，请重新选择 Word 文件');
       }
       return materials.createWithPages(
         title: title,
@@ -157,11 +158,11 @@ class MaterialService {
     required String corrected,
   }) {
     final text = corrected.trim();
-    if (text.isEmpty) throw ArgumentError('这一页还没有内容');
+    if (text.isEmpty) throw UserFailure('这一页还没有内容');
     return transactions.run(
       (txn) async {
         final current = await materials.pageById(page.id, transaction: txn);
-        if (current == null) throw StateError('这一页已不存在');
+        if (current == null) throw UserFailure('这一页已不存在');
         if (current.content == text && current.label == page.label) {
           return const WriteResult.skipped('这一页的内容没有变化');
         }

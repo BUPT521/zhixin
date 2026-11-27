@@ -8,6 +8,7 @@ import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
 import 'screen_tables.dart';
 import 'service_runtime.dart';
+import 'user_failure.dart';
 import '../../domain/rules/uuid_v7.dart';
 
 /// 记忆页的一屏：记忆条目与适用范围的名字。
@@ -229,12 +230,12 @@ class MemoryService {
     DateTime? validUntil,
   }) {
     final text = content.trim();
-    if (text.isEmpty) throw ArgumentError('记忆内容不能为空');
+    if (text.isEmpty) throw UserFailure('记忆内容不能为空');
     final nextKind = kind;
     final terms = searchTerms.trim();
     return transactions.run((txn) async {
       final current = await repository.byId(memory.id);
-      if (current == null) throw StateError('这条记忆已不存在');
+      if (current == null) throw UserFailure('这条记忆已不存在');
       final kindChanged = nextKind != null && current.kind != nextKind;
       if (!kindChanged &&
           current.content == text &&
@@ -290,7 +291,7 @@ class MemoryService {
     return transactions.run(
       (txn) async {
         final current = await repository.byId(id);
-        if (current == null) throw StateError('这条记忆已不存在');
+        if (current == null) throw UserFailure('这条记忆已不存在');
         await repository.markReviewed(id, transaction: txn);
         return txn.result();
       },

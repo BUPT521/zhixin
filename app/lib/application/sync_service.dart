@@ -19,6 +19,7 @@ import '../data/revisions/revision_shadow.dart';
 import '../domain/rules/schema_version.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
+import 'user_failure.dart';
 import 'account_service.dart';
 import 'failure_notice.dart';
 
@@ -1464,7 +1465,7 @@ class SyncService {
     );
     if (result.skipped > 0) {
       recordFailure(
-        StateError('同步 ${commit.uid} 时跳过 ${result.skipped} 条对不上的变化'),
+        UserFailure('同步 ${commit.uid} 时跳过 ${result.skipped} 条对不上的变化'),
         StackTrace.current,
         kind: 'cloud_sync_apply_skipped',
       );

@@ -16,6 +16,7 @@ import 'crash_reporting.dart';
 import 'screen_tables.dart';
 import 'service_runtime.dart';
 import 'time_policy_controller.dart';
+import 'user_failure.dart';
 import '../../domain/rules/uuid_v7.dart';
 
 /// 设置页从库里读到的设置项：每日截止小时与拍照方式。
@@ -152,7 +153,7 @@ class SettingsService {
   /// 键名，不读旧键（ADR-0001）。
   Future<WriteResult> saveRevisionRetentionDays(int days) {
     if (!revisionRetentionDayOptions.contains(days)) {
-      throw ArgumentError('保留天数只能是 ${revisionRetentionDayOptions.join('、')} 天');
+      throw UserFailure('保留天数只能是 ${revisionRetentionDayOptions.join('、')} 天');
     }
     return transactions.run((txn) async {
       await settings.setMetadata(

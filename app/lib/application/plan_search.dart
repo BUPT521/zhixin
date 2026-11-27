@@ -5,6 +5,7 @@ library;
 
 import '../domain/models/study.dart';
 import '../domain/rules/search_terms.dart';
+import 'user_failure.dart';
 
 /// 安排查找一页的条数；记录页查找同样是二十条一页。
 const int planSearchPageSize = 20;
@@ -127,8 +128,8 @@ PlanSearchPageResult pagePlanSearchHits(
   required int offset,
   required int pageSize,
 }) {
-  if (offset < 0) throw ArgumentError.value(offset, 'offset', '不能为负数');
-  if (pageSize <= 0) throw ArgumentError.value(pageSize, 'pageSize', '要大于零');
+  if (offset < 0) throw const UserFailure('查找位置不能为负数');
+  if (pageSize <= 0) throw const UserFailure('每页条数要大于零');
   final sorted = [...hits]..sort(comparePlanSearchHits);
   final page = sorted.skip(offset).take(pageSize).toList(growable: false);
   return PlanSearchPageResult(

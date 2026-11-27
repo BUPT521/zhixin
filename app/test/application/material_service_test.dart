@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/domain/models/revision_models.dart';
 import 'package:zhixin/application/material_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
@@ -273,7 +274,7 @@ void main() {
         ),
         corrected: '新原文',
       ),
-      throwsStateError,
+      throwsA(isA<UserFailure>()),
     );
     expect(await selectRows(rig.db, 'material_page'), isEmpty);
   });

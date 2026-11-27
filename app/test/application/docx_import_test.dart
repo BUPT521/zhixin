@@ -6,6 +6,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/material_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/application/search_service.dart';
 import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
@@ -147,7 +148,7 @@ void main() {
     epoch++;
     await expectLater(
       service.importDocx(document: document, title: '已过期', expectedEpoch: 0),
-      throwsStateError,
+      throwsA(isA<UserFailure>()),
     );
     expect(await rig.engine.assets.objectHashes(rig.raw), isEmpty);
     await expectLater(
