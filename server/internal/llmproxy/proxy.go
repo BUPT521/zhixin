@@ -504,19 +504,28 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 	w.WriteHeader(reply.status)
 	var body io.Reader = guard
 	if p.cfg.MaxResponseBytes > 0 {
-		body = io.LimitReader(body, p.cfg.MaxResponseBytes)
+		body = &streamLimit{body: body, left: p.cfg.MaxResponseBytes}
 	}
-	result, end, clientWriteFailed := p.copyStream(w, body)
+	result, end, streamErr, clientWriteFailed := p.copyStream(w, body)
 	outcome := end.outcome()
 	outcome.sourceReached = true
-	if r.Context().Err() != nil || clientWriteFailed {
+	switch {
+	case r.Context().Err() != nil || clientWriteFailed:
 		outcome = healthOutcome{reason: "客户端已取消请求"}
 		result.clientCanceled = true
-	}
-	if guard.fromBudget && guard.expired.Load() {
+	case guard.fromBudget && guard.expired.Load():
 		// 本轮预算在服务端这一侧用完：不是来源的故障，按取消计，不增加失败数。
 		outcome = healthOutcome{reason: "本轮预算用完"}
 		result.clientCanceled = true
+	case errors.Is(streamErr, errResponseTooLarge):
+		// 实例的响应字节上限到了：来源已经把这段回答生成并转出，是代理自己停下
+		// 来的。按没有来源故障结束，不把代理的上限算成来源的毛病、让它进冷却。
+		outcome = healthOutcome{reason: "流式响应超过上限", sourceReached: true}
+		p.log.Warn("流式响应超过上限",
+			slog.String("request_id", httpx.RequestIDFrom(r.Context())),
+			slog.String("provider", reply.route.Provider.ID),
+			slog.String("upstream_model", reply.route.UpstreamModel),
+			slog.Int64("limit_bytes", p.cfg.MaxResponseBytes))
 	}
 	result.outputLimited = end == responseOutputLimit
 	p.finishAttempt(&plan, reply.attempt, result, reply.status, outcome)
@@ -1332,8 +1341,10 @@ func (end responseCompletion) outcome() healthOutcome {
 // 可能取自本轮剩余预算，调用方据此区分来源慢与这一轮没有时间了。
 var errFirstOutputTimeout = errors.New("llmproxy: 首个有效输出超时")
 
-// errResponseTooLarge 表示非流式响应超过配置的上限。发现时还没有写响应头，调用
-// 方可以按 upstream_failed 回 problem，而不是把半截响应交给客户端。
+// errResponseTooLarge 表示上游响应超过配置的字节上限。非流式响应在写响应头之前
+// 发现，调用方按 upstream_failed 回 problem，而不是把半截响应交给客户端；流式
+// 响应在转发途中发现，调用方结束这次转发，已转出的内容照常交付，但不把到达上限
+// 当成来源故障。
 var errResponseTooLarge = errors.New("llmproxy: 上游响应过大")
 
 // errInstanceBusy 表示实例的在途字节预算已经用完。发现时还没有写出任何响应内容，
@@ -1461,10 +1472,39 @@ func (g *streamGuard) stop() {
 	g.cancel()
 }
 
+// streamLimit 把一次流式转发限制在 left 字节以内。读满之后它只再从来源读一个
+// 字节：读到了说明来源还有内容，以 errResponseTooLarge 结束，调用方据此分清代理
+// 自己的上限与来源提前结束；要不到时按正常的 EOF 结束。io.LimitReader 截断之后
+// 只回一个普通 EOF，转发代码看不出区别，来源因此会被误记成提前结束、进冷却。
+type streamLimit struct {
+	body io.Reader
+	left int64
+}
+
+func (l *streamLimit) Read(p []byte) (int, error) {
+	if l.left <= 0 {
+		var probe [1]byte
+		n, err := l.body.Read(probe[:])
+		if n > 0 {
+			return 0, errResponseTooLarge
+		}
+		return 0, err
+	}
+	if int64(len(p)) > l.left {
+		p = p[:l.left]
+	}
+	n, err := l.body.Read(p)
+	l.left -= int64(n)
+	return n, err
+}
+
 // copyStream forwards SSE line by line, flushing at each blank line (event
 // boundary), and picks the last usage object it sees. Failed or incomplete
-// terminal events take precedence over a trailing [DONE] marker.
-func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemptResult, end responseCompletion, clientWriteFailed bool) {
+// terminal events take precedence over a trailing [DONE] marker. The returned
+// error is the one that ended the read, so the caller can tell a source that
+// stopped early from the proxy's own byte limit; a client write failure is
+// reported separately and comes with a nil error.
+func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemptResult, end responseCompletion, streamErr error, clientWriteFailed bool) {
 	flusher, _ := w.(http.Flusher)
 	rd := bufio.NewReaderSize(body, 64*1024)
 	result.unknown = true
@@ -1483,7 +1523,7 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 				}
 			}
 			if _, werr := w.Write(line); werr != nil {
-				return result, end, true
+				return result, end, nil, true
 			}
 			if len(trimmed) == 0 && flusher != nil {
 				flusher.Flush()
@@ -1497,7 +1537,7 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 				end = responseInterrupted
 			}
 			result.success = end == responseCompleted
-			return result, end, false
+			return result, end, err, false
 		}
 	}
 }

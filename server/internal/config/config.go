@@ -253,8 +253,9 @@ type LLMConfig struct {
 	// 之后，默认值跟着放大到 512 MiB，同时在途的请求数因此不会被压到个位数
 	// （ADR-0053）。
 	MaxInstanceBytes int64
-	// MaxResponseBytes 是非流式响应的字节上限，超过时按 upstream_failed 处理，
-	// 避免一次请求把内存与带宽占满。
+	// MaxResponseBytes 是一次响应的字节上限。非流式响应超过时按
+	// upstream_failed 处理，避免一次请求把内存与带宽占满；流式响应超过时由代理
+	// 结束转发，已经转出的内容照常交付，这次结束不记来源故障。
 	MaxResponseBytes int64
 	// StreamIdleTimeout 是流式响应两次收到数据之间的最长等待；超过时中断上游
 	// 请求并结束响应。
