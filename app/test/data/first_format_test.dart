@@ -8,6 +8,7 @@ import 'package:zhixin/data/backup/backup_manifest.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/restore_journal.dart';
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/domain/rules/attachments.dart';
 
 import 'package:zhixin/data/db/sql.dart';

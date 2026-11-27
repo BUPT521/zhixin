@@ -15,13 +15,12 @@ import '../application/prefetch_service.dart';
 import '../application/sync_service.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/backup/restore_point_store.dart';
-import '../data/revisions/revision_engine.dart'
-    show revisionDefaultRetentionDays, revisionRetentionDayOptions;
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart'
     show RevisionDetails, RevisionService;
 import '../domain/models/result.dart';
 import '../domain/rules/package_budget.dart';
+import '../domain/rules/revision_retention.dart';
 import '../platform/data_package_export.dart';
 import 'copy.dart';
 import 'data_version_watcher.dart';

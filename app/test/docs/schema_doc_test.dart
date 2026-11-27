@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 
 /// 01 第 4 章的 DDL 与第 6 章的索引是 drift 建库结果的抄件。

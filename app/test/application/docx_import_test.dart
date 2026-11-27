@@ -7,7 +7,7 @@ import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/material_service.dart';
 import 'package:zhixin/application/search_service.dart';
-import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';

@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite3;
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';

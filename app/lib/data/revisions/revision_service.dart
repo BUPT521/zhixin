@@ -1,3 +1,4 @@
+import '../../domain/rules/revision_retention.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/guarded_database.dart';
 import '../db/sql.dart';

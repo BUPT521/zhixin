@@ -6,7 +6,6 @@ import 'package:crypto/crypto.dart';
 
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
-import '../data/db/app_database.dart' show zhixinSchemaVersion;
 import '../data/db/guarded_database.dart';
 import '../data/db/sql.dart';
 import '../data/db/write_transactions.dart';
@@ -17,6 +16,7 @@ import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_models.dart';
 import '../data/revisions/revision_service.dart';
 import '../data/revisions/revision_shadow.dart';
+import '../domain/rules/schema_version.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
 import 'account_service.dart';

@@ -7,8 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
-import 'package:zhixin/data/db/app_database.dart'
-    show zhixinDbFileName, zhixinSchemaVersion;
+import 'package:zhixin/data/db/app_database.dart' show zhixinDbFileName;
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';

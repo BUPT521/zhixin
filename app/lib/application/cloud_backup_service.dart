@@ -5,7 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../data/cloud/server_client.dart';
 import '../data/backup/data_version_service.dart';
-import '../data/db/app_database.dart' show zhixinSchemaVersion;
+import '../domain/rules/schema_version.dart';
 import '../domain/rules/time_policy.dart';
 import 'account_service.dart';
 

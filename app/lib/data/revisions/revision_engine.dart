@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:drift/drift.dart' show Table, TableInfo;
 
 import '../../domain/models/chat_message_payload.dart';
+import '../../domain/rules/revision_retention.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/uuid_v7.dart';

@@ -71,6 +71,7 @@ import 'data/revisions/revision_package.dart';
 import 'data/revisions/revision_service.dart';
 import 'data/revisions/semantic_change.dart';
 import 'data/vector/embedding_config_store.dart';
+import 'domain/rules/schema_version.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_info.dart';
 import 'platform/app_paths.dart';

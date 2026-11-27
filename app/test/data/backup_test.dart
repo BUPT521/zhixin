@@ -13,6 +13,7 @@ import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/restore_inspection.dart';
 import 'package:zhixin/data/backup/restore_journal.dart';
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
