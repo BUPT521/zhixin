@@ -2,6 +2,7 @@ import 'package:drift/drift.dart' show Variable;
 
 import '../db/raw_executor.dart';
 import '../db/drift/queries/evidence_scope.dart';
+import 'answer_text.dart';
 
 import '../../domain/models/evidence.dart';
 import '../../domain/models/evidence_id.dart';
@@ -364,8 +365,7 @@ class EvidenceRepository {
           (db) => db.evidenceAnswerCurrent(attemptId).getSingleOrNull(),
         );
         if (row == null) return null;
-        final answer = row.userAnswer ?? '';
-        final text = '$answer\n${row.solution ?? ''}\n${row.feedback ?? ''}';
+        final text = answerText(row.userAnswer, row.solution, row.feedback);
         return EvidenceHit(
           kind: EvidenceKind.answer,
           identity: hit.identity,
@@ -507,12 +507,7 @@ class EvidenceRepository {
       (db) => db.evidenceAnswerSources().get(),
     );
     for (final row in answers) {
-      final parts = [
-        row.userAnswer,
-        row.solution,
-        row.feedback,
-      ].whereType<String>().where((part) => part.trim().isNotEmpty);
-      final content = parts.join('\n');
+      final content = answerText(row.userAnswer, row.solution, row.feedback);
       if (content.trim().isEmpty) continue;
       result.add(
         SemanticSource(
@@ -577,12 +572,7 @@ class EvidenceRepository {
           (db) => db.evidenceAnswerSource(attemptId).getSingleOrNull(),
         );
         if (row == null) return null;
-        final parts = [
-          row.userAnswer,
-          row.solution,
-          row.feedback,
-        ].whereType<String>().where((part) => part.trim().isNotEmpty);
-        final content = parts.join('\n');
+        final content = answerText(row.userAnswer, row.solution, row.feedback);
         return SemanticSource(
           locator: locator,
           content: content,
@@ -649,12 +639,7 @@ class EvidenceRepository {
           (db) => db.evidenceAttemptSourceById(rowKey).getSingleOrNull(),
         );
         if (row == null) return null;
-        final parts = [
-          row.userAnswer,
-          row.solution,
-          row.feedback,
-        ].whereType<String>().where((part) => part.trim().isNotEmpty);
-        final content = parts.join('\n');
+        final content = answerText(row.userAnswer, row.solution, row.feedback);
         if (content.trim().isEmpty) return null;
         return SemanticSource(
           locator: SemanticLocator(
@@ -1056,10 +1041,11 @@ class EvidenceRepository {
     return rows
         .map((row) {
           final data = row.data;
-          final answer = (data['user_answer'] as String?) ?? '';
-          final content =
-              '$answer\n${data['solution'] ?? ''}\n'
-              '${data['feedback'] ?? ''}';
+          final content = answerText(
+            data['user_answer'] as String?,
+            data['solution'] as String?,
+            data['feedback'] as String?,
+          );
           final offset = _literalOffset(content, null, text);
           final attemptId = data['id']! as String;
           return EvidenceHit(
