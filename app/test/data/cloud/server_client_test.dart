@@ -866,6 +866,27 @@ void main() {
         expect(text, isNot(contains('联系管理员')));
       }
     });
+    test('注册后缀受限时按服务端清单说明', () {
+      String message(Map<String, Object?> extra) => ServerProblem(
+        code: 'email_domain_not_allowed',
+        status: 400,
+        extra: extra,
+      ).userMessage;
+
+      expect(
+        message({
+          'allowed_domains': ['bupt.cn'],
+        }),
+        '内测期间只接受 @bupt.cn 的邮箱注册',
+      );
+      expect(
+        message({
+          'allowed_domains': ['bupt.cn', 'example.com'],
+        }),
+        contains('@bupt.cn、@example.com'),
+      );
+      expect(message({}), contains('学校邮箱'));
+    });
   });
 }
 

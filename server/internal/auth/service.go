@@ -41,6 +41,9 @@ var (
 	ErrCodeTooSoon = errors.New("auth: a code was sent recently")
 	// ErrMailUnavailable 表示服务端没有配置发信，验证码无法送达。
 	ErrMailUnavailable = errors.New("auth: mail is not configured")
+	// ErrEmailDomainNotAllowed 表示注册用的邮箱后缀不在内测范围内。登录与找回
+	// 密码不受这条限制，已经有账号的其他邮箱仍然可以继续使用。
+	ErrEmailDomainNotAllowed = errors.New("auth: email domain is not allowed")
 )
 
 // Tokens is what the client stores after sign-in.
@@ -97,6 +100,10 @@ type Service struct {
 	// 时间仍未确认的账号由每日清理删除。默认值与配置
 	// ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值一致，装配处可以覆盖。
 	unverifiedKeep time.Duration
+
+	// registerEmailDomains 是注册允许的邮箱域名，按 @ 之后的部分精确匹配；
+	// 为空表示不限制。默认值为空，由装配处按配置写入（ADR-0085）。
+	registerEmailDomains []string
 
 	// securityLog 记录刷新令牌重放这类安全事件；为 nil 时不记，事件内容只有
 	// 账号、会话与请求标识，不含令牌。
@@ -233,6 +240,38 @@ func (s *Service) SetUnverifiedKeep(days int) {
 	if days > 0 {
 		s.unverifiedKeep = time.Duration(days) * 24 * time.Hour
 	}
+}
+
+// SetRegisterEmailDomains 限定注册允许的邮箱域名，按 @ 之后的部分精确匹配；
+// 传入空清单表示不限制。登录、找回密码与已有账号的验证不受影响，所以内测
+// 收紧注册之后，之前注册的其他邮箱仍然能用（ADR-0085）。
+func (s *Service) SetRegisterEmailDomains(domains []string) {
+	s.registerEmailDomains = append([]string(nil), domains...)
+}
+
+// RegisterEmailDomains 返回当前允许注册的邮箱域名副本，供接口在拒绝时把清单
+// 写进 problem 的 extra；不限制时返回空清单。
+func (s *Service) RegisterEmailDomains() []string {
+	return append([]string(nil), s.registerEmailDomains...)
+}
+
+// emailDomainAllowed 判断规范化之后的邮箱是否落在注册允许的域名里。比较的是
+// @ 之后的完整域名，x@bupt.cn.example.com 不会因为以 bupt.cn 开头而通过。
+func (s *Service) emailDomainAllowed(identifier string) bool {
+	if len(s.registerEmailDomains) == 0 {
+		return true
+	}
+	at := strings.LastIndexByte(identifier, '@')
+	if at < 0 {
+		return false
+	}
+	domain := identifier[at+1:]
+	for _, allowed := range s.registerEmailDomains {
+		if domain == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // PruneLoop 启动时清理一次过期会话、过期验证码、超过保留期的未验证账号与超过
@@ -373,6 +412,10 @@ func (s *Service) Register(ctx context.Context, rawIdentifier, password, device 
 	}
 	if err := checkPassword(password); err != nil {
 		return Tokens{}, err
+	}
+	// 后缀检查放在密码哈希之前：被挡下的注册不占 Argon2 预算，也不写账号行。
+	if !s.emailDomainAllowed(identifier) {
+		return Tokens{}, ErrEmailDomainNotAllowed
 	}
 	hash, err := s.hashPassword(ctx, password)
 	if err != nil {

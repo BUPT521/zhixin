@@ -59,7 +59,9 @@ paths:
       description: |
         `identifier` 是登录方式的值，服务端负责识别种类并规范化；现在只有邮箱能注册
         与登录，手机号与微信的入口还没有接，识别出来之后按 `invalid_request` 拒绝。
-        同一个邮箱已经被别的账号登记时返回 409 `identifier_taken`。
+        同一个邮箱已经被别的账号登记时返回 409 `identifier_taken`。内测期间注册只接受
+        服务端配置的邮箱后缀，其他后缀返回 400 `email_domain_not_allowed`，`extra.allowed_domains`
+        给出允许的域名清单；登录与找回密码不受这条限制，已经注册的账号仍然可以使用。
       requestBody:
         required: true
         content:
@@ -2149,6 +2151,7 @@ components:
             - invalid_credentials
             - invalid_code
             - identifier_taken
+            - email_domain_not_allowed
             - contact_unverified
             - key_scope_denied
             - not_found

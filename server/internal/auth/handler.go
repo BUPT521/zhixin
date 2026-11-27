@@ -183,6 +183,11 @@ func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, ErrInvalidInput):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "identifier must be a plain email address and password 8 to 128 characters")
+	case errors.Is(err, ErrEmailDomainNotAllowed):
+		domains := h.svc.RegisterEmailDomains()
+		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeEmailDomainNotAllowed,
+			"registration only accepts email addresses ending in "+strings.Join(domains, ", "),
+			map[string]any{"allowed_domains": domains})
 	case errors.Is(err, ErrIdentifierTaken):
 		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeIdentifierTaken, "")
 	case err != nil:

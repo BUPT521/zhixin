@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/BUPT521/zhixin/server/internal/config"
+	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
@@ -37,12 +38,13 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 	// 用例都从同一个来源地址发请求，默认关掉限流，免得相互干扰；
 	// 专门测限流的用例自己把这些变量打开。
 	merged := map[string]string{
-		"ZHIXIN_AUTH_RATE":      "0",
-		"ZHIXIN_REFRESH_RATE":   "0",
-		"ZHIXIN_UPLOAD_RATE":    "0",
-		"ZHIXIN_CODE_RATE":      "0",
-		"ZHIXIN_FEEDBACK_RATE":  "0",
-		"ZHIXIN_TELEMETRY_RATE": "0",
+		"ZHIXIN_AUTH_RATE":              "0",
+		"ZHIXIN_REFRESH_RATE":           "0",
+		"ZHIXIN_UPLOAD_RATE":            "0",
+		"ZHIXIN_CODE_RATE":              "0",
+		"ZHIXIN_FEEDBACK_RATE":          "0",
+		"ZHIXIN_TELEMETRY_RATE":         "0",
+		"ZHIXIN_REGISTER_EMAIL_DOMAINS": "*",
 	}
 	for k, v := range env {
 		merged[k] = v
@@ -152,6 +154,37 @@ func TestHealthAndUnknownRoute(t *testing.T) {
 	}
 	if ct := resp.Header.Get("Content-Type"); ct != "application/problem+json" {
 		t.Fatalf("content type %q", ct)
+	}
+}
+
+// TestRegisterRestrictsEmailDomains 守住内测期间的注册后缀限制：校外邮箱返回
+// 带清单的 400，校内邮箱可以注册，父域在清单里也不放行更长的子域（ADR-0085）。
+func TestRegisterRestrictsEmailDomains(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_REGISTER_EMAIL_DOMAINS": "bupt.cn"})
+
+	var p problem
+	code := h.json("POST", "/v1/auth/register", "",
+		map[string]string{"identifier": "outsider@example.com", "password": "password1"}, &p)
+	if code != http.StatusBadRequest || p.Code != string(httpx.CodeEmailDomainNotAllowed) {
+		t.Fatalf("非校内邮箱注册：%d %+v", code, p)
+	}
+	if allowed, _ := p.Extra["allowed_domains"].([]any); len(allowed) != 1 || allowed[0] != "bupt.cn" {
+		t.Fatalf("拒绝时应带出允许的域名清单，得到 %v", p.Extra)
+	}
+	// 被挡下的注册不写账号行：用同一个邮箱和密码登录应当得到凭据错误。
+	if code := h.json("POST", "/v1/auth/login", "",
+		map[string]string{"identifier": "outsider@example.com", "password": "password1"}, nil); code != http.StatusUnauthorized {
+		t.Fatalf("被拒绝的注册不应留下可登录的账号：%d", code)
+	}
+
+	// 校内邮箱可以注册，更长的子域不因父域在清单里而放行。
+	if code := h.json("POST", "/v1/auth/register", "",
+		map[string]string{"identifier": "student@bupt.cn", "password": "password1"}, nil); code != http.StatusCreated {
+		t.Fatalf("校内邮箱注册：%d", code)
+	}
+	if code := h.json("POST", "/v1/auth/register", "",
+		map[string]string{"identifier": "outsider@bupt.cn.example.com", "password": "password1"}, &p); code != http.StatusBadRequest {
+		t.Fatalf("子域不应因父域在清单里而放行：%d", code)
 	}
 }
 
@@ -392,8 +425,9 @@ func TestRefreshRateLimitReturns429(t *testing.T) {
 func TestRefreshRateLimitFollowsAccountAcrossDevices(t *testing.T) {
 	cfg, err := config.Load(func(key string) string {
 		return map[string]string{
-			"ZHIXIN_REFRESH_RATE":  "0.0001",
-			"ZHIXIN_REFRESH_BURST": "1",
+			"ZHIXIN_REFRESH_RATE":           "0.0001",
+			"ZHIXIN_REFRESH_BURST":          "1",
+			"ZHIXIN_REGISTER_EMAIL_DOMAINS": "*",
 		}[key]
 	})
 	if err != nil {
@@ -559,7 +593,11 @@ func (failingSyncStore) PutRef(context.Context, string, syncsvc.Ref) (bool, erro
 
 func TestInternalErrorsAreProblems(t *testing.T) {
 	cfg, err := config.Load(func(key string) string {
-		return map[string]string{"ZHIXIN_AUTH_RATE": "0", "ZHIXIN_REFRESH_RATE": "0"}[key]
+		return map[string]string{
+			"ZHIXIN_AUTH_RATE":              "0",
+			"ZHIXIN_REFRESH_RATE":           "0",
+			"ZHIXIN_REGISTER_EMAIL_DOMAINS": "*",
+		}[key]
 	})
 	if err != nil {
 		t.Fatal(err)

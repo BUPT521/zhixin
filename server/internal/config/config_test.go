@@ -33,6 +33,46 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LLM.DailyTokens != 400000 || cfg.LLM.MaxAttempts != 3 {
 		t.Fatalf("unexpected llm defaults: %+v", cfg.LLM)
 	}
+	if len(cfg.RegisterEmailDomains) != 1 || cfg.RegisterEmailDomains[0] != "bupt.cn" {
+		t.Fatalf("内测期间注册默认只允许 bupt.cn，得到 %v", cfg.RegisterEmailDomains)
+	}
+}
+
+func TestLoadRegisterEmailDomains(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want []string
+		bad  bool
+	}{
+		{raw: "BUPT.cn", want: []string{"bupt.cn"}},
+		{raw: " @bupt.cn , example.com ", want: []string{"bupt.cn", "example.com"}},
+		{raw: "*", want: nil},
+		{raw: "", want: []string{"bupt.cn"}},
+		{raw: "bupt.cn,", bad: true},
+		{raw: "bupt", bad: true},
+		{raw: "bupt.cn, *.example.com", bad: true},
+		{raw: "bupt.cn, @", bad: true},
+	}
+	for _, tc := range cases {
+		got, err := Load(env(map[string]string{"ZHIXIN_REGISTER_EMAIL_DOMAINS": tc.raw}))
+		if tc.bad {
+			if err == nil || !strings.Contains(err.Error(), "ZHIXIN_REGISTER_EMAIL_DOMAINS") {
+				t.Fatalf("%q 应当被拒绝，得到 %v", tc.raw, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%q: %v", tc.raw, err)
+		}
+		if len(got.RegisterEmailDomains) != len(tc.want) {
+			t.Fatalf("%q: got %v, want %v", tc.raw, got.RegisterEmailDomains, tc.want)
+		}
+		for i := range tc.want {
+			if got.RegisterEmailDomains[i] != tc.want[i] {
+				t.Fatalf("%q: got %v, want %v", tc.raw, got.RegisterEmailDomains, tc.want)
+			}
+		}
+	}
 }
 
 func TestLoadRejectsBadValues(t *testing.T) {

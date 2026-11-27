@@ -185,6 +185,8 @@ server/
 
 注册与登录的请求体用 `identifier` 表示登录方式的值，服务端按值的形状识别种类并规范化：含 `@` 的按邮箱、转小写之后按 RFC 5322 的简单地址校验，符合可选加号加 6 至 20 位数字的按手机号，其余是无效输入。同一条联系方式已经登记时注册返回 409 `identifier_taken`。
 
+内测期间注册还受邮箱后缀限制：`ZHIXIN_REGISTER_EMAIL_DOMAINS` 列出允许的域名，默认只有 `bupt.cn`，按 `@` 之后的完整域名精确匹配，其他后缀返回 400 `email_domain_not_allowed` 并在 `extra.allowed_domains` 带出清单。限制只作用于注册，登录、找回密码与已有账号的云端写入照旧；公测开放注册时把这个变量设成 `*` 并重启，取舍见 [ADR-0085](../docs/adr/0085-内测注册限定学校邮箱.md)。
+
 注册之后的账号默认没有任何已验证的登录方式，`GET /v1/me` 返回 `{user_id, created_at, identities: [{id, kind, identifier, verified}]}`，其中 `verified` 全是 `false`。注册接口是公开的，除按来源地址限流外还有实例级上限（`ZHIXIN_REGISTER_GLOBAL_RATE` 与 `ZHIXIN_REGISTER_GLOBAL_BURST`），换地址也不能把未验证的账号刷满库；注册超过 `ZHIXIN_UNVERIFIED_KEEP_DAYS`（默认 7 天）仍没有任何一种已验证登录方式的账号由每日清理删除，登录方式、会话与验证码一并清掉，这个邮箱之后可以重新注册。
 
 `POST /v1/me/identities/{id}/verification` 给指定的登录方式发一条六位数字验证码，`POST /v1/me/identities/{id}/verification/confirm` 用它把这条登录方式标为已确认；`id` 取自 `GET /v1/me`，只认当前账号名下的登录方式，别人的编号返回 404。已经确认过的再次请求直接返回 204，不重复发信。
@@ -417,6 +419,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_REFRESH_TTL` | `720h` | 刷新令牌有效期，必须长于访问令牌 |
 | `ZHIXIN_AUTH_RATE` | `0.2` | 注册与登录按来源地址的令牌桶补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_AUTH_BURST` | `10` | 注册与登录的桶容量，两者共用一个桶 |
+| `ZHIXIN_REGISTER_EMAIL_DOMAINS` | `bupt.cn` | 注册允许的邮箱域名，逗号分隔，按 `@` 之后的完整域名精确匹配；`*` 表示不限制。内测期间默认只允许学校邮箱，公测开放注册时设为 `*` 并重启（[ADR-0085](../docs/adr/0085-内测注册限定学校邮箱.md)） |
 | `ZHIXIN_LOGIN_FAIL_RATE` | `0.017` | 登录失败按规范化登录方式的补充速率（个/秒），约每分钟一次；注册、登录与删号共用这个预算 |
 | `ZHIXIN_LOGIN_FAIL_BURST` | `10` | 登录失败的桶容量，连续失败十次之后开始返回 429 |
 | `ZHIXIN_ARGON2_MEMORY_BUDGET_MIB` | `256` | 密码哈希同时占用的内存预算（MiB），并发哈希数由它除以单次约 19 MiB 得出 |

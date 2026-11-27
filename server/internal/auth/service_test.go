@@ -79,6 +79,38 @@ func TestRegisterValidates(t *testing.T) {
 	}
 }
 
+func TestRegisterRestrictsEmailDomains(t *testing.T) {
+	ctx := context.Background()
+	s, _ := newTestService()
+	s.SetRegisterEmailDomains([]string{"bupt.cn"})
+
+	for _, identifier := range []string{
+		"outsider@example.com",
+		"student@bupt.cn.example.com",
+	} {
+		if _, err := s.Register(ctx, identifier, "password1", ""); !errors.Is(err, ErrEmailDomainNotAllowed) {
+			t.Fatalf("%q: got %v, want ErrEmailDomainNotAllowed", identifier, err)
+		}
+		// 被挡下的注册不写账号行，换一个合法后缀仍然可以注册。
+		if _, err := s.store.UserByIdentifier(ctx, KindEmail, identifier); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("%q 被拒绝后不应写入账号：%v", identifier, err)
+		}
+	}
+	if _, err := s.Register(ctx, " Student@BUPT.cn ", "password1", ""); err != nil {
+		t.Fatalf("大写与空白应规范化后放行：%v", err)
+	}
+
+	// 限制只作用于注册：在收紧之前登记的其他邮箱仍然可以登录。
+	old, _ := newTestService()
+	if _, err := old.Register(ctx, "old@example.com", "password1", ""); err != nil {
+		t.Fatal(err)
+	}
+	old.SetRegisterEmailDomains([]string{"bupt.cn"})
+	if _, err := old.Login(ctx, "old@example.com", "password1", ""); err != nil {
+		t.Fatalf("已有账号登录不应受后缀限制：%v", err)
+	}
+}
+
 func TestAccessTokenExpires(t *testing.T) {
 	ctx := context.Background()
 	s, c := newTestService()

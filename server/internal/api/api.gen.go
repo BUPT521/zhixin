@@ -231,25 +231,26 @@ func (e ModelKind) Valid() bool {
 
 // Defines values for ProblemCode.
 const (
-	ProblemCodeConflict           ProblemCode = "conflict"
-	ProblemCodeContactUnverified  ProblemCode = "contact_unverified"
-	ProblemCodeHistoryCompacted   ProblemCode = "history_compacted"
-	ProblemCodeIdentifierTaken    ProblemCode = "identifier_taken"
-	ProblemCodeInternal           ProblemCode = "internal"
-	ProblemCodeInvalidCode        ProblemCode = "invalid_code"
-	ProblemCodeInvalidCredentials ProblemCode = "invalid_credentials"
-	ProblemCodeInvalidRequest     ProblemCode = "invalid_request"
-	ProblemCodeKeyScopeDenied     ProblemCode = "key_scope_denied"
-	ProblemCodeModelNotAllowed    ProblemCode = "model_not_allowed"
-	ProblemCodeNotFound           ProblemCode = "not_found"
-	ProblemCodeNotImplemented     ProblemCode = "not_implemented"
-	ProblemCodePayloadTooLarge    ProblemCode = "payload_too_large"
-	ProblemCodeQuotaExceeded      ProblemCode = "quota_exceeded"
-	ProblemCodeRateLimited        ProblemCode = "rate_limited"
-	ProblemCodeStorageFull        ProblemCode = "storage_full"
-	ProblemCodeUnauthorized       ProblemCode = "unauthorized"
-	ProblemCodeUnavailable        ProblemCode = "unavailable"
-	ProblemCodeUpstreamFailed     ProblemCode = "upstream_failed"
+	ProblemCodeConflict              ProblemCode = "conflict"
+	ProblemCodeContactUnverified     ProblemCode = "contact_unverified"
+	ProblemCodeEmailDomainNotAllowed ProblemCode = "email_domain_not_allowed"
+	ProblemCodeHistoryCompacted      ProblemCode = "history_compacted"
+	ProblemCodeIdentifierTaken       ProblemCode = "identifier_taken"
+	ProblemCodeInternal              ProblemCode = "internal"
+	ProblemCodeInvalidCode           ProblemCode = "invalid_code"
+	ProblemCodeInvalidCredentials    ProblemCode = "invalid_credentials"
+	ProblemCodeInvalidRequest        ProblemCode = "invalid_request"
+	ProblemCodeKeyScopeDenied        ProblemCode = "key_scope_denied"
+	ProblemCodeModelNotAllowed       ProblemCode = "model_not_allowed"
+	ProblemCodeNotFound              ProblemCode = "not_found"
+	ProblemCodeNotImplemented        ProblemCode = "not_implemented"
+	ProblemCodePayloadTooLarge       ProblemCode = "payload_too_large"
+	ProblemCodeQuotaExceeded         ProblemCode = "quota_exceeded"
+	ProblemCodeRateLimited           ProblemCode = "rate_limited"
+	ProblemCodeStorageFull           ProblemCode = "storage_full"
+	ProblemCodeUnauthorized          ProblemCode = "unauthorized"
+	ProblemCodeUnavailable           ProblemCode = "unavailable"
+	ProblemCodeUpstreamFailed        ProblemCode = "upstream_failed"
 )
 
 // Valid indicates whether the value is a known member of the ProblemCode enum.
@@ -258,6 +259,8 @@ func (e ProblemCode) Valid() bool {
 	case ProblemCodeConflict:
 		return true
 	case ProblemCodeContactUnverified:
+		return true
+	case ProblemCodeEmailDomainNotAllowed:
 		return true
 	case ProblemCodeHistoryCompacted:
 		return true

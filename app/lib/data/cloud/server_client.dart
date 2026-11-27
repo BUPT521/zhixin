@@ -49,6 +49,7 @@ class ServerProblem implements Exception {
     'invalid_credentials' => '邮箱或密码不正确',
     'invalid_code' => '验证码不正确或已经过期，可以重新获取',
     'identifier_taken' => '这个邮箱已经注册过，可以直接登录',
+    'email_domain_not_allowed' => _emailDomainMessage,
     'rate_limited' => _rateLimitedMessage,
     'payload_too_large' =>
       extra['resource'] == 'sync' ? '单条同步提交超过服务端允许的大小' : '文件超过服务端允许的大小',
@@ -65,6 +66,17 @@ class ServerProblem implements Exception {
     'not_implemented' => '服务端还没有实现这个操作',
     _ => '服务端没有完成这次请求',
   };
+
+  /// 内测期间注册限定邮箱后缀时，用服务端给出的清单说明；客户端不写死域名，
+  /// 公测放开或换学校时不用发版。
+  String get _emailDomainMessage {
+    final allowed = extra['allowed_domains'];
+    final suffixes = allowed is List
+        ? allowed.whereType<String>().map((domain) => '@$domain').toList()
+        : const <String>[];
+    if (suffixes.isEmpty) return '内测期间这个邮箱不能注册，请换一个学校邮箱再试';
+    return '内测期间只接受 ${suffixes.join('、')} 的邮箱注册';
+  }
 
   /// 限流说明按时长换单位：验证码的收信预算用完之后要等几个小时，直接写秒数
   /// 用户读不出还剩多久。

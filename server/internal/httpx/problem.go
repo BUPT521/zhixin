@@ -16,25 +16,26 @@ import (
 type Code = api.ProblemCode
 
 const (
-	CodeInvalidRequest     = api.ProblemCodeInvalidRequest
-	CodeUnauthorized       = api.ProblemCodeUnauthorized
-	CodeInvalidCredentials = api.ProblemCodeInvalidCredentials
-	CodeInvalidCode        = api.ProblemCodeInvalidCode
-	CodeIdentifierTaken    = api.ProblemCodeIdentifierTaken
-	CodeContactUnverified  = api.ProblemCodeContactUnverified
-	CodeKeyScopeDenied     = api.ProblemCodeKeyScopeDenied
-	CodeNotFound           = api.ProblemCodeNotFound
-	CodeConflict           = api.ProblemCodeConflict
-	CodePayloadTooLarge    = api.ProblemCodePayloadTooLarge
-	CodeStorageFull        = api.ProblemCodeStorageFull
-	CodeHistoryCompacted   = api.ProblemCodeHistoryCompacted
-	CodeModelNotAllowed    = api.ProblemCodeModelNotAllowed
-	CodeQuotaExceeded      = api.ProblemCodeQuotaExceeded
-	CodeRateLimited        = api.ProblemCodeRateLimited
-	CodeUpstreamFailed     = api.ProblemCodeUpstreamFailed
-	CodeUnavailable        = api.ProblemCodeUnavailable
-	CodeNotImplemented     = api.ProblemCodeNotImplemented
-	CodeInternal           = api.ProblemCodeInternal
+	CodeInvalidRequest        = api.ProblemCodeInvalidRequest
+	CodeUnauthorized          = api.ProblemCodeUnauthorized
+	CodeInvalidCredentials    = api.ProblemCodeInvalidCredentials
+	CodeInvalidCode           = api.ProblemCodeInvalidCode
+	CodeIdentifierTaken       = api.ProblemCodeIdentifierTaken
+	CodeEmailDomainNotAllowed = api.ProblemCodeEmailDomainNotAllowed
+	CodeContactUnverified     = api.ProblemCodeContactUnverified
+	CodeKeyScopeDenied        = api.ProblemCodeKeyScopeDenied
+	CodeNotFound              = api.ProblemCodeNotFound
+	CodeConflict              = api.ProblemCodeConflict
+	CodePayloadTooLarge       = api.ProblemCodePayloadTooLarge
+	CodeStorageFull           = api.ProblemCodeStorageFull
+	CodeHistoryCompacted      = api.ProblemCodeHistoryCompacted
+	CodeModelNotAllowed       = api.ProblemCodeModelNotAllowed
+	CodeQuotaExceeded         = api.ProblemCodeQuotaExceeded
+	CodeRateLimited           = api.ProblemCodeRateLimited
+	CodeUpstreamFailed        = api.ProblemCodeUpstreamFailed
+	CodeUnavailable           = api.ProblemCodeUnavailable
+	CodeNotImplemented        = api.ProblemCodeNotImplemented
+	CodeInternal              = api.ProblemCodeInternal
 )
 
 // WriteProblem writes an application/problem+json response. detail must never

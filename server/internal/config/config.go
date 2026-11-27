@@ -99,6 +99,9 @@ type Config struct {
 	// 灌满库（ADR-0037）。设 0 关闭。
 	RegisterGlobalRatePerSecond float64
 	RegisterGlobalBurst         int
+	// RegisterEmailDomains 是注册允许的邮箱域名，按 @ 之后的部分精确匹配，
+	// 例如 bupt.cn。为空表示不限制后缀；* 表示不限制（ADR-0085）。
+	RegisterEmailDomains []string
 	// UnverifiedKeepDays 是未确认邮箱的账号保留天数：注册之后超过这么多天仍未
 	// 确认的账号由每日清理删除，释放邮箱与账号行（ADR-0037）。
 	UnverifiedKeepDays int
@@ -332,6 +335,12 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, err)
 	}
 
+	// 内测期间注册只接受学校邮箱，默认 bupt.cn；公测开放注册时把这一项写成 *。
+	registerEmailDomains, err := parseRegisterEmailDomains(get("ZHIXIN_REGISTER_EMAIL_DOMAINS", "bupt.cn"))
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	cfg := Config{
 		Addr:                      get("ZHIXIN_ADDR", ":8080"),
 		DatabaseURL:               get("ZHIXIN_DATABASE_URL", ""),
@@ -369,6 +378,7 @@ func Load(getenv func(string) string) (Config, error) {
 		LoginFailBurst:              int(num("ZHIXIN_LOGIN_FAIL_BURST", "10")),
 		RegisterGlobalRatePerSecond: fnum("ZHIXIN_REGISTER_GLOBAL_RATE", "0.05"),
 		RegisterGlobalBurst:         int(num("ZHIXIN_REGISTER_GLOBAL_BURST", "10")),
+		RegisterEmailDomains:        registerEmailDomains,
 		UnverifiedKeepDays:          int(num("ZHIXIN_UNVERIFIED_KEEP_DAYS", "7")),
 		Argon2MemoryBudgetMiB:       int(num("ZHIXIN_ARGON2_MEMORY_BUDGET_MIB", "256")),
 		MaxSessionsPerUser:          int(num("ZHIXIN_MAX_SESSIONS_PER_USER", "20")),
@@ -547,6 +557,30 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	cfg.Releases = releases
 	return cfg, errors.Join(errs...)
+}
+
+// emailDomainPattern 是允许配置的邮箱域名形状：至少两段，每段 1 至 63 个
+// 字母、数字或连字符，且不以连字符开头或结尾。注册按 @ 之后的部分精确匹配，
+// 子域不会因为父域在清单里而放行。
+var emailDomainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+
+// parseRegisterEmailDomains 解析注册允许的邮箱域名清单。值可以带前导 @，
+// 大小写不敏感；* 表示不限制。清单一律小写，便于与服务层规范化之后的邮箱
+// 比较。
+func parseRegisterEmailDomains(raw string) ([]string, error) {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "*" {
+		return nil, nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		domain := strings.TrimPrefix(strings.TrimSpace(part), "@")
+		if len(domain) > 253 || !emailDomainPattern.MatchString(domain) {
+			return nil, fmt.Errorf("ZHIXIN_REGISTER_EMAIL_DOMAINS: %q 不是邮箱域名，例如 bupt.cn；不限制时写 *", part)
+		}
+		out = append(out, domain)
+	}
+	return out, nil
 }
 
 // parseTrustedProxies 解析反向代理地址与网段。只接受单地址或带前缀长度的

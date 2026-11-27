@@ -165,6 +165,13 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 没有任何一种已验证登录方式的账号按保留期删除，由 PruneLoop 的每日清理执行
 	// （ADR-0037）；必须在 PruneLoop 之前设置，因为它在启动时就会先清一次。
 	authSvc.SetUnverifiedKeep(cfg.UnverifiedKeepDays)
+	// 内测期间注册只接受配置的邮箱后缀（ADR-0085）；空清单表示不限制，装配处
+	// 不再额外判断，服务层按清单精确匹配。
+	authSvc.SetRegisterEmailDomains(cfg.RegisterEmailDomains)
+	if len(cfg.RegisterEmailDomains) > 0 {
+		log.Info("registration is limited to email domains",
+			slog.String("domains", strings.Join(cfg.RegisterEmailDomains, ",")))
+	}
 	authSvc.SetSecurityLog(log)
 	go authSvc.PruneLoop(ctx, st.Auth, log)
 
