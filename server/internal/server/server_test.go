@@ -638,6 +638,37 @@ func TestAccessLogRecordsRouteAndRequestID(t *testing.T) {
 	}
 }
 
+// TestAccessLogRecordsRegisteredPattern 走完整 Build 装配，断言访问日志里的 route
+// 是注册模式而不是原始路径。带路径参数的接口才能区分两种写法：原始路径是
+// /v1/backups/abc，注册模式是 /v1/backups/{id}。路由由最外层的 RecordPattern
+// 记录，经 SecurityHeaders 的 cacheGuard 转交给访问日志（S19）。
+func TestAccessLogRecordsRegisteredPattern(t *testing.T) {
+	cfg, err := config.Load(func(key string) string {
+		return map[string]string{"ZHIXIN_AUTH_RATE": "0", "ZHIXIN_REFRESH_RATE": "0"}[key]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	handler := mustBuild(t, cfg, MemoryStores(cfg, log), log)
+	req := httptest.NewRequest(http.MethodDelete, "/v1/backups/abc", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	// 未登录请求在鉴权处被拒绝，但路由记录发生在它之前，route 仍应是注册模式。
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous delete: %d", rec.Code)
+	}
+	line := logs.String()
+	if !strings.Contains(line, `route="DELETE /v1/backups/{id}"`) {
+		t.Fatalf("access log %q does not record the registered pattern", line)
+	}
+	if strings.Contains(line, `route="DELETE /v1/backups/abc"`) {
+		t.Fatalf("access log %q 记录了原始路径而不是注册模式", line)
+	}
+}
+
 func TestUnauthorizedHasRequestIDAndIsLogged(t *testing.T) {
 	cfg, err := config.Load(func(key string) string {
 		return map[string]string{"ZHIXIN_AUTH_RATE": "0", "ZHIXIN_REFRESH_RATE": "0"}[key]

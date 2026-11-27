@@ -94,8 +94,9 @@ func ReadBody(t *testing.T, resp *http.Response) []byte {
 }
 
 // NewServer 按生产装配的顺序搭一个 handler：中间件交给生成代码，套在每条已匹配
-// 路由的内部，运行时 r.Pattern 已经由 mux 写好，鉴权据此判定；request_id 放在
-// 最外层，鉴权失败时的 problem 体也带编号。
+// 路由的内部，运行时 r.Pattern 已经由 mux 写好，鉴权据此判定；request_id 与统一
+// 响应头放在最外层，和 server.Build 的链一致。SecurityHeaders 必须在链上：它换上的
+// cacheGuard 夹在 RecordPattern 与访问日志之间，route 记录靠它转交（S19）。
 func NewServer(si api.ServerInterface, mw ...api.MiddlewareFunc) http.Handler {
 	mux := http.NewServeMux()
 	handler := api.HandlerWithOptions(si, api.StdHTTPServerOptions{
@@ -103,7 +104,7 @@ func NewServer(si api.ServerInterface, mw ...api.MiddlewareFunc) http.Handler {
 		Middlewares:      mw,
 		ErrorHandlerFunc: httpx.BindingErrorHandler,
 	})
-	return httpx.Chain(handler, httpx.RequestID)
+	return httpx.Chain(handler, httpx.RequestID, httpx.SecurityHeaders)
 }
 
 // Base 让用例只实现自己用到的路由。嵌入的接口为零值，没有覆盖到的路由被调用

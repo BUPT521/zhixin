@@ -50,9 +50,10 @@ type statusRecorder struct {
 // the generated wrapper, where r.Pattern is already set on the request.
 func (s *statusRecorder) SetPattern(pattern string) { s.pattern = pattern }
 
-// RecordPattern passes the matched route to the access log. The route handler
-// is the only place that sees r.Pattern, because net/http sets it on the
-// request after the outer middleware has cloned it.
+// RecordPattern passes the matched route to the access log. The generated
+// wrapper runs after net/http has matched a route, so r.Pattern is already set;
+// the recorder is behind SecurityHeaders' cacheGuard, which forwards SetPattern
+// to the statusRecorder (S19).
 func RecordPattern(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if rec, ok := w.(interface{ SetPattern(string) }); ok {
