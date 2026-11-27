@@ -78,53 +78,50 @@ func TestServiceValidatesBatchAndPage(t *testing.T) {
 }
 
 // TestServicePullStopsAtByteLimit 守住拉取分页的响应字节上限：累计序列化字节
-// 超过上限时截断本页并让 has_more 为真，下一页从截断处继续，拉完不再有更多；
-// 单条提交超过上限时返回错误，客户端可以停止重试当前游标。
+// 超过上限时截断本页并让 has_more 为真，下一页从截断处继续，拉完不再有更多。
+// 页预算的下限是单条提交上限，所以用两条都接近单条上限的提交构造截断。
 func TestServicePullStopsAtByteLimit(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
-	batch := make([]Commit, 0, 5)
-	for i := range 5 {
-		batch = append(batch, testCommit(fmt.Sprintf("r%d", i), 27))
+	big := func(id string) Commit {
+		c := testCommit(id, 27)
+		after := json.RawMessage(fmt.Sprintf(`{"content":%q}`, strings.Repeat("x", 1200*1024)))
+		c.Changes[0].After = &after
+		return c
 	}
-	if _, err := svc.Push(ctx, "u1", 0, batch, DeviceRoster{}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{big("r1"), big("r2")}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
-
-	// 先不限字节拉一整页，量出两条提交的累计字节作为上限。
-	all, err := svc.Pull(ctx, "u1", nil, nil)
-	if err != nil || len(all.Commits) != 5 {
-		t.Fatalf("pull all = %+v, %v", all, err)
-	}
-	first, err := json.Marshal(all.Commits[0])
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	second, err := json.Marshal(all.Commits[1])
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	svc.SetMaxPullBytes(int64(len(first) + len(second)))
+	// 页预算配置为 1 字节，会被抬到下限 MaxCommitBytes：一页只装得下一条。
+	svc.SetMaxPullBytes(1)
 
 	page, err := svc.Pull(ctx, "u1", nil, nil)
-	if err != nil || len(page.Commits) != 2 || !page.HasMore {
+	if err != nil || len(page.Commits) != 1 || !page.HasMore {
 		t.Fatalf("first limited page = %+v, %v", page, err)
 	}
-	after := *page.Commits[1].Seq
-	page, err = svc.Pull(ctx, "u1", &after, nil)
-	if err != nil || len(page.Commits) != 2 || !page.HasMore {
-		t.Fatalf("second limited page = %+v, %v", page, err)
-	}
-	after = *page.Commits[1].Seq
+	after := *page.Commits[0].Seq
 	page, err = svc.Pull(ctx, "u1", &after, nil)
 	if err != nil || len(page.Commits) != 1 || page.HasMore {
 		t.Fatalf("last page = %+v, %v", page, err)
 	}
+}
 
-	// 单条超过上限时停止分页。
+// TestServicePullBudgetLowerBound 守住拉取页预算的下限（S12）：配置小于单条提交
+// 上限时抬到 MaxCommitBytes，已经存入的提交不会因为页预算过小而永远返回 413。
+func TestServicePullBudgetLowerBound(t *testing.T) {
+	ctx := context.Background()
+	svc := NewService(NewMemoryStore(), 27)
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}, DeviceRoster{}); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+
 	svc.SetMaxPullBytes(1)
-	if page, err = svc.Pull(ctx, "u1", nil, nil); !errors.Is(err, ErrPullTooLarge) {
-		t.Fatalf("oversized single commit = %+v, %v", page, err)
+	if svc.maxPullBytes != MaxCommitBytes {
+		t.Fatalf("页预算 = %d，want 抬到下限 %d", svc.maxPullBytes, MaxCommitBytes)
+	}
+	page, err := svc.Pull(ctx, "u1", nil, nil)
+	if err != nil || len(page.Commits) != 1 || page.Head != 1 {
+		t.Fatalf("低于下限的配置不应让已有提交拉不下来: %+v, %v", page, err)
 	}
 }
 
@@ -134,7 +131,8 @@ func TestServicePullStopsAtByteLimit(t *testing.T) {
 func TestServicePushSizesByCommitNotPage(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
-	// 页预算调到 1 字节：它只决定一页取多少条，不该把能存的提交判成太大。
+	// 页预算调到 1 字节（会被抬到 MaxCommitBytes 下限）：它只决定一页取多少条，
+	// 不该把能存的提交判成太大。
 	svc.SetMaxPullBytes(1)
 
 	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}, DeviceRoster{})
