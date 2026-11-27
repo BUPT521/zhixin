@@ -209,14 +209,14 @@ void main() {
       identifier: 'default@example.com',
       password: 'password123',
     );
-    expect((await defaultAccount.quota()).dailyTokens, 200000);
+    expect((await defaultAccount.quota()).dailyTokens, 400000);
     expect(
       (await defaultAccount.models()).map((model) => model.id),
       contains('zhixin-chat'),
     );
   });
 
-  test('模型列表按用途区分，嵌入模型带维度，额度分开读', () async {
+  test('模型列表按用途区分，聊天与嵌入共用额度', () async {
     await account.register(
       identifier: 'kind@example.com',
       password: 'password123',
@@ -232,9 +232,12 @@ void main() {
     expect(embedding.isEmbedding, isTrue);
     expect(embedding.dimensions, 4);
 
+    server.embeddingUsedTokens = 20000;
     final quota = await account.quota();
-    expect(quota.dailyTokens, 200000);
-    expect(quota.embeddingDailyTokens, 2000000);
+    expect(quota.dailyTokens, 400000);
+    expect(quota.embeddingUsedTokens, 20000);
+    expect(quota.usedTokens, 20000);
+    expect(quota.chatUsedTokens, 0);
   });
 
   test('旧版服务端不带 kind 时按聊天模型处理，不认识的用途跳过', () {
@@ -373,7 +376,7 @@ void main() {
     );
     server.expireAccess = true;
     final quota = await account.quota();
-    expect(quota.dailyTokens, 200000);
+    expect(quota.dailyTokens, 400000);
     final snapshot = await account.snapshot();
     expect(snapshot.signedIn, isTrue);
   });
@@ -389,7 +392,7 @@ void main() {
     server.dropNextRefreshResponse = true;
 
     final quota = await account.quota();
-    expect(quota.dailyTokens, 200000);
+    expect(quota.dailyTokens, 400000);
     expect(server.refreshRequests, hasLength(2));
     final first = server.refreshRequests[0];
     final retry = server.refreshRequests[1];

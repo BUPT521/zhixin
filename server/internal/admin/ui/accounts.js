@@ -40,8 +40,7 @@ function accountRow(account) {
         accountVerified(account) ? '已验证' : '未验证')),
     el('td', { 'data-label': '注册时间' }, moment(account.created_at) || '—'),
     el('td', { class: 'account-quota', 'data-label': '每日额度' },
-      quotaText('聊天', quota.daily_tokens, quota.daily_tokens_override),
-      quotaText('嵌入', quota.embedding_daily_tokens, quota.embedding_daily_tokens_override),
+      quotaText('共享', quota.daily_tokens, quota.daily_tokens_override),
       quota.note ? el('div', { class: 'sub' }, quota.note) : null),
     el('td', { class: 'ops', 'data-label': '操作' }, el('div', { class: 'row-actions' },
       el('button', { type: 'button', class: 'link', 'aria-label': `查看 ${account.id} 的账号详情`,
@@ -187,7 +186,6 @@ async function openQuota(account) {
     const form = $('#quota-form');
     form.reset();
     form.elements.daily_tokens.value = detail.quota.daily_tokens_override ?? '';
-    form.elements.embedding_daily_tokens.value = detail.quota.embedding_daily_tokens_override ?? '';
     form.elements.note.value = detail.quota.note || '';
     $('#quota-account').textContent = `${accountLabel(detail)}（${detail.id}）`;
     $('#quota-usage-day').textContent = detail.usage?.day || '';
@@ -196,12 +194,10 @@ async function openQuota(account) {
         identity.verified ? '已验证' : '未验证'))));
     $('#quota-chat-used').textContent = `${number.format(detail.usage?.chat_tokens || 0)} Token`;
     $('#quota-embedding-used').textContent = `${number.format(detail.usage?.embedding_tokens || 0)} Token`;
-    $('#quota-chat-default').textContent = accountLimitText(detail.quota.default_daily_tokens);
-    $('#quota-embedding-default').textContent = accountLimitText(detail.quota.default_embedding_daily_tokens);
+    $('#quota-daily-default').textContent = accountLimitText(detail.quota.default_daily_tokens);
     $('#quota-updated').textContent = detail.quota.updated_at ? '最近保存 ' + moment(detail.quota.updated_at) : '';
     renderAccountPoints(detail.points);
-    $('#quota-reset').disabled = detail.quota.daily_tokens_override == null &&
-      detail.quota.embedding_daily_tokens_override == null && !detail.quota.note;
+    $('#quota-reset').disabled = detail.quota.daily_tokens_override == null && !detail.quota.note;
     clearError('quota-error');
     markClean(form);
     $('#quota-dialog').showModal();
@@ -223,10 +219,8 @@ $('#quota-form').addEventListener('submit', async (event) => {
   if (!accountQuotaAccount) return;
   const form = event.currentTarget;
   let daily;
-  let embedding;
   try {
     daily = quotaInput(form, 'daily_tokens');
-    embedding = quotaInput(form, 'embedding_daily_tokens');
   } catch (err) {
     showError('quota-error', err.message);
     return;
@@ -234,7 +228,7 @@ $('#quota-form').addEventListener('submit', async (event) => {
   const note = form.elements.note.value.trim();
   await runSave($('#quota-save'), async () => {
     const saved = await api('PUT', '/accounts/' + encodeURIComponent(accountQuotaAccount.id) + '/quota',
-      { daily_tokens: daily, embedding_daily_tokens: embedding, note });
+      { daily_tokens: daily, note });
     const index = state.accounts.findIndex((item) => item.id === saved.id);
     if (index >= 0) state.accounts[index] = saved;
     renderAccounts();

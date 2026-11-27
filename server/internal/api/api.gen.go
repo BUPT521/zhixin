@@ -472,23 +472,14 @@ type AdminAccountPoints struct {
 
 // AdminAccountQuota 一个账号的模型额度：覆盖值与最终生效值。没有覆盖值时覆盖项省略，表示这一项用实例默认值
 type AdminAccountQuota struct {
-	// DailyTokens 聊天最终生效的每日额度
+	// DailyTokens 聊天与嵌入共用的生效每日额度
 	DailyTokens int64 `json:"daily_tokens"`
 
-	// DailyTokensOverride 聊天单独调整过的额度；没有覆盖时省略
+	// DailyTokensOverride 为这个账号调整的每日共享额度；没有覆盖时省略
 	DailyTokensOverride *int64 `json:"daily_tokens_override,omitempty"`
 
-	// DefaultDailyTokens 实例配置的聊天默认额度，页面用它说明留空时的取值
+	// DefaultDailyTokens 实例配置的默认每日额度
 	DefaultDailyTokens int64 `json:"default_daily_tokens"`
-
-	// DefaultEmbeddingDailyTokens 实例配置的嵌入默认额度
-	DefaultEmbeddingDailyTokens int64 `json:"default_embedding_daily_tokens"`
-
-	// EmbeddingDailyTokens 嵌入最终生效的每日额度
-	EmbeddingDailyTokens int64 `json:"embedding_daily_tokens"`
-
-	// EmbeddingDailyTokensOverride 嵌入单独调整过的额度；没有覆盖时省略
-	EmbeddingDailyTokensOverride *int64 `json:"embedding_daily_tokens_override,omitempty"`
 
 	// Note 覆盖行的备注，没有覆盖时为空字符串
 	Note string `json:"note"`
@@ -777,11 +768,8 @@ type AdminProviderList struct {
 
 // AdminQuotaInput 整体替换一个账号的额度覆盖值；省略或为 null 的项回到实例默认值
 type AdminQuotaInput struct {
-	// DailyTokens 聊天每日额度；null 表示用实例默认值
+	// DailyTokens 聊天与嵌入的每日共享额度；null 表示用实例默认值
 	DailyTokens *int64 `json:"daily_tokens,omitempty"`
-
-	// EmbeddingDailyTokens 嵌入每日额度；null 表示用实例默认值
-	EmbeddingDailyTokens *int64 `json:"embedding_daily_tokens,omitempty"`
 
 	// Note 备注，例如调整原因
 	Note *string `json:"note,omitempty"`
@@ -1199,12 +1187,9 @@ type LLMQuota struct {
 	// 还没有建好或账号还没有副本，这一项也照常返回，见 ADR-0071。
 	ChargedPoints *int64 `json:"charged_points,omitempty"`
 
-	// DailyTokens 聊天每日额度
+	// DailyTokens 聊天和嵌入共用的每日免费额度，以计费 token 计
 	DailyTokens int64              `json:"daily_tokens"`
 	Day         openapi_types.Date `json:"day"`
-
-	// EmbeddingDailyTokens 嵌入每日额度
-	EmbeddingDailyTokens int64 `json:"embedding_daily_tokens"`
 
 	// EmbeddingUsedTokens 嵌入当天已结算的计费 token
 	EmbeddingUsedTokens int64 `json:"embedding_used_tokens"`
@@ -1214,10 +1199,10 @@ type LLMQuota struct {
 	// 或还没有余额副本时为 null，见 ADR-0073。
 	RemainingPoints *int64 `json:"remaining_points,omitempty"`
 
-	// TokensPerPoint 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
+	// TokensPerPoint 一个积分覆盖的计费 token 数；客户端按此比例把共享额度和用量换算成积分展示，见 ADR-0068
 	TokensPerPoint int64 `json:"tokens_per_point"`
 
-	// UsedTokens 聊天当天已结算的计费 token，不含在途预留
+	// UsedTokens 聊天和嵌入当天已结算的计费 token 合计，不含在途预留
 	UsedTokens int64 `json:"used_tokens"`
 }
 
@@ -2215,7 +2200,7 @@ type ServerInterface interface {
 	// PostV1MeIdentitiesIdVerificationConfirm 用验证码确认某一种登录方式
 	// (POST /v1/me/identities/{id}/verification/confirm)
 	PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request, id string)
-	// GetV1MeModelQuotaPurchases 即刻收商品收费能力、聊天积分余额与折算比例
+	// GetV1MeModelQuotaPurchases 即刻收商品收费能力、共享积分余额与折算比例
 	// (GET /v1/me/model-quota-purchases)
 	GetV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request)
 	// PostV1MeModelQuotaPurchases 获取即刻收托管购买页的购买链接

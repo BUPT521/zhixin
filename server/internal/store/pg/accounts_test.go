@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/BUPT521/zhixin/server/internal/auth"
-	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 )
 
 // createAccount 在测试库里写入一个账号与它的一条邮箱登录方式。生产代码走
@@ -79,22 +78,19 @@ func TestListAccountsAndQuotaOverride(t *testing.T) {
 		t.Fatalf("second page: %+v err=%v", second, err)
 	}
 
-	chat := int64(5000)
-	if err := st.SetQuotaOverride(ctx, "user-a", &chat, nil, "内测"); err != nil {
+	daily := int64(5000)
+	if err := st.SetQuotaOverride(ctx, "user-a", &daily, "内测"); err != nil {
 		t.Fatalf("set quota: %v", err)
 	}
-	if limit, ok, err := st.DailyLimit(ctx, "user-a", llmproxy.KindChat); err != nil || !ok || limit != 5000 {
-		t.Fatalf("chat limit: %d %v %v", limit, ok, err)
-	}
-	if _, ok, err := st.DailyLimit(ctx, "user-a", llmproxy.KindEmbedding); err != nil || ok {
-		t.Fatalf("embedding should use the default: %v %v", ok, err)
+	if limit, ok, err := st.DailyLimit(ctx, "user-a"); err != nil || !ok || limit != 5000 {
+		t.Fatalf("shared limit: %d %v %v", limit, ok, err)
 	}
 	overrides, err := st.QuotaOverrides(ctx, []string{"user-a", "user-b"})
 	if err != nil {
 		t.Fatalf("overrides: %v", err)
 	}
 	a, ok := overrides["user-a"]
-	if !ok || a.DailyTokens == nil || *a.DailyTokens != 5000 || a.EmbeddingDailyTokens != nil ||
+	if !ok || a.DailyTokens == nil || *a.DailyTokens != 5000 ||
 		a.Note != "内测" || a.UpdatedAt.IsZero() {
 		t.Fatalf("override a: %+v", a)
 	}
@@ -102,16 +98,16 @@ func TestListAccountsAndQuotaOverride(t *testing.T) {
 		t.Fatalf("user-b should have no override: %+v", overrides)
 	}
 
-	if err := st.SetQuotaOverride(ctx, "user-a", nil, nil, ""); err != nil {
+	if err := st.SetQuotaOverride(ctx, "user-a", nil, ""); err != nil {
 		t.Fatalf("clear by empty set: %v", err)
 	}
-	if _, ok, err := st.DailyLimit(ctx, "user-a", llmproxy.KindChat); err != nil || ok {
+	if _, ok, err := st.DailyLimit(ctx, "user-a"); err != nil || ok {
 		t.Fatalf("empty set should remove the override: %v %v", ok, err)
 	}
 	if err := st.ClearQuotaOverride(ctx, "user-a"); err != nil {
 		t.Fatalf("clear: %v", err)
 	}
-	if _, ok, err := st.DailyLimit(ctx, "user-a", llmproxy.KindChat); err != nil || ok {
+	if _, ok, err := st.DailyLimit(ctx, "user-a"); err != nil || ok {
 		t.Fatalf("clear should remove the override: %v %v", ok, err)
 	}
 }

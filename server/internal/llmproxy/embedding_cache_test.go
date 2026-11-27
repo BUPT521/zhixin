@@ -243,7 +243,7 @@ func TestEmbeddingLookupDoesNotSpendQuota(t *testing.T) {
 		{Hash: h, Dim: 4, Vector: encodeVector([]float32{1, 0, 0, 0})},
 	})
 	// 把嵌入额度调到 0：额度用完是 429，但查找不走额度。
-	env.quota.SetKindLimit(tokens.UserID, KindEmbedding, 1)
+	env.quota.SetDailyLimit(tokens.UserID, 1)
 	var out lookupPayload
 	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings/lookup", tokens.AccessToken,
 		map[string]any{"model": "zhixin-embed", "hashes": []string{h}}, &out); code != http.StatusOK || len(out.Vectors) != 1 {

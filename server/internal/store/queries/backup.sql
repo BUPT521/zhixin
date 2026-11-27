@@ -53,55 +53,60 @@ RETURNING id;
 -- name: ListAllBackups :many
 SELECT user_id, id FROM backup;
 
--- 账号当天的用量按用途汇总，额度判定看已结算量与在途预留之和：同时发起的请求
+-- 账号当天的共享额度用量，额度判定看已结算量与在途预留之和：同时发起的请求
 -- 必须互相看得见，否则各自按旧值通过（ADR-0063、ADR-0071）。
 -- name: UsedTokens :one
-SELECT COALESCE(SUM(tokens + reserved_tokens), 0)::bigint
+SELECT COALESCE(SUM(CASE WHEN kind = 'embedding'
+  THEN embedding_billed_tokens + embedding_reserved_tokens ELSE tokens + reserved_tokens END), 0)::bigint
 FROM llm_usage
-WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND kind = sqlc.arg(kind);
+WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date;
 
 -- 账号当天已经结算的计费 token 数，核销只按这一份算：在途预留还没有产生实际用量，
 -- 算进去会在并发时多扣积分（ADR-0071）。
 -- name: SettledTokens :one
-SELECT COALESCE(SUM(tokens), 0)::bigint
+SELECT COALESCE(SUM(CASE WHEN kind = 'embedding' THEN embedding_billed_tokens ELSE tokens END), 0)::bigint
 FROM llm_usage
-WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND kind = sqlc.arg(kind);
+WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date
+  AND (sqlc.arg(kind)::text = '' OR kind = sqlc.arg(kind));
 
 -- 记一笔在途预留。api_key_id 记录这次调用用的是哪把密钥，用访问令牌时为空字符串；
 -- 结算时由 SettleTokens 把它转进 tokens。
 -- name: AddReservedTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, reserved_tokens)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, reserved_tokens, embedding_reserved_tokens)
 VALUES (
   sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(kind),
-  sqlc.arg(api_key_id), sqlc.arg(reserved_tokens)
+  sqlc.arg(api_key_id),
+  CASE WHEN sqlc.arg(kind)::text = 'chat' THEN sqlc.arg(reserved_tokens)::bigint ELSE 0 END,
+  CASE WHEN sqlc.arg(kind) = 'embedding' THEN sqlc.arg(reserved_tokens) ELSE 0 END
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
-DO UPDATE SET reserved_tokens = llm_usage.reserved_tokens + EXCLUDED.reserved_tokens;
+DO UPDATE SET
+  reserved_tokens = llm_usage.reserved_tokens + EXCLUDED.reserved_tokens,
+  embedding_reserved_tokens = llm_usage.embedding_reserved_tokens + EXCLUDED.embedding_reserved_tokens;
 
 -- 按账号调整的每日额度；没有行或者对应列为空时用配置的默认值。
 -- name: LLMQuotaOverride :one
-SELECT daily_tokens, embedding_daily_tokens
+SELECT daily_tokens
 FROM llm_quota
 WHERE user_id = sqlc.arg(user_id);
 
 -- 管理后台读取一个账号的覆盖行：与 LLMQuotaOverride 相比多出备注与保存时间。
 -- 没有行时调用方按“没有覆盖”处理，回落到实例默认额度。
 -- name: AccountQuota :one
-SELECT daily_tokens, embedding_daily_tokens, note, updated_at
+SELECT daily_tokens, note, updated_at
 FROM llm_quota
 WHERE user_id = sqlc.arg(user_id);
 
 -- 管理后台整体替换一个账号的覆盖值；两项额度都为空时调用方先删除这一行，不写
 -- 一条没有意义的记录。updated_at 在更新分支同样推进，页面据此看出最近一次保存。
 -- name: UpsertAccountQuota :exec
-INSERT INTO llm_quota (user_id, daily_tokens, embedding_daily_tokens, note, updated_at)
+INSERT INTO llm_quota (user_id, daily_tokens, note, updated_at)
 VALUES (
-  sqlc.arg(user_id), sqlc.narg(daily_tokens), sqlc.narg(embedding_daily_tokens),
+  sqlc.arg(user_id), sqlc.narg(daily_tokens),
   sqlc.arg(note), now()
 )
 ON CONFLICT (user_id) DO UPDATE SET
   daily_tokens = EXCLUDED.daily_tokens,
-  embedding_daily_tokens = EXCLUDED.embedding_daily_tokens,
   note = EXCLUDED.note,
   updated_at = now();
 
@@ -111,6 +116,6 @@ WHERE user_id = sqlc.arg(user_id);
 
 -- 管理后台的账号列表一次读回一页账号的覆盖行，避免逐账号查询。
 -- name: AccountQuotasByUsers :many
-SELECT user_id, daily_tokens, embedding_daily_tokens, note, updated_at
+SELECT user_id, daily_tokens, note, updated_at
 FROM llm_quota
 WHERE user_id = ANY(sqlc.arg(user_ids)::text[]);

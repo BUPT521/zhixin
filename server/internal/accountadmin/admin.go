@@ -47,32 +47,28 @@ type AccountStore interface {
 
 // Admin 承载 /admin/v1/accounts 下的处理器。
 type Admin struct {
-	accounts AccountStore
-	quota    llmproxy.Quota
-	delete   func(ctx context.Context, userID string) error
-	// chatDefault 与 embeddingDefault 是配置里的默认每日额度，没有覆盖值时
-	// 响应与页面按它们显示“生效额度”。
-	chatDefault      int64
-	embeddingDefault int64
-	loc              *time.Location
-	now              func() time.Time
-	log              *slog.Logger
-	maxJSON          int64
+	accounts     AccountStore
+	quota        llmproxy.Quota
+	delete       func(ctx context.Context, userID string) error
+	dailyDefault int64
+	loc          *time.Location
+	now          func() time.Time
+	log          *slog.Logger
+	maxJSON      int64
 }
 
 // New 组装账号管理接口。del 由 server.Build 注入 auth.Service 的注销方法。
 func New(accounts AccountStore, quota llmproxy.Quota, del func(context.Context, string) error,
-	chatDefault, embeddingDefault int64, loc *time.Location, log *slog.Logger, maxJSON int64) *Admin {
+	dailyDefault int64, loc *time.Location, log *slog.Logger, maxJSON int64) *Admin {
 	return &Admin{
-		accounts:         accounts,
-		quota:            quota,
-		delete:           del,
-		chatDefault:      chatDefault,
-		embeddingDefault: embeddingDefault,
-		loc:              loc,
-		now:              time.Now,
-		log:              log,
-		maxJSON:          maxJSON,
+		accounts:     accounts,
+		quota:        quota,
+		delete:       del,
+		dailyDefault: dailyDefault,
+		loc:          loc,
+		now:          time.Now,
+		log:          log,
+		maxJSON:      maxJSON,
 	}
 }
 
@@ -180,7 +176,7 @@ func (a *Admin) RefreshPoints(w http.ResponseWriter, r *http.Request, id string)
 	httpx.WriteJSON(w, http.StatusOK, view)
 }
 
-// PutQuota 整体替换一个账号的额度覆盖值。两项都为空且没有备注时等同于清除，
+// PutQuota 整体替换账号的共享额度覆盖值。额度与备注都为空时等同于清除，
 // 与数据库里不留一条空覆盖行的处理一致。
 func (a *Admin) PutQuota(w http.ResponseWriter, r *http.Request, id string) {
 	if _, ok := a.loadUser(w, r, id); !ok {
@@ -195,13 +191,11 @@ func (a *Admin) PutQuota(w http.ResponseWriter, r *http.Request, id string) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "note is too long")
 		return
 	}
-	for _, value := range []*int64{in.DailyTokens, in.EmbeddingDailyTokens} {
-		if value != nil && *value < 1 {
-			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "daily_tokens and embedding_daily_tokens: at least 1, or null for the instance default")
-			return
-		}
+	if in.DailyTokens != nil && *in.DailyTokens < 1 {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "daily_tokens: at least 1, or null for the instance default")
+		return
 	}
-	if err := a.quota.SetQuotaOverride(r.Context(), id, in.DailyTokens, in.EmbeddingDailyTokens, note); err != nil {
+	if err := a.quota.SetQuotaOverride(r.Context(), id, in.DailyTokens, note); err != nil {
 		httpx.WriteInternal(w, r, a.log, err)
 		return
 	}
@@ -351,19 +345,13 @@ func (a *Admin) accountView(record auth.AccountRecord, override llmproxy.QuotaOv
 		})
 	}
 	quota := api.AdminAccountQuota{
-		DailyTokens:                 effectiveLimit(override.DailyTokens, a.chatDefault),
-		DefaultDailyTokens:          a.chatDefault,
-		EmbeddingDailyTokens:        effectiveLimit(override.EmbeddingDailyTokens, a.embeddingDefault),
-		DefaultEmbeddingDailyTokens: a.embeddingDefault,
-		Note:                        override.Note,
+		DailyTokens:        effectiveLimit(override.DailyTokens, a.dailyDefault),
+		DefaultDailyTokens: a.dailyDefault,
+		Note:               override.Note,
 	}
 	if override.DailyTokens != nil {
 		value := *override.DailyTokens
 		quota.DailyTokensOverride = &value
-	}
-	if override.EmbeddingDailyTokens != nil {
-		value := *override.EmbeddingDailyTokens
-		quota.EmbeddingDailyTokensOverride = &value
 	}
 	if !override.UpdatedAt.IsZero() {
 		updated := override.UpdatedAt

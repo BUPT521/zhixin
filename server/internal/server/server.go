@@ -359,7 +359,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		payments: newPurchaseHandler(cfg, st, log),
 		llmAdmin: llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
 		accounts: accountadmin.New(st.Auth, st.Quota, authSvc.DeleteAccountByID,
-			cfg.LLM.DailyTokens, cfg.LLM.EmbeddingDailyTokens, cfg.Location, log, cfg.MaxJSONBytes),
+			cfg.LLM.DailyTokens, cfg.Location, log, cfg.MaxJSONBytes),
 		feedback:       feedbackHandler,
 		feedbackAdmin:  feedbackadmin.New(st.Feedback, log),
 		release:        release.NewHandler(cfg.Releases),

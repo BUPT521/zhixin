@@ -637,10 +637,9 @@ class FakeServer {
     if (path == '/v1/llm/quota') {
       return _json(200, {
         'day': '2026-11-17',
-        'used_tokens': 0,
-        'daily_tokens': 200000,
+        'used_tokens': embeddingUsedTokens,
+        'daily_tokens': 400000,
         'embedding_used_tokens': embeddingUsedTokens,
-        'embedding_daily_tokens': 2000000,
       });
     }
     if (path == '/v1/llm/models') {

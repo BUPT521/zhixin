@@ -74,15 +74,11 @@ class ServerProblem implements Exception {
     return '尝试过于频繁，请 ${waitText(seconds)}后再试';
   }
 
-  /// 额度用完按用途与原因分别说明：聊天的免费额度与积分用完之后可以购买积分继续，
-  /// 实例预算用完只能稍后重试，嵌入按原始 token 计、不能用积分支付，只说明次日恢复。
+  /// 聊天与嵌入的共享额度用完时，按服务端给出的原因说明怎么继续。
   ///
-  /// 原因由服务端在 `extra.reason` 里给出，缺失时按聊天额度用完的一般口径说明；
+  /// 原因由服务端在 `extra.reason` 里给出，缺失时按模型额度用完的一般口径说明；
   /// 余额副本正在同步时说明稍后重试即可，不引导购买（ADR-0073）。
   String get _quotaExceededMessage {
-    if (extra['kind'] == 'embedding') {
-      return '今天的嵌入额度已经用完，次日恢复';
-    }
     return switch (extra['reason']) {
       'instance' => '实例今天的模型预算已经用完，请稍后再试',
       'syncing' => '积分余额正在同步，请稍后重试',
@@ -627,14 +623,13 @@ class BackupDownload {
   final String? declaredSha256;
 }
 
-/// 今天的模型用量与额度；聊天与嵌入分开计。
+/// 今天的共享额度和已结算用量。
 class ServerQuota {
   const ServerQuota({
     required this.day,
     required this.usedTokens,
     required this.dailyTokens,
     this.embeddingUsedTokens = 0,
-    this.embeddingDailyTokens = 0,
     this.tokensPerPoint,
     this.chargedPoints,
     this.remainingPoints,
@@ -645,8 +640,6 @@ class ServerQuota {
     usedTokens: (json['used_tokens'] as num?)?.toInt() ?? 0,
     dailyTokens: (json['daily_tokens'] as num?)?.toInt() ?? 0,
     embeddingUsedTokens: (json['embedding_used_tokens'] as num?)?.toInt() ?? 0,
-    embeddingDailyTokens:
-        (json['embedding_daily_tokens'] as num?)?.toInt() ?? 0,
     tokensPerPoint: _ratio(json['tokens_per_point']),
     // 没有开通收款时服务端不回这两项，界面不显示积分那一行。
     chargedPoints: _points(json['charged_points']),
@@ -664,14 +657,15 @@ class ServerQuota {
 
   final String day;
 
-  /// 聊天当天已用与每日额度，按计费 token 计；界面按 [tokensPerPoint] 折成积分。
+  /// 两类模型的当日已用合计与每日共享额度，按计费 token 计；界面按 [tokensPerPoint] 折成积分。
   /// 已用不含还在途的请求，服务端结算之后才算进来。
   final int usedTokens;
   final int dailyTokens;
 
-  /// 嵌入当天已用与每日额度；旧版服务端没有这两项，读作 0。
+  /// 嵌入当天已结算的计费 token。
   final int embeddingUsedTokens;
-  final int embeddingDailyTokens;
+
+  int get chatUsedTokens => usedTokens - embeddingUsedTokens;
 
   /// 一个积分覆盖的计费 token 数；旧版服务端不返回时为 null，这时界面只显示 token。
   final int? tokensPerPoint;

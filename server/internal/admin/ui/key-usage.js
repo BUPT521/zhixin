@@ -72,7 +72,7 @@ function keyUsageRow(key, usage, dates, peak, perPoint) {
   const name = tokenRow ? '访问令牌' : key.key_present ? key.name || '未命名密钥' : '已清理的密钥';
   const status = tokenRow ? '—' : !key.key_present ? '已清理' : key.revoked ? '已撤销' : '在用';
   const sub = tokenRow ? '客户端调用' : key.prefix || key.key_id;
-  const points = perPoint > 0 ? '≈' + number.format(Math.ceil(usage.chat.tokens / perPoint)) : '—';
+  const points = perPoint > 0 ? '≈' + number.format(Math.ceil((usage.chat.tokens + usage.embedding.tokens) / perPoint)) : '—';
   const shortID = key.user_id.length <= 12 ? key.user_id : key.user_id.slice(0, 8) + '…';
   const spark = el('span', { class: 'key-spark' });
   for (const day of dates) {

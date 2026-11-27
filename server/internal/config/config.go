@@ -228,8 +228,7 @@ var productIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{4,128}$`)
 type LLMConfig struct {
 	// RestrictProviders requires public HTTPS endpoints for database sources.
 	RestrictProviders bool
-	// DailyTokens is the per-account daily chat token budget. The real number
-	// is still to be decided (ADR-0008); this is only a configurable default.
+	// DailyTokens is the per-account free daily budget shared by chat and embeddings.
 	DailyTokens int64
 	// TokensPerPoint 是一个积分覆盖的计费 token 数：即刻收按它把 Usage.Billed
 	// 折算成积分核销，客户端按它把 token 用量换算成积分展示（ADR-0068）。
@@ -259,9 +258,8 @@ type LLMConfig struct {
 	StreamIdleTimeout time.Duration
 	// StreamTotalTimeout 是一次流式响应的总时限。
 	StreamTotalTimeout time.Duration
-	// EmbeddingDailyTokens is the per-account daily embedding token budget,
-	// counted separately from chat (ADR-0029).
-	EmbeddingDailyTokens int64
+	// EmbeddingBillingPermille is the billed share of raw embedding tokens, in thousandths.
+	EmbeddingBillingPermille int64
 	// EmbeddingMaxInputs caps the number of inputs in one embeddings request.
 	EmbeddingMaxInputs int
 	// EmbeddingCacheBytes 是每个账号的嵌入向量缓存上限（ADR-0030）：写入之后按
@@ -412,7 +410,7 @@ func Load(getenv func(string) string) (Config, error) {
 
 		LLM: LLMConfig{
 			RestrictProviders:         get("ZHIXIN_DATABASE_URL", "") != "",
-			DailyTokens:               num("ZHIXIN_LLM_DAILY_TOKENS", "320000"),
+			DailyTokens:               num("ZHIXIN_LLM_DAILY_TOKENS", "400000"),
 			TokensPerPoint:            num("ZHIXIN_TOKENS_PER_POINT", "10000"),
 			InstanceDailyTokens:       num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "32000000"),
 			MaxRequestBytes:           num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
@@ -422,7 +420,7 @@ func Load(getenv func(string) string) (Config, error) {
 			MaxResponseBytes:          num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
 			StreamIdleTimeout:         dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
 			StreamTotalTimeout:        dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
-			EmbeddingDailyTokens:      num("ZHIXIN_LLM_EMBEDDING_DAILY_TOKENS", "2000000"),
+			EmbeddingBillingPermille:  num("ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE", "200"),
 			EmbeddingMaxInputs:        int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
 			EmbeddingCacheBytes:       num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
 			MaxAttempts:               int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),
@@ -445,6 +443,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.LLM.TokensPerPoint > 1000000000 {
 		errs = append(errs, errors.New("ZHIXIN_TOKENS_PER_POINT 必须是 1 到 10 亿之间的整数"))
+	}
+	if cfg.LLM.EmbeddingBillingPermille < 1 || cfg.LLM.EmbeddingBillingPermille > 10000 {
+		errs = append(errs, errors.New("ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE: want 1 to 10000"))
 	}
 	if cfg.LLM.BackgroundInstancePercent < 0 || cfg.LLM.BackgroundInstancePercent > 100 {
 		errs = append(errs, errors.New("ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT: want 0 to 100"))

@@ -75,7 +75,7 @@ type Proxy struct {
 // NewRoutedHandler 使用服务端从数据库读出的路由快照。
 func NewRoutedHandler(cfg config.LLMConfig, router *Router, quota Quota, loc *time.Location, log *slog.Logger) *Proxy {
 	if setter, ok := quota.(quotaLimits); ok {
-		setter.SetQuotaLimits(cfg.DailyTokens, cfg.EmbeddingDailyTokens, cfg.InstanceDailyTokens)
+		setter.SetQuotaLimits(cfg.DailyTokens, cfg.InstanceDailyTokens)
 	}
 
 	// No overall client timeout: chat streams legitimately last minutes. The
@@ -218,17 +218,17 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteInternal(w, r, p.log, err)
 			return
 		}
-		limit, err := p.dailyLimit(r.Context(), pr.UserID, k)
-		if err != nil {
-			httpx.WriteInternal(w, r, p.log, err)
-			return
-		}
-		if k == KindChat {
-			out.UsedTokens, out.DailyTokens = used, limit
-		} else {
-			out.EmbeddingUsedTokens, out.EmbeddingDailyTokens = used, limit
+		out.UsedTokens += used
+		if k == KindEmbedding {
+			out.EmbeddingUsedTokens = used
 		}
 	}
+	limit, err := p.dailyLimit(r.Context(), pr.UserID)
+	if err != nil {
+		httpx.WriteInternal(w, r, p.log, err)
+		return
+	}
+	out.DailyTokens = limit
 	// 积分只在开通收款的实例上有：当天已核销多少、副本里还剩多少，账号页按这两个
 	// 数写“免费额度用完之后今天用了多少、还剩多少”（ADR-0069）。两个字段各按自己
 	// 的数据是否可用决定返回与否：副本缺失时已核销积分照常返回，不跟着一起变 null。
@@ -248,18 +248,15 @@ func (p *Proxy) QuotaStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// dailyLimit 返回账号当天某类模型可用的 token 上限：先看有没有按账号调整过的
+// dailyLimit 返回账号当天共用的免费计费 token 上限：先看有没有按账号调整过的
 // 额度，没有时用配置的默认值。调整写 llm_quota 表，不重启服务，下一次请求生效。
-func (p *Proxy) dailyLimit(ctx context.Context, userID string, kind Kind) (int64, error) {
-	limit, ok, err := p.quota.DailyLimit(ctx, userID, kind)
+func (p *Proxy) dailyLimit(ctx context.Context, userID string) (int64, error) {
+	limit, ok, err := p.quota.DailyLimit(ctx, userID)
 	if err != nil {
 		return 0, err
 	}
 	if ok {
 		return limit, nil
-	}
-	if kind == KindEmbedding {
-		return p.cfg.EmbeddingDailyTokens, nil
 	}
 	return p.cfg.DailyTokens, nil
 }
@@ -1142,12 +1139,12 @@ func (c cancelOnClose) Close() error {
 // writeQuotaExceeded 回 429 quota_exceeded，并带上当天的账号用量、账号额度、实例
 // 预算与用完的是哪一种额度：客户端按 reason 决定是引导购买积分还是只说稍后再试。
 func (p *Proxy) writeQuotaExceeded(w http.ResponseWriter, r *http.Request, userID, day string, kind Kind, reason QuotaReason) {
-	used, err := p.quota.Used(r.Context(), userID, day, kind)
+	used, err := p.quota.Used(r.Context(), userID, day, "")
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
 		return
 	}
-	limit, err := p.dailyLimit(r.Context(), userID, kind)
+	limit, err := p.dailyLimit(r.Context(), userID)
 	if err != nil {
 		httpx.WriteInternal(w, r, p.log, err)
 		return

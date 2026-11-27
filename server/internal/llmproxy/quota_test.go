@@ -13,7 +13,7 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 	ctx := context.Background()
 	q := NewMemoryQuota()
 	// 实例预算为 0 表示不限制，先只验账号额度。
-	q.SetQuotaLimits(100, 200, 0)
+	q.SetQuotaLimits(100, 0)
 	const day = "2026-11-18"
 
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 40); err != nil || got != 40 {
@@ -77,7 +77,7 @@ func TestMemoryQuotaReserveSettle(t *testing.T) {
 func TestMemoryQuotaInstanceLedgerSurvivesDelete(t *testing.T) {
 	ctx := context.Background()
 	q := NewMemoryQuota()
-	q.SetQuotaLimits(1000, 200, 300)
+	q.SetQuotaLimits(1000, 300)
 	const day = "2026-11-18"
 
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 300); err != nil || got != 300 {
@@ -102,7 +102,7 @@ func TestMemoryQuotaInstanceLedgerSurvivesDelete(t *testing.T) {
 func TestMemoryQuotaInstanceBudget(t *testing.T) {
 	ctx := context.Background()
 	q := NewMemoryQuota()
-	q.SetQuotaLimits(1000, 200, 250)
+	q.SetQuotaLimits(1000, 250)
 	const day = "2026-11-18"
 
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 200); err != nil || got != 200 {
@@ -147,7 +147,7 @@ func TestMemoryQuotaInstanceBudget(t *testing.T) {
 func TestMemoryQuotaAttributesUsageToKey(t *testing.T) {
 	ctx := context.Background()
 	q := NewMemoryQuota()
-	q.SetQuotaLimits(1000, 2000, 0)
+	q.SetQuotaLimits(1000, 0)
 	const day = "2026-11-18"
 	for _, call := range []struct {
 		keyID string

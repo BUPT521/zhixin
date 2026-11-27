@@ -75,7 +75,7 @@ type KeyUsageStore interface {
 
 // KeyUsage 汇总区间内按密钥分开记的用量。参数与 /admin/v1/usage 相同：days 含
 // 今天，按服务端时区计算。响应里的 tokens_per_point 与核销同一配置，后台据此把
-// 对话的计费 token 折成积分；嵌入不参与积分，单独列出，避免把它折进金额。
+// 聊天和嵌入的计费 token 合计折成参考积分，各用途的用量仍单独列出。
 func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1KeyUsageParams) {
 	days := deref(params.Days, 7)
 	if days < 1 || days > 30 {

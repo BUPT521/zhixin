@@ -55,7 +55,7 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 	// 用量记到这次调用所用的模型代理密钥上；用访问令牌时编号为空字符串。
 	keyID := auth.MustPrincipal(r.Context()).KeyID
 	return func(route liveRoute, estimate Usage, first bool) (finishAttempt, error) {
-		want := estimate.reserve(model.Kind)
+		want := p.quotaCost(model.Kind, estimate.reserve(model.Kind))
 		// Reserve 要么拿到完整的 want，要么返回带原因的错误；不再按剩余量截断，
 		// 因此这里不需要退回预留，429 也能说清是哪种额度用完（ADR-0071）。
 		reserved, err := p.quota.Reserve(r.Context(), userID, day, model.Kind, keyID, want)
@@ -67,7 +67,7 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 			if !result.notSent {
 				attempt = attemptOf(!result.success)
 			}
-			billed := billedTokens(model.Kind, estimate, result)
+			billed := p.quotaCost(model.Kind, billedTokens(model.Kind, estimate, result))
 			p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage, attempt)
 			if p.usage == nil || result.notSent {
 				return

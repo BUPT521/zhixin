@@ -68,12 +68,12 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 	}
 	points.Remaining, points.RemainingKnown = ledger.balancePoints, true
 	points.SyncedAt = ledger.syncedAt
-	limit, limited, err := s.accountLimit(ctx, q, userID, llmproxy.KindChat)
+	limit, limited, err := s.accountLimit(ctx, q, userID)
 	if err != nil {
 		return llmproxy.Points{}, err
 	}
 	if limited {
-		used, err := usedTokens(ctx, q, userID, date, llmproxy.KindChat)
+		used, err := usedTokens(ctx, q, userID, date)
 		if err != nil {
 			return llmproxy.Points{}, err
 		}

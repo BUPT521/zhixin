@@ -83,11 +83,11 @@ func TestPostgresReserveAllowsPointsBeyondTheFreeAllowance(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	const day = "2026-11-25"
-	// 一个积分一千个计费 token，聊天与嵌入的免费额度各 100 个 token。
+	// 一个积分一千个计费 token，聊天与嵌入共用 100 个免费计费 token。
 	recorder := &fakeRecorder{perPoint: 1000}
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
-	st.SetQuotaLimits(100, 100, 0)
+	st.SetQuotaLimits(100, 0)
 
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil || got != 100 {
 		t.Fatalf("免费额度内的预留应为 100，得到 %d %v", got, err)
@@ -109,12 +109,25 @@ func TestPostgresReserveAllowsPointsBeyondTheFreeAllowance(t *testing.T) {
 	if len(recorder.refreshed) != 1 {
 		t.Fatalf("副本新鲜时不应再排查询: %+v", recorder.refreshed)
 	}
-	// 嵌入不能用积分支付：免费额度用完之后仍然拒绝。
-	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindEmbedding, "", 100); err != nil || got != 100 {
-		t.Fatalf("嵌入免费额度内的预留应为 100，得到 %d %v", got, err)
+	// 嵌入与聊天共用剩下的 2,000 个付费 token，外部余额不会按用途重复计算。
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindEmbedding, "", 2000); err != nil || got != 2000 {
+		t.Fatalf("嵌入应能预留剩余付费额度，得到 %d %v", got, err)
 	}
-	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindEmbedding, "", 10); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
-		t.Fatalf("嵌入不应按积分放行，得到 %v", err)
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+		t.Fatalf("两种用途已预留全部余额，应拒绝额外请求：%v", err)
+	}
+	// 历史嵌入用量与预留保留，但不能进入共享核销。
+	if _, err := st.pool.Exec(ctx, "UPDATE llm_usage SET tokens = 2000000, reserved_tokens = 2000 WHERE user_id = 'u1' AND kind = 'embedding'"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindEmbedding, "", 2000, 1100, llmproxy.Usage{Input: 5500}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if len(recorder.charged) != 1 || recorder.charged[0] != 1000 {
+		t.Fatalf("核销只按已结算的超额 1,000 个 token 计算：%+v", recorder.charged)
+	}
+	if used, err := st.Used(ctx, "u1", day, ""); err != nil || used != 1100 {
+		t.Fatalf("共享已结算用量 = %d, %v", used, err)
 	}
 }
 
@@ -130,7 +143,7 @@ func TestPostgresReserveCountsChargesAndUnbilledTokens(t *testing.T) {
 	const day = "2026-11-25"
 	enablePaidQuota(t, st)
 	st.SetNowPay(&fakeRecorder{perPoint: 1000})
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 
 	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
@@ -169,7 +182,7 @@ func TestPostgresReserveRefreshesAStaleBalanceCopy(t *testing.T) {
 	recorder := &fakeRecorder{perPoint: 1000}
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 	if err := st.SaveBalance(ctx, "u1", 2, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -198,7 +211,7 @@ func TestPostgresChargePayUsesSettledUsageOnly(t *testing.T) {
 	recorder := &fakeRecorder{perPoint: 1000}
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 	if err := st.SaveBalance(ctx, "u1", 10, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -361,7 +374,7 @@ func TestPostgresPointsMatchTheAmountThatCanBeReleased(t *testing.T) {
 	const day = "2026-11-25"
 	enablePaidQuota(t, st)
 	st.SetNowPay(&fakeRecorder{perPoint: 1000})
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -401,7 +414,7 @@ func TestPostgresPointsAccountForPartialReservationsAndCappedCharges(t *testing.
 	const day = "2026-11-25"
 	enablePaidQuota(t, st)
 	st.SetNowPay(&fakeRecorder{perPoint: 1000})
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 	if err := st.SaveBalance(ctx, "u1", 1, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -773,7 +786,7 @@ func TestPostgresConcurrentReserveAndSettleKeepTheInstanceLedger(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	const day = "2026-11-25"
-	st.SetQuotaLimits(1_000_000, 1_000_000, 1000)
+	st.SetQuotaLimits(1_000_000, 1000)
 	var wg sync.WaitGroup
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
@@ -812,7 +825,7 @@ func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {
 	const day = "2026-11-25"
 	recorder := &fakeRecorder{perPoint: 1000}
 	st.SetNowPay(recorder)
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("缺表时写副本应跳过而不是报错: %v", err)
 	}
@@ -839,7 +852,7 @@ func TestPostgresReserveReportsSyncingWhileTheCopyIsMissing(t *testing.T) {
 	recorder := &fakeRecorder{perPoint: 1000}
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 
 	var quota *llmproxy.QuotaExceededError
 	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 150); !errors.As(err, &quota) ||
@@ -867,7 +880,7 @@ func TestPostgresReserveReportsSyncingForAStaleCopy(t *testing.T) {
 	recorder := &fakeRecorder{perPoint: 1000}
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
-	st.SetQuotaLimits(100, 0, 0)
+	st.SetQuotaLimits(100, 0)
 	if err := st.SaveBalance(ctx, "u1", 1, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}

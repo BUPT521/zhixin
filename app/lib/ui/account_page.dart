@@ -830,17 +830,17 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  /// 聊天额度按积分显示：服务端只报计费 token，折算比例由 `tokens_per_point` 给出。
+  /// 共享额度按积分显示：服务端只报计费 token，折算比例由 `tokens_per_point` 给出。
   /// 旧版服务端没有这一项时退回 token，避免把“不知道比例”显示成 0 积分。
-  String _chatQuotaText() {
+  String _modelQuotaText() {
     final quota = _quota;
     if (quota == null) return '额度暂时无法读取';
     final ratio = quota.tokensPerPoint;
     if (ratio == null) {
-      return '聊天今日已用 ${quota.usedTokens} token · '
+      return '今日模型已用 ${quota.usedTokens} token · '
           '每日免费额度 ${quota.dailyTokens} token';
     }
-    return '聊天今日已用 ${quotaPoints(quota.usedTokens, ratio)} 积分 · '
+    return '今日模型已用 ${quotaPoints(quota.usedTokens, ratio)} 积分 · '
         '每日免费额度 ${freeQuotaPoints(quota.dailyTokens, ratio)} 积分';
   }
 
@@ -1325,25 +1325,19 @@ class _AccountPageState extends State<AccountPage> {
         ),
       ),
       ..._devicesSection(context),
-      SectionHeading(
-        title: '模型额度',
-        subtitle: '知新服务按账号统计用量，聊天按积分显示，嵌入按 token 显示，两者各有每日免费额度。',
-      ),
+      SectionHeading(title: '模型额度', subtitle: '聊天和嵌入共用每日免费额度，用完后扣购买积分。'),
       forui.FCard(
         child: Padding(
           padding: EdgeInsets.all(theme.space.lg),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(_chatQuotaText(), style: theme.text.bodyMedium),
-              // 嵌入额度按原始 token 显示，不用积分单位；旧版服务端两项都读作 0，
-              // 这时不显示这一行。
-              if ((_quota?.embeddingDailyTokens ?? 0) > 0 ||
-                  (_quota?.embeddingUsedTokens ?? 0) > 0)
+              Text(_modelQuotaText(), style: theme.text.bodyMedium),
+              if (_quota case final quota?)
                 Text(
-                  embeddingQuotaText(
-                    usedTokens: _quota?.embeddingUsedTokens ?? 0,
-                    dailyTokens: _quota?.embeddingDailyTokens,
+                  modelUsageText(
+                    chatTokens: quota.chatUsedTokens,
+                    embeddingTokens: quota.embeddingUsedTokens,
                   ),
                   style: theme.text.bodyMedium,
                 ),

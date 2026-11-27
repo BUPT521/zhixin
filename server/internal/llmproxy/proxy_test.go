@@ -56,12 +56,12 @@ func baseConfig() config.LLMConfig {
 	return config.LLMConfig{
 		// 聊天额度按计费 token 计：输出按四倍折算、命中缓存按 1/50。一次预留
 		// （输出上限 4096 折算后约 16k）就比改造前的 10000 大，这里留出余量。
-		DailyTokens:          65536,
-		EmbeddingDailyTokens: 10000,
-		MaxRequestBytes:      1 << 20,
-		EmbeddingMaxInputs:   8,
-		MaxAttempts:          3,
-		HeaderTimeout:        2 * time.Second,
+		DailyTokens: 65536,
+
+		MaxRequestBytes:    1 << 20,
+		EmbeddingMaxInputs: 8,
+		MaxAttempts:        3,
+		HeaderTimeout:      2 * time.Second,
 	}
 }
 
@@ -177,10 +177,10 @@ func TestHandlerLLMProxy(t *testing.T) {
 	}
 
 	var q struct {
-		Used         int64 `json:"used_tokens"`
-		EmbeddingCap int64 `json:"embedding_daily_tokens"`
+		Used  int64 `json:"used_tokens"`
+		Daily int64 `json:"daily_tokens"`
 	}
-	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 120 || q.EmbeddingCap != 10000 {
+	if code := c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q); code != http.StatusOK || q.Used != 120 || q.Daily != cfg.DailyTokens {
 		t.Fatalf("usage: %d %+v", code, q)
 	}
 	// 额度内再发一次应当通过。
@@ -1034,8 +1034,8 @@ func TestEmbeddingsSplitAndMerge(t *testing.T) {
 		EmbUsed int64 `json:"embedding_used_tokens"`
 	}
 	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q)
-	if q.Used != 0 || q.EmbUsed != 15 {
-		t.Fatalf("嵌入用量应记在嵌入额度上：%+v", q)
+	if q.Used != 15 || q.EmbUsed != 15 {
+		t.Fatalf("嵌入用量应进入共享合计：%+v", q)
 	}
 
 	var list struct {
@@ -1168,28 +1168,36 @@ func TestEmbeddingsInputValidationAndEstimate(t *testing.T) {
 	}
 }
 
-func TestEmbeddingQuotaIsSeparateFromChat(t *testing.T) {
+func TestEmbeddingUsesSharedQuotaAndRate(t *testing.T) {
 	src := newEmbedSource(t, 1, 4)
 	cfg := baseConfig()
-	cfg.EmbeddingDailyTokens = 12
+	cfg.DailyTokens = 13
+	cfg.EmbeddingBillingPermille = 200
 	env := newTestServer(t, cfg, func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "p", src.URL, "sk")
 		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
 	})
 	tokens, _ := env.authSvc.Register(context.Background(), "eq@b.cn", "password1", "")
 	token := tokens.AccessToken
-	env.quota.SetDailyLimit(tokens.UserID, 1) // 聊天额度很小，不影响嵌入
+	if err := env.quota.Add(context.Background(), tokens.UserID, env.proxy.day(), KindChat, 10); err != nil {
+		t.Fatal(err)
+	}
 	body := map[string]any{"model": "emb", "input": inputs(2)}
 	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, body, nil); code != http.StatusOK {
 		t.Fatalf("first: %d", code)
 	}
+	var quota api.LLMQuota
+	if code := env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &quota); code != http.StatusOK ||
+		quota.UsedTokens != 12 || quota.EmbeddingUsedTokens != 2 || quota.DailyTokens != 13 {
+		t.Fatalf("共享合计应为聊天 10 加嵌入 ceil(6×20%%)，得到 %d %+v", code, quota)
+	}
 	var p testutil.Problem
 	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, body, &p); code != http.StatusTooManyRequests || p.Extra["kind"] != "embedding" {
-		t.Fatalf("嵌入额度用完应 429：%d %+v", code, p)
+		t.Fatalf("共享额度用完应 429：%d %+v", code, p)
 	}
-	env.quota.SetKindLimit(tokens.UserID, KindEmbedding, 1000)
+	env.quota.SetDailyLimit(tokens.UserID, 1000)
 	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, body, nil); code != http.StatusOK {
-		t.Fatalf("调高嵌入额度后应通过：%d", code)
+		t.Fatalf("调高共享额度后应通过：%d", code)
 	}
 }
 

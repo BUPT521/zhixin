@@ -796,7 +796,7 @@ paths:
   /v1/me/model-quota-purchases:
     get:
       tags: [payment]
-      summary: 即刻收商品收费能力、聊天积分余额与折算比例
+      summary: 即刻收商品收费能力、共享积分余额与折算比例
       description: |
         需要登录令牌。服务端并行查询商品收费能力（alipay.aipay.nowpaydirect.charge.query）
         与账号积分余额（alipay.aipay.nowpaydirect.quota.query）；商品能力在进程内缓存 60 秒。
@@ -1015,8 +1015,8 @@ paths:
         由 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 决定。服务端按路由的 `max_batch` 把一次
         请求拆成几批并发发给同一个来源，再按原顺序合并，`index` 从 0 连续编号；一批
         失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。
-        用量记入账号当天的嵌入额度，与聊天额度分开计；提供方没有返回 `usage` 时按
-        输入字符数估算。代理自身的拒绝与聊天接口相同，另有 `invalid_request`（400，
+        嵌入用量折算后计入与聊天共用的每日额度，超出的部分使用同一份购买积分；
+        提供方没有返回 `usage` 时按输入字符数估算。代理自身的拒绝与聊天接口相同，另有 `invalid_request`（400，
         `input` 为空、超过条数上限或含有非字符串，或者 `dimensions` 与模型配置的维度
         不一致）。请求头带 `X-Zhixin-Embedding-Cache: 1` 时，服务端在嵌入成功之后
         按输入的 SHA-256 把这些向量写入这个账号的缓存，重复写入不覆盖已有行；只有
@@ -1387,9 +1387,7 @@ paths:
       security: [{ admin: [] }]
       summary: 调整一个账号的每日模型额度
       description: |
-        整体替换这个账号的额度覆盖值。`daily_tokens` 与 `embedding_daily_tokens`
-        省略或为 null 时这类模型回到实例默认额度；两项都为空且没有备注时删除覆盖
-        行。额度下一次模型请求生效，不需要重启服务。账号不存在时返回 404。
+        整体替换这个账号的共享额度覆盖值。`daily_tokens` 省略或为 null 时回到实例默认额度，额度与备注均为空时删除覆盖行。额度下一次模型请求生效，不需要重启服务。账号不存在时返回 404。
       requestBody:
         required: true
         content:
@@ -1946,20 +1944,14 @@ components:
     AdminAccountQuota:
       type: object
       description: 一个账号的模型额度：覆盖值与最终生效值。没有覆盖值时覆盖项省略，表示这一项用实例默认值
-      required: [daily_tokens, default_daily_tokens, embedding_daily_tokens, default_embedding_daily_tokens, note]
+      required: [daily_tokens, default_daily_tokens, note]
       properties:
-        daily_tokens: { type: integer, format: int64, description: 聊天最终生效的每日额度 }
-        default_daily_tokens: { type: integer, format: int64, description: 实例配置的聊天默认额度，页面用它说明留空时的取值 }
-        embedding_daily_tokens: { type: integer, format: int64, description: 嵌入最终生效的每日额度 }
-        default_embedding_daily_tokens: { type: integer, format: int64, description: 实例配置的嵌入默认额度 }
+        daily_tokens: { type: integer, format: int64, description: 聊天与嵌入共用的生效每日额度 }
+        default_daily_tokens: { type: integer, format: int64, description: 实例配置的默认每日额度 }
         daily_tokens_override:
           type: integer
           format: int64
-          description: 聊天单独调整过的额度；没有覆盖时省略
-        embedding_daily_tokens_override:
-          type: integer
-          format: int64
-          description: 嵌入单独调整过的额度；没有覆盖时省略
+          description: 为这个账号调整的每日共享额度；没有覆盖时省略
         note: { type: string, description: 覆盖行的备注，没有覆盖时为空字符串 }
         updated_at: { type: string, format: date-time, description: 覆盖行最近一次保存的时间；没有覆盖时省略 }
     AdminAccountUsage:
@@ -2035,8 +2027,7 @@ components:
       additionalProperties: false
       description: 整体替换一个账号的额度覆盖值；省略或为 null 的项回到实例默认值
       properties:
-        daily_tokens: { type: integer, format: int64, minimum: 1, nullable: true, description: 聊天每日额度；null 表示用实例默认值 }
-        embedding_daily_tokens: { type: integer, format: int64, minimum: 1, nullable: true, description: 嵌入每日额度；null 表示用实例默认值 }
+        daily_tokens: { type: integer, format: int64, minimum: 1, nullable: true, description: 聊天与嵌入的每日共享额度；null 表示用实例默认值 }
         note: { type: string, maxLength: 200, description: 备注，例如调整原因 }
     AdminAccountDelete:
       type: object
@@ -2325,17 +2316,16 @@ components:
         status: { type: string, const: ok }
     LLMQuota:
       type: object
-      required: [day, used_tokens, daily_tokens, embedding_used_tokens, embedding_daily_tokens, tokens_per_point]
+      required: [day, used_tokens, daily_tokens, embedding_used_tokens, tokens_per_point]
       properties:
         day: { type: string, format: date }
-        used_tokens: { type: integer, format: int64, description: 聊天当天已结算的计费 token，不含在途预留 }
-        daily_tokens: { type: integer, format: int64, description: 聊天每日额度 }
+        used_tokens: { type: integer, format: int64, description: 聊天和嵌入当天已结算的计费 token 合计，不含在途预留 }
+        daily_tokens: { type: integer, format: int64, description: 聊天和嵌入共用的每日免费额度，以计费 token 计 }
         embedding_used_tokens: { type: integer, format: int64, description: 嵌入当天已结算的计费 token }
-        embedding_daily_tokens: { type: integer, format: int64, description: 嵌入每日额度 }
         tokens_per_point:
           type: integer
           format: int64
-          description: 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
+          description: 一个积分覆盖的计费 token 数；客户端按此比例把共享额度和用量换算成积分展示，见 ADR-0068
         charged_points:
           type: integer
           format: int64

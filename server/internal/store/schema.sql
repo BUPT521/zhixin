@@ -216,8 +216,10 @@ CREATE TABLE llm_usage (
   day           DATE NOT NULL,                  -- ZHIXIN_TIMEZONE 下的自然日
   kind          TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'embedding')),
   api_key_id    TEXT NOT NULL DEFAULT '',
-  tokens        BIGINT NOT NULL DEFAULT 0,      -- 已结算的计费 token
-  reserved_tokens BIGINT NOT NULL DEFAULT 0,    -- 在途预留，结算时转进 tokens
+  tokens        BIGINT NOT NULL DEFAULT 0,      -- 聊天计费 token，或嵌入原始 token
+  reserved_tokens BIGINT NOT NULL DEFAULT 0,    -- 聊天在途预留
+  embedding_billed_tokens BIGINT NOT NULL DEFAULT 0,   -- 嵌入已结算的共享额度用量
+  embedding_reserved_tokens BIGINT NOT NULL DEFAULT 0, -- 嵌入在途预留的计费 token
   input_tokens  BIGINT NOT NULL DEFAULT 0,      -- 上游报告的输入量
   cached_tokens BIGINT NOT NULL DEFAULT 0,      -- 其中命中缓存的部分
   attempts      BIGINT NOT NULL DEFAULT 0,      -- 尝试次数，含失败
@@ -308,7 +310,6 @@ CREATE TABLE install_active (
 CREATE TABLE llm_quota (
   user_id                 TEXT PRIMARY KEY REFERENCES app_user(id) ON DELETE CASCADE,
   daily_tokens            BIGINT CHECK (daily_tokens > 0),
-  embedding_daily_tokens  BIGINT CHECK (embedding_daily_tokens > 0),
   note                    TEXT NOT NULL DEFAULT '',
   updated_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -567,7 +567,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
               Padding(
                 padding: EdgeInsets.only(top: theme.space.xs),
                 child: Text(
-                  '积分跨日保留；每轮结束先扣当天免费额度，再扣积分。',
+                  '聊天和嵌入都可使用。当天免费额度用完后才扣购买积分，余额跨日保留。',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),

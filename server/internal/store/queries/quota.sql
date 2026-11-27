@@ -34,14 +34,15 @@ DO UPDATE SET tokens = GREATEST(llm_instance_usage.tokens + sqlc.arg(delta)::big
 -- 这一次尝试与它是否失败：失败的尝试按 0 结算，token 两列都不增加，要让后台看得
 -- 见失败就只能靠这两个计数（ADR-0083）。
 -- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, input_tokens, cached_tokens, attempts, failures)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, embedding_billed_tokens, input_tokens, cached_tokens, attempts, failures)
 VALUES (
   sqlc.arg(user_id),
   sqlc.arg(day)::date,
   sqlc.arg(kind),
   sqlc.arg(api_key_id),
-  GREATEST(sqlc.arg(actual)::bigint, 0),
-  0,
+  CASE WHEN sqlc.arg(kind)::text = 'embedding' THEN GREATEST(sqlc.arg(raw_embedding_tokens)::bigint, 0)
+    ELSE GREATEST(sqlc.arg(actual)::bigint, 0) END,
+  CASE WHEN sqlc.arg(kind) = 'embedding' THEN GREATEST(sqlc.arg(actual), 0) ELSE 0 END,
   GREATEST(sqlc.arg(input_tokens)::bigint, 0),
   GREATEST(sqlc.arg(cached_tokens)::bigint, 0),
   GREATEST(sqlc.arg(attempts)::bigint, 0),
@@ -49,8 +50,10 @@ VALUES (
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
 DO UPDATE SET
-  tokens = GREATEST(llm_usage.tokens + sqlc.arg(actual)::bigint, 0),
-  reserved_tokens = GREATEST(llm_usage.reserved_tokens - sqlc.arg(reserved)::bigint, 0),
+  tokens = llm_usage.tokens + EXCLUDED.tokens,
+  embedding_billed_tokens = llm_usage.embedding_billed_tokens + EXCLUDED.embedding_billed_tokens,
+  reserved_tokens = GREATEST(llm_usage.reserved_tokens - CASE WHEN EXCLUDED.kind = 'chat' THEN sqlc.arg(reserved)::bigint ELSE 0 END, 0),
+  embedding_reserved_tokens = GREATEST(llm_usage.embedding_reserved_tokens - CASE WHEN EXCLUDED.kind = 'embedding' THEN sqlc.arg(reserved) ELSE 0 END, 0),
   input_tokens = GREATEST(llm_usage.input_tokens + sqlc.arg(input_tokens)::bigint, 0),
   cached_tokens = GREATEST(llm_usage.cached_tokens + sqlc.arg(cached_tokens)::bigint, 0),
   attempts = GREATEST(llm_usage.attempts + sqlc.arg(attempts)::bigint, 0),

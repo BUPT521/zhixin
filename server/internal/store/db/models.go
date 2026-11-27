@@ -113,11 +113,10 @@ type LlmProvider struct {
 }
 
 type LlmQuotum struct {
-	UserID               string
-	DailyTokens          pgtype.Int8
-	EmbeddingDailyTokens pgtype.Int8
-	Note                 string
-	UpdatedAt            pgtype.Timestamptz
+	UserID      string
+	DailyTokens pgtype.Int8
+	Note        string
+	UpdatedAt   pgtype.Timestamptz
 }
 
 type LlmRoute struct {
@@ -160,16 +159,18 @@ type LlmRouteUsage struct {
 }
 
 type LlmUsage struct {
-	UserID         string
-	Day            pgtype.Date
-	Kind           string
-	ApiKeyID       string
-	Tokens         int64
-	ReservedTokens int64
-	InputTokens    int64
-	CachedTokens   int64
-	Attempts       int64
-	Failures       int64
+	UserID                  string
+	Day                     pgtype.Date
+	Kind                    string
+	ApiKeyID                string
+	Tokens                  int64
+	ReservedTokens          int64
+	EmbeddingBilledTokens   int64
+	EmbeddingReservedTokens int64
+	InputTokens             int64
+	CachedTokens            int64
+	Attempts                int64
+	Failures                int64
 }
 
 type NowpayBalance struct {

@@ -161,7 +161,7 @@ func (s *Store) DeleteAll(ctx context.Context, userID string) error {
 	return s.objects.RemovePrefix(ctx, objectstore.BackupPrefix(userID))
 }
 
-// Used 返回当天某类模型已经结算的 token 数，不含在途预留；展示与核销用这一份。
+// Used 返回当天已经结算的计费 token 数。用途为空时返回两类合计。
 func (s *Store) Used(ctx context.Context, userID, day string, kind llmproxy.Kind) (int64, error) {
 	date, err := pgDate(day)
 	if err != nil {
@@ -177,31 +177,27 @@ func (s *Store) Add(ctx context.Context, userID, day string, kind llmproxy.Kind,
 		return err
 	}
 	return s.q.SettleTokens(ctx, db.SettleTokensParams{
-		UserID:   userID,
-		Day:      date,
-		Kind:     string(kind),
-		ApiKeyID: "",
-		Actual:   tokens,
+		UserID:             userID,
+		Day:                date,
+		Kind:               string(kind),
+		ApiKeyID:           "",
+		Actual:             tokens,
+		RawEmbeddingTokens: tokens,
 	})
 }
 
-// DailyLimit 返回这个账号单独调整过的某类模型每日额度；没有覆盖行或者对应
-// 列为空时 ok 为 false，由调用方用配置的默认值。
-func (s *Store) DailyLimit(ctx context.Context, userID string, kind llmproxy.Kind) (int64, bool, error) {
-	return quotaOverride(ctx, s.q, userID, kind)
+// DailyLimit 返回账号单独调整过的每日共享额度，未设置时由调用方使用默认值。
+func (s *Store) DailyLimit(ctx context.Context, userID string) (int64, bool, error) {
+	return quotaOverride(ctx, s.q, userID)
 }
 
-func quotaOverride(ctx context.Context, q *db.Queries, userID string, kind llmproxy.Kind) (int64, bool, error) {
-	row, err := q.LLMQuotaOverride(ctx, userID)
+func quotaOverride(ctx context.Context, q *db.Queries, userID string) (int64, bool, error) {
+	limit, err := q.LLMQuotaOverride(ctx, userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, err
-	}
-	limit := row.DailyTokens
-	if kind == llmproxy.KindEmbedding {
-		limit = row.EmbeddingDailyTokens
 	}
 	return limit.Int64, limit.Valid, nil
 }

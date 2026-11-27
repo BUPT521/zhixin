@@ -14,9 +14,8 @@ import (
 
 // SetQuotaLimits 注入配置里的默认每日额度与实例预算；由 llmproxy.NewHandler
 // 装配时调用一次，运行期间不再修改，因此不加锁。
-func (s *Store) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyTokens int64) {
+func (s *Store) SetQuotaLimits(dailyTokens, instanceDailyTokens int64) {
 	s.dailyTokens = dailyTokens
-	s.embeddingDailyTokens = embeddingDailyTokens
 	s.instanceDailyTokens = instanceDailyTokens
 }
 
@@ -24,16 +23,14 @@ func (s *Store) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyT
 // lock 排成队，因为实例预算是当天所有账号的合计，行锁管不住并发插入的新行；账
 // 号额度与实例预算因此在同一个临界区里检查并扣减，不会各自按旧值通过。
 //
-// 账号额度分两段：当天免费额度先算，聊天在免费额度之外再加上即刻收余额折成的
-// token（ADR-0069），嵌入只有免费额度。余额取本地副本，这一段不调用即刻收。
+// 聊天与嵌入先占用共享的每日免费额度，超出部分再用积分余额。余额取本地副本。
 // 预留要么拿到 want，要么返回带原因的错误，不按剩余量截断（ADR-0071）。
 func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, want int64) (int64, error) {
 	if want <= 0 {
 		return 0, &llmproxy.QuotaExceededError{Reason: llmproxy.QuotaReasonAccount}
 	}
-	// 每轮对话开工前先把上一轮没有确认结果的核销补查一次：补查只排进队列，不在这
-	// 条请求路径上调用即刻收，失败也不影响这一轮（ADR-0067）。
-	if s.nowpay != nil && kind == llmproxy.KindChat {
+	// 先安排补查尚未确认的核销，不在请求路径上调用即刻收。
+	if s.nowpay != nil {
 		s.nowpay.Resume(ctx, userID)
 	}
 	date, err := pgDate(day)
@@ -51,11 +48,11 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 		return 0, fmt.Errorf("pg: 锁定当日额度失败: %w", err)
 	}
 	q := db.New(tx)
-	limit, limited, err := s.accountLimit(ctx, q, userID, kind)
+	limit, limited, err := s.accountLimit(ctx, q, userID)
 	if err != nil {
 		return 0, err
 	}
-	used, err := usedTokens(ctx, q, userID, date, kind)
+	used, err := usedTokens(ctx, q, userID, date)
 	if err != nil {
 		return 0, err
 	}
@@ -67,7 +64,7 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if paidNeeded := want - freeRemaining; limited && paidNeeded > 0 {
 		var paid int64
 		var hasPoints, syncing bool
-		if kind == llmproxy.KindChat && s.nowpay != nil {
+		if s.nowpay != nil {
 			paid, hasPoints, syncing, err = s.paidTokens(ctx, q, userID, date, used, limit)
 			if err != nil {
 				return 0, err
@@ -115,42 +112,37 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	return want, nil
 }
 
-// CheckQuotaSchema 确认 llm_usage 已经有 reserved_tokens 列（ADR-0071）。预留与
-// 已结算用量分开记的前提是这一列，缺列时每条模型请求都会写失败，所以启动时直接
-// 拒绝，让自动部署回滚到上一份可执行文件；加列由运维手册里的增量语句完成。
+// CheckQuotaSchema 在启动时核对两类额度的预留与计费列，缺列时由自动部署回滚到
+// 上一份可执行文件。已有实例按运维手册的增量语句加列。
 func (s *Store) CheckQuotaSchema(ctx context.Context) error {
 	var installed bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (
-		SELECT 1 FROM information_schema.columns
-		WHERE table_schema = current_schema()
-		  AND table_name = 'llm_usage' AND column_name = 'reserved_tokens')`).Scan(&installed)
+	err := s.pool.QueryRow(ctx, `SELECT count(*) = 3
+		FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = 'llm_usage'
+		  AND column_name IN ('reserved_tokens', 'embedding_billed_tokens', 'embedding_reserved_tokens')`).Scan(&installed)
 	if err != nil {
 		return fmt.Errorf("pg: 检查 llm_usage 结构失败: %w", err)
 	}
 	if !installed {
-		return errors.New("pg: llm_usage 缺少 reserved_tokens 列，按运维手册 4.11 加列之后再启动")
+		return errors.New("pg: llm_usage 缺少额度预留或嵌入计费列，按运维手册 4.11 加列之后再启动")
 	}
 	return nil
 }
 
 // accountLimit 返回账号当天的额度：覆盖值优先，其次配置的默认值；都没有时 ok 为
 // false，表示不限额度。
-func (s *Store) accountLimit(ctx context.Context, q *db.Queries, userID string, kind llmproxy.Kind) (int64, bool, error) {
-	fallback := s.dailyTokens
-	if kind == llmproxy.KindEmbedding {
-		fallback = s.embeddingDailyTokens
-	}
-	limit, limited, err := quotaOverride(ctx, q, userID, kind)
-	if !limited && fallback > 0 {
-		limit, limited = fallback, true
+func (s *Store) accountLimit(ctx context.Context, q *db.Queries, userID string) (int64, bool, error) {
+	limit, limited, err := quotaOverride(ctx, q, userID)
+	if !limited && s.dailyTokens > 0 {
+		limit, limited = s.dailyTokens, true
 	}
 	return limit, limited, err
 }
 
 // usedTokens 返回账号当天占用的 token 数，即已结算量与在途预留之和；额度判定
 // 必须看这个合计，否则同时发起的请求会各自按旧值通过。没有行时是 0。
-func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Date, kind llmproxy.Kind) (int64, error) {
-	used, err := q.UsedTokens(ctx, db.UsedTokensParams{UserID: userID, Day: day, Kind: string(kind)})
+func usedTokens(ctx context.Context, q *db.Queries, userID string, day pgtype.Date) (int64, error) {
+	used, err := q.UsedTokens(ctx, db.UsedTokensParams{UserID: userID, Day: day})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, nil
 	}
@@ -190,10 +182,6 @@ func (s *Store) QuotaOverrides(ctx context.Context, userIDs []string) (map[strin
 			value := row.DailyTokens.Int64
 			override.DailyTokens = &value
 		}
-		if row.EmbeddingDailyTokens.Valid {
-			value := row.EmbeddingDailyTokens.Int64
-			override.EmbeddingDailyTokens = &value
-		}
 		if row.UpdatedAt.Valid {
 			override.UpdatedAt = row.UpdatedAt.Time
 		}
@@ -202,18 +190,17 @@ func (s *Store) QuotaOverrides(ctx context.Context, userIDs []string) (map[strin
 	return out, nil
 }
 
-// SetQuotaOverride 整体替换一个账号的额度覆盖值；两项都为空且没有备注时删除
+// SetQuotaOverride 整体替换一个账号的额度覆盖值；额度与备注都为空时删除
 // 覆盖行，与内存实现保持同一语义。账号不存在时外键会拒绝写入，调用方先用
 // UserByID 核对。
-func (s *Store) SetQuotaOverride(ctx context.Context, userID string, daily, embedding *int64, note string) error {
-	if daily == nil && embedding == nil && note == "" {
+func (s *Store) SetQuotaOverride(ctx context.Context, userID string, daily *int64, note string) error {
+	if daily == nil && note == "" {
 		return s.ClearQuotaOverride(ctx, userID)
 	}
 	if err := s.q.UpsertAccountQuota(ctx, db.UpsertAccountQuotaParams{
-		UserID:               userID,
-		DailyTokens:          pgInt8(daily),
-		EmbeddingDailyTokens: pgInt8(embedding),
-		Note:                 note,
+		UserID:      userID,
+		DailyTokens: pgInt8(daily),
+		Note:        note,
 	}); err != nil {
 		return fmt.Errorf("pg: 保存账号额度失败: %w", err)
 	}
@@ -266,19 +253,24 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	}
 	q := db.New(tx)
 	instanceDelta := actual - reserved
-	if limit, limited, err := s.accountLimit(ctx, q, userID, kind); err != nil {
+	if limit, limited, err := s.accountLimit(ctx, q, userID); err != nil {
 		return err
 	} else if limited {
 		// 结算前的账号用量含这次预留，减掉它才是这次请求开始时的用量。
-		if used, err := usedTokens(ctx, q, userID, date, kind); err != nil {
+		if used, err := usedTokens(ctx, q, userID, date); err != nil {
 			return err
 		} else {
 			free := max(0, limit-max(0, used-reserved))
 			instanceDelta = min(actual, free) - min(reserved, free)
 		}
 	}
+	rawEmbedding := int64(0)
+	if kind == llmproxy.KindEmbedding && actual > 0 {
+		rawEmbedding = usage.Total()
+	}
 	if err := q.SettleTokens(ctx, db.SettleTokensParams{
-		UserID: userID, Day: date, Kind: string(kind), ApiKeyID: keyID,
+		RawEmbeddingTokens: rawEmbedding,
+		UserID:             userID, Day: date, Kind: string(kind), ApiKeyID: keyID,
 		Reserved: reserved, Actual: actual, InputTokens: usage.Input, CachedTokens: usage.Cached,
 		Attempts: attempt.Attempts, Failures: attempt.Failures,
 	}); err != nil {
@@ -290,9 +282,8 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pg: 提交额度结算失败: %w", err)
 	}
-	// 结算提交之后才算这笔用量：回答已经发给用户，核销失败不回滚，留在流水里由下
-	// 一轮请求前补查（ADR-0067）。
-	if s.nowpay != nil && kind == llmproxy.KindChat {
+	// 结算提交之后才申请核销。未确认的核销保留在流水里，下次请求前补查。
+	if s.nowpay != nil {
 		s.chargeNowPay(ctx, userID, day, date)
 	}
 	return nil
