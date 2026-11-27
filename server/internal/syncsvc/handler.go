@@ -3,6 +3,7 @@ package syncsvc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -111,7 +112,8 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 		return
 	}
 	if err != nil {
-		if h.writeSyncProblem(w, r, err, "after must be non-negative and limit between 1 and 1000", nil) {
+		detail := fmt.Sprintf("after must be non-negative and limit between 1 and %d", maxPull)
+		if h.writeSyncProblem(w, r, err, detail, nil) {
 			return
 		}
 		httpx.WriteInternal(w, r, h.log, err)
@@ -407,7 +409,7 @@ func (h *Handler) writeSyncProblem(w http.ResponseWriter, r *http.Request, err e
 		status, code, detail = http.StatusNotFound, httpx.CodeNotFound, "device is not in the roster"
 	case errors.Is(err, ErrRefLimit):
 		status, code, detail = http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"an account holds at most 200 named refs that are not deleted"
+			fmt.Sprintf("an account holds at most %d named refs that are not deleted", MaxRefsPerAccount)
 	default:
 		return false
 	}

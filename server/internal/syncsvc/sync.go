@@ -836,7 +836,7 @@ func Validate(c Commit, schemaVersion int) error {
 	switch {
 	case c.Uid == "" || len(c.Uid) > MaxRefUIDBytes,
 		!c.Kind.Valid(),
-		c.DeviceId == "" || len(c.DeviceId) > 64,
+		c.DeviceId == "" || len(c.DeviceId) > maxDeviceIDBytes,
 		c.SchemaVersion != schemaVersion,
 		!c.Actor.Valid(),
 		c.Action == "",
