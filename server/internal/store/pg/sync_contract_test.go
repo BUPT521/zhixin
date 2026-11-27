@@ -195,14 +195,14 @@ func TestPostgresRefs(t *testing.T) {
 		t.Fatalf("删除: %+v %v", ref, err)
 	}
 	refs, err = st.Refs(ctx, "u1")
-	if err != nil || len(refs) != 1 || refs[0].DeletedAt.IsZero() {
-		t.Fatalf("墓碑: %+v %v", refs, err)
+	if err != nil || len(refs) != 1 || refs[0].DeletedAt.IsZero() || refs[0].CommitUID != "" || refs[0].Note != "" {
+		t.Fatalf("墓碑只留名字与删除时间: %+v %v", refs, err)
 	}
 	deletedAt := refs[0].DeletedAt
 	// 比删除时间更早的写入不复活，返回原来的墓碑。
 	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-late", UpdatedAt: deletedAt.Add(-time.Minute)})
-	if err != nil || ref.DeletedAt.IsZero() || ref.CommitUID != "uid-2" {
-		t.Fatalf("迟到的写入不应复活，墓碑保留删除之前那一次写入的提交编号: %+v %v", ref, err)
+	if err != nil || ref.DeletedAt.IsZero() || ref.CommitUID != "" {
+		t.Fatalf("迟到的写入不应复活: %+v %v", ref, err)
 	}
 	if refs, err = st.Refs(ctx, "u1"); err != nil || refs[0].DeletedAt.IsZero() {
 		t.Fatalf("迟到的写入不应改变墓碑: %+v %v", refs, err)

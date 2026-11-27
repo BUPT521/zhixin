@@ -249,7 +249,8 @@ WHERE user_id = sqlc.arg(user_id)
 ORDER BY name;
 
 -- 删除一个名字，返回写入之后那一行；名字已经是墓碑时 WHERE 不成立、返回 0 行，
--- 调用方读回原来的墓碑。
+-- 调用方读回原来的墓碑。墓碑只留名字与删除时间：提交编号与备注一并清空，与客户端
+-- revision_ref_tombstone 只存名字与删除时间的口径一致（ADR-0054 决定第 4 条）。
 -- name: DeleteSyncRef :one
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 VALUES (
@@ -257,7 +258,8 @@ VALUES (
   sqlc.arg(updated_at), sqlc.arg(updated_at)
 )
 ON CONFLICT (user_id, name) DO UPDATE
-SET deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
+SET commit_uid = EXCLUDED.commit_uid, note = EXCLUDED.note,
+    deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
 WHERE sync_ref.deleted_at IS NULL
 RETURNING name, commit_uid, note, updated_at, deleted_at;
 

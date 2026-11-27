@@ -202,7 +202,8 @@ VALUES (
   $5, $5
 )
 ON CONFLICT (user_id, name) DO UPDATE
-SET deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
+SET commit_uid = EXCLUDED.commit_uid, note = EXCLUDED.note,
+    deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
 WHERE sync_ref.deleted_at IS NULL
 RETURNING name, commit_uid, note, updated_at, deleted_at
 `
@@ -224,7 +225,8 @@ type DeleteSyncRefRow struct {
 }
 
 // 删除一个名字，返回写入之后那一行；名字已经是墓碑时 WHERE 不成立、返回 0 行，
-// 调用方读回原来的墓碑。
+// 调用方读回原来的墓碑。墓碑只留名字与删除时间：提交编号与备注一并清空，与客户端
+// revision_ref_tombstone 只存名字与删除时间的口径一致（ADR-0054 决定第 4 条）。
 func (q *Queries) DeleteSyncRef(ctx context.Context, arg DeleteSyncRefParams) (DeleteSyncRefRow, error) {
 	row := q.db.QueryRow(ctx, deleteSyncRef,
 		arg.UserID,
