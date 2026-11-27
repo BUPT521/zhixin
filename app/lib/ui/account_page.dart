@@ -798,17 +798,12 @@ class _AccountPageState extends State<AccountPage> {
       );
       if (!confirmed || !mounted) return;
     }
+    final account = AppScope.of(context).accountServices.account;
     try {
-      await AppScope.of(context).accountServices.account.setAutoSync(value);
+      // 快照由服务保存之后给出：页面不再自己拼一份，登录方式与额度入口都还在。
+      final snapshot = await account.withAutoSync(value);
       if (!mounted) return;
-      setState(
-        () => _snapshot = AccountSnapshot(
-          serverBaseUrl: _snapshot?.serverBaseUrl ?? '',
-          session: _snapshot?.session,
-          autoSync: value,
-          usesDefaultServer: _snapshot?.usesDefaultServer ?? false,
-        ),
-      );
+      setState(() => _snapshot = snapshot);
       if (value) {
         await AppScope.of(context).accountServices.sync
             .schedule(delay: const Duration(seconds: 1));
