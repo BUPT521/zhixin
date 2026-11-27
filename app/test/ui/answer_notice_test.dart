@@ -2,8 +2,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/application/answer_outcome.dart';
 import 'package:zhixin/application/attachment_service.dart';
+import 'package:zhixin/application/buddy_actions.dart';
+import 'package:zhixin/domain/models/buddy_protocol.dart';
 import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/models/chat_message_payload.dart';
+import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/ui/answer_notice.dart';
 
@@ -194,6 +197,24 @@ void main() {
       ),
     );
     expect(text, '图片上传已关闭。 记忆保存失败，回答已保存。');
+  });
+
+  test('超长记忆的跳过说明接在回答收尾后面', () {
+    const draft = MemoryDraft(
+      kind: MemoryKind.semantic,
+      content: '讲解概率时先用具体例子。',
+    );
+    const skip = MemorySkip(
+      reason: MemorySkipReason.tooLong,
+      draft: draft,
+      message: '记忆内容超过 200 字，未保存。',
+    );
+    expect(mergeAnswerNotice(null, const [skip]), '记忆内容超过 200 字，未保存。');
+    expect(
+      mergeAnswerNotice('回答被截断，已保留已经生成的部分。', const [skip]),
+      '回答被截断，已保留已经生成的部分。 记忆内容超过 200 字，未保存。',
+    );
+    expect(mergeAnswerNotice(null, const []), isNull);
   });
 
   test('重新打开讨论时按保存下来的值与失败类型写回同一条说明', () {

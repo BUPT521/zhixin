@@ -8,6 +8,7 @@ import 'package:zhixin/application/memory_view.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/ui/discussion_cards.dart';
+import 'package:zhixin/ui/workspace_widgets.dart';
 
 MemoryItemView memory({
   String content = '讲解概率时先用具体例子。',
@@ -77,7 +78,7 @@ void main() {
     expect(find.text('记忆建议'), findsOneWidget);
     expect(find.text('待确认'), findsOneWidget);
     expect(find.text('讲解概率时先用具体例子。'), findsOneWidget);
-    expect(find.text('语义 · 模型推断 · 有效至 2026-12-31'), findsOneWidget);
+    expect(find.text('语义 · 推断 · 有效至 2026-12-31'), findsOneWidget);
     expect(find.text('撤销'), findsNothing);
 
     await tester.tap(find.text('记下'));
@@ -197,12 +198,33 @@ void main() {
     expect(find.text('改动回执'), findsOneWidget);
     expect(find.text('已添加记忆：语义 · 讲解先用例子'), findsOneWidget);
     expect(find.text('已创建学习事项：练习条件概率'), findsOneWidget);
-    expect(find.byType(Divider), findsOneWidget);
+    expect(find.byType(CardDivider), findsOneWidget);
     expect(find.text('撤销'), findsNWidgets(2));
 
     await tester.tap(find.text('撤销').at(1));
     expect(undone, [changes[1]]);
     await tester.pump(const Duration(milliseconds: 150));
+  });
+
+  testWidgets('超过写入长度的记忆写明未保存，卡片仍可记下或忽略', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        MemoryCard(
+          item: memory(content: '记' * 201),
+          onAccept: () {},
+          onDismiss: () {},
+          onUndo: () {},
+        ),
+      ),
+    );
+
+    expect(find.text('记忆内容超过 200 字，未保存。'), findsOneWidget);
+    expect(find.text('记忆建议'), findsOneWidget);
+    expect(find.text('待确认'), findsOneWidget);
+    expect(find.text('记下'), findsOneWidget);
+    expect(find.text('不记'), findsOneWidget);
+    expect(find.text('已记下'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('窄屏与放大文字下记忆卡不溢出', (tester) async {

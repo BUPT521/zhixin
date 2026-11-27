@@ -14,6 +14,7 @@ import 'discussion_cards.dart';
 import 'discussion_message.dart';
 import 'markdown_text.dart';
 import 'theme.dart';
+import 'workspace_widgets.dart';
 
 import '../domain/rules/text.dart';
 
@@ -77,11 +78,19 @@ class BuddyChangesEntry extends BuddyTimelineEntry {
 }
 
 /// 一段说明：这一轮没有完成什么、已经保留了什么，以及可以怎么继续。
+///
+/// [failed] 为真表示失败，用错误样式并可以带重试；为假表示一次操作的说明，
+/// 例如回答被截断或本次跳过了哪些记忆，用同一行小字，不再画成错误。
 class BuddyNoticeEntry extends BuddyTimelineEntry {
-  const BuddyNoticeEntry({required this.message, this.actions = const []});
+  const BuddyNoticeEntry({
+    required this.message,
+    this.actions = const [],
+    this.failed = true,
+  });
 
   final String message;
   final List<Widget> actions;
+  final bool failed;
 }
 
 /// 页面交给时间线的数据与操作。
@@ -256,12 +265,20 @@ class BuddyTimelineEntryView extends StatelessWidget {
         changes: changes,
         onUndo: adapter.undoChange,
       ),
-      BuddyNoticeEntry(:final message, :final actions) => Padding(
-        padding: adapter.scrollable
-            ? EdgeInsets.fromLTRB(space.page, space.tight, space.page, space.xs)
-            : EdgeInsets.only(top: space.sm),
-        child: FailureNotice(message: message, actions: actions),
-      ),
+      BuddyNoticeEntry(:final message, :final actions, :final failed) =>
+        Padding(
+          padding: adapter.scrollable
+              ? EdgeInsets.fromLTRB(
+                  space.page,
+                  space.tight,
+                  space.page,
+                  space.xs,
+                )
+              : EdgeInsets.only(top: space.sm),
+          child: failed
+              ? FailureNotice(message: message, actions: actions)
+              : _ResultNoticeRow(message: message, actions: actions),
+        ),
     };
   }
 }
@@ -298,6 +315,34 @@ Widget _helpCard(BuildContext context, BuddyHelpEntry entry) {
         MarkdownText(entry.text!, large: true),
     ],
   );
+}
+
+/// 一次操作的说明：不再画错误描边，动作排在说明下方。
+class _ResultNoticeRow extends StatelessWidget {
+  const _ResultNoticeRow({required this.message, required this.actions});
+
+  final String message;
+  final List<Widget> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    if (actions.isEmpty) return ResultNotice(message: message);
+    final space = context.zhixin.space;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ResultNotice(message: message),
+        Padding(
+          padding: EdgeInsets.only(bottom: space.sm),
+          child: Wrap(
+            spacing: space.sm,
+            runSpacing: space.xs,
+            children: actions,
+          ),
+        ),
+      ],
+    );
+  }
 }
 
 /// 学习页底部的一条讨论摘要：只显示前两行，完整讨论另开。
