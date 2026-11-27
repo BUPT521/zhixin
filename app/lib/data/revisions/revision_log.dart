@@ -444,7 +444,6 @@ mixin RevisionLogMixin {
       ...revisionHistoryTables,
     });
     await self._clearContext(txn);
-    await self.checkpointAfterCommit(txn, commit);
     return commit;
   }
 

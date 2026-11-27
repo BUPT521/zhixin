@@ -10,8 +10,8 @@ import '../../domain/rules/attachments.dart';
 import '../../domain/rules/package_budget.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
-import '../revisions/revision_engine.dart' show versionedTableNames;
 import 'backup_manifest.dart';
+import 'restore_inspection.dart';
 import 'restore_journal.dart';
 import 'restore_validation.dart';
 
@@ -19,6 +19,18 @@ import 'restore_validation.dart';
 const String manifestEntryName = 'manifest.json';
 const String dbEntryName = 'zhixin.db';
 const String imagesEntryDir = questionImagesDirName;
+
+/// 恢复推进到了哪一步：只有正式库关闭之后才需要回滚。
+enum _RestorePhase {
+  /// 写阶段记录与回滚快照，正式库还开着；失败时原数据没有被改过。
+  snapshotting,
+
+  /// 正式库已经关闭，库与附件可能已经被替换。
+  replacing,
+
+  /// 替换完成并重新打开了连接，正在核对。
+  reopening,
+}
 
 /// 导出与恢复本地库及其仍被引用的图片；格式规则见 01 第 7 章。
 ///
@@ -43,10 +55,12 @@ class DataPackageService {
   final PackageBudget budget;
   final Clock clock;
 
-  /// 预检旧格式的数据包：核对 manifest、schema、图片与暂存库，返回导出信息。
+  /// 预检旧格式的数据包：核对 manifest、schema、图片与暂存库，返回包内规模。
   ///
   /// 恢复入口先调用它，确认包能恢复再让用户确认覆盖；校验失败时不碰当前库。
-  Future<DataPackageInspection> inspectPackage(Uint8List bytes) async {
+  /// 结果与版本库备份共用 [RestoreInspection]，`schemaVersion` 取 manifest 里
+  /// 已经核对过的值，不用当前常量顶替。
+  Future<RestoreInspection> inspectPackage(Uint8List bytes) async {
     final archive = _decodeArchive(bytes);
     final manifest = _readManifest(archive);
     if (manifest.schemaVersion != schemaVersion) {
@@ -76,11 +90,14 @@ class DataPackageService {
         manifestSchemaVersion: manifest.schemaVersion,
       );
       final counts = await _countRows(stagedDbPath);
-      return DataPackageInspection(
+      return RestoreInspection(
+        kind: RestorePackageKind.currentData,
         schemaVersion: manifest.schemaVersion,
         appVersion: manifest.appVersion,
         exportedAt: manifest.exportedAt,
-        rowCount: counts.values.fold(0, (sum, value) => sum + value),
+        databaseBytes: dbBytes,
+        images: images,
+        expectedRows: counts,
       );
     } catch (error) {
       if (error is BackupException) rethrow;
@@ -90,70 +107,34 @@ class DataPackageService {
     }
   }
 
-  /// 校验并覆盖当前数据；失败时回滚到恢复前的库与图片。
+  /// 用预检过的包覆盖当前数据；失败时回滚到恢复前的库与图片。
   ///
-  /// 成功返回重新打开的连接，调用方用它替换旧的连接。恢复前先让临时库通过
-  /// 版本、结构与业务校验（01 第 7 章），期间把阶段写进 [RestoreJournal]，
+  /// [inspection] 是 [inspectPackage] 或版本库预检的产物：包已经解出并通过版本、
+  /// 结构与业务校验，这里只写入它的库字节与附件，不再解包或重跑校验。成功返回
+  /// 重新打开的连接，调用方用它替换旧的连接。期间把阶段写进 [RestoreJournal]，
   /// 进程中断也能在下次启动回到恢复前的数据。
+  ///
+  /// 失败分两种：替换开始之前失败时当前库没有被改过，只清阶段记录；正式库关闭
+  /// 之后失败时把回滚目录里的库与附件放回去，回滚也没有完成时把原因连同原始错误
+  /// 一起带进 [BackupException]，并保留阶段记录与回滚副本。
   Future<RawDatabase> restorePackage(
-    Uint8List bytes, {
+    RestoreInspection inspection, {
     required RawDatabase currentDb,
     required Future<RawDatabase> Function() openDb,
   }) async {
-    final archive = _decodeArchive(bytes);
-    final manifest = _readManifest(archive);
-    if (manifest.schemaVersion != schemaVersion) {
-      final hint = manifest.schemaVersion > schemaVersion
-          ? '请先更新应用再恢复。'
-          : '请用当前版本重新导出。';
-      throw BackupException(
-        '数据包是 schema v${manifest.schemaVersion}，当前只接受 v$schemaVersion；$hint',
-      );
-    }
-
-    final dbFile = archive.findFile(dbEntryName);
-    final dbBytes = dbFile?.readBytes();
-    if (dbBytes == null || dbBytes.isEmpty) {
-      throw const BackupException('数据包中没有可用的 zhixin.db');
-    }
-    final images = _readArchiveImages(archive);
-    _verifyImages(manifest, images);
-
     final journal = RestoreJournal(filesDir);
     final rollbackDir = p.join(
       filesDir,
       '.restore-${clock().millisecondsSinceEpoch}',
     );
-    final workDir = await Directory.systemTemp.createTemp('zhixin_restore_');
-    final stagedDbPath = p.join(workDir.path, 'staged.db');
-    try {
-      await File(stagedDbPath).writeAsBytes(dbBytes, flush: true);
-      await _writeJournal(
-        journal,
-        RestoreStage.preparing,
-        rollbackDir,
-        manifest.schemaVersion,
-      );
-      await StagedRestoreValidator(schemaVersion: schemaVersion).validate(
-        path: stagedDbPath,
-        manifestSchemaVersion: manifest.schemaVersion,
-      );
-    } catch (error) {
-      await _deleteQuietly(workDir);
-      await _clearJournal(journal, rollbackDir);
-      if (error is BackupException) rethrow;
-      throw BackupException('数据包校验失败，原数据未改动。', detail: '$error');
-    }
-
-    var closed = false;
-    var committed = false;
+    var phase = _RestorePhase.snapshotting;
     RawDatabase? reopened;
     try {
       await _writeJournal(
         journal,
         RestoreStage.snapshotting,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
       await currentDb.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
       await _snapshotCurrent(rollbackDir);
@@ -162,73 +143,99 @@ class DataPackageService {
         journal,
         RestoreStage.replacing,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
       await currentDb.close();
-      closed = true;
+      phase = _RestorePhase.replacing;
 
-      await _replaceDatabase(stagedDbPath);
-      await _replaceImages(images);
+      await _installDatabase(
+        (incoming) =>
+            incoming.writeAsBytes(inspection.databaseBytes, flush: true),
+      );
+      await _replaceImages(inspection.images);
 
       await _writeJournal(
         journal,
         RestoreStage.reopening,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
-      reopened = await openDb();
+      final opened = await openDb();
+      reopened = opened;
+      phase = _RestorePhase.reopening;
 
       // 重新打开后核对核心表行数：包里的库在替换或复制时被截断、或打开时
       // 落到新建的空库，这里会发现并退回恢复前的数据，而不是把空库当成功。
-      final expected = await _countRows(stagedDbPath);
-      final actual = await _countRowsOf(reopened);
-      for (final entry in expected.entries) {
+      final actual = await _countRowsOf(opened);
+      for (final entry in inspection.expectedRows.entries) {
         if ((actual[entry.key] ?? 0) < entry.value) {
           throw BackupException('恢复后的数据不完整（${entry.key} 少了记录），已退回原来的数据');
         }
       }
 
       // 先持久化数据已经提交，再清理回滚副本。进程若在清理期间退出，
-      // 下次启动只清理残留文件，不会用旧快照覆盖已经验证的新数据。
+      // 下次启动只清理残留文件，不会用旧快照覆盖已经验证的新数据。完成标记
+      // 落盘之后的清理都自行吞掉失败，所以这里不再有另一条“假失败”分支。
       await _writeJournal(
         journal,
         RestoreStage.committed,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
-      committed = true;
-      await _deleteQuietly(Directory(workDir.path));
       await _clearJournal(journal, rollbackDir);
-      return reopened;
+      return opened;
     } catch (error) {
-      if (committed) {
-        // 完成标记已经落盘，清理失败只能留待下次启动处理，不能回滚。
-        await _deleteQuietly(Directory(workDir.path));
-        return reopened!;
-      }
-      if (closed) {
-        if (reopened != null) {
-          try {
-            await reopened.close();
-          } catch (_) {
-            // 文件恢复仍会尝试；失败时保留快照与阶段记录。
-          }
-        }
-        var restored = false;
-        try {
-          restored = await _rollback(rollbackDir, openDb);
-        } catch (_) {
-          // 回滚失败时保留快照与阶段记录供下次启动继续恢复。
-        }
-        if (restored) await _clearJournal(journal, rollbackDir);
-      } else {
+      if (phase == _RestorePhase.snapshotting) {
         await _clearJournal(journal, rollbackDir);
+        if (error is BackupException) rethrow;
+        throw BackupException('恢复失败，原数据未改动。', detail: '$error');
       }
-      await _deleteQuietly(Directory(workDir.path));
-      if (error is BackupException) rethrow;
-      throw BackupException('恢复失败，已保留原数据与可用的回滚副本。', detail: '$error');
+      throw await _failReplace(
+        error,
+        journal: journal,
+        rollbackDir: rollbackDir,
+        openDb: openDb,
+        reopened: reopened,
+      );
     }
   }
+
+  /// 替换开始之后的失败：关掉新连接、把快照放回去，并把失败原因带进异常。
+  ///
+  /// 返回要抛出的 [BackupException]，不在内部吞掉回滚失败：回滚没有完成时保留
+  /// 阶段记录与回滚副本，原因写进 `detail`，下次启动仍会按阶段记录继续回滚。
+  Future<BackupException> _failReplace(
+    Object error, {
+    required RestoreJournal journal,
+    required String rollbackDir,
+    required Future<RawDatabase> Function() openDb,
+    required RawDatabase? reopened,
+  }) async {
+    String? closeProblem;
+    if (reopened != null) {
+      try {
+        await reopened.close();
+      } catch (error) {
+        closeProblem = '关闭替换后打开的连接失败：$error';
+      }
+    }
+    final rollbackProblem = await _rollback(rollbackDir, openDb);
+    if (rollbackProblem == null) {
+      await _clearJournal(journal, rollbackDir);
+      return BackupException(
+        '恢复失败，已退回原来的数据。',
+        detail: _failureDetail(error, [?closeProblem]),
+      );
+    }
+    return BackupException(
+      '恢复失败，回滚也没有完成；当前文件与回滚副本均已保留，请先检查恢复目录。',
+      detail: _failureDetail(error, [?closeProblem, rollbackProblem]),
+    );
+  }
+
+  /// 失败说明：原始错误在前，回滚与关闭的补充说明依次跟在后面。
+  String _failureDetail(Object error, List<String> notes) =>
+      ['$error', ...notes].join('；');
 
   /// 启动时调用：上一次恢复若没走完，回到恢复前的库与图片。
   ///
@@ -407,14 +414,8 @@ class DataPackageService {
     }
   }
 
-  Future<Map<String, int>> _countRowsOf(RawExecutor db) async {
-    final counts = <String, int>{};
-    for (final table in versionedTableNames) {
-      final rows = await db.rawQuery('SELECT COUNT(*) AS n FROM $table');
-      counts[table] = (rows.first['n'] as int?) ?? 0;
-    }
-    return counts;
-  }
+  Future<Map<String, int>> _countRowsOf(RawExecutor db) =>
+      versionedRowCounts(db);
 
   Future<void> _snapshotCurrent(String rollbackDir) async {
     await Directory(rollbackDir).create(recursive: true);
@@ -429,12 +430,18 @@ class DataPackageService {
     }
   }
 
-  /// 用临时文件加重命名替换正式库：任何时刻正式库要么是旧的完整文件，
-  /// 要么是新的完整文件，不会出现“删掉了还没拷完”的空窗。
-  Future<void> _replaceDatabase(String stagedDbPath) async {
+  /// 原子替换正式库：先把新库写进同目录的 `.incoming`，删掉旧的 side 文件，
+  /// 再重命名发布；任何时刻正式库要么是旧的完整文件，要么是新的完整文件，不会
+  /// 出现“删掉了还没拷完”的空窗。
+  ///
+  /// 恢复与回滚共用这一处，写入方式由 [write] 决定：恢复写预检产物里的字节，
+  /// 回滚复制快照里的库。`.incoming` 与正式库在同一个目录，重命名因此是原子的。
+  Future<void> _installDatabase(
+    Future<void> Function(File incoming) write,
+  ) async {
     final incoming = File('$dbPath.incoming');
     if (await incoming.exists()) await incoming.delete();
-    await File(stagedDbPath).copy(incoming.path);
+    await write(incoming);
     for (final suffix in zhixinDbSideFiles) {
       final file = File('$dbPath$suffix');
       if (await file.exists()) await file.delete();
@@ -452,18 +459,28 @@ class DataPackageService {
     }
   }
 
-  Future<bool> _rollback(
+  /// 把回滚目录里的库与图片放回去并重新打开；返回没有完成的原因，空表示成功。
+  ///
+  /// 原因交给调用方写进 [BackupException]，不再吞掉：回滚失败与替换失败同样
+  /// 重要，用户需要知道当前文件与回滚副本都还在。
+  Future<String?> _rollback(
     String rollbackDir,
     Future<RawDatabase> Function() openDb,
   ) async {
-    final restored = await _restoreSnapshot(rollbackDir);
-    if (!restored) return false;
+    final bool restored;
+    try {
+      restored = await _restoreSnapshot(rollbackDir);
+    } catch (error) {
+      return '回滚快照没有放回去：$error';
+    }
+    if (!restored) return '回滚目录里的库或附件不完整（$rollbackDir）';
     try {
       await openDb();
-    } catch (_) {
-      // 回滚后仍打不开就只能让上层报错；原文件已经放回去了。
+    } catch (error) {
+      // 原文件已经放回去了；打不开只影响本次进程，下次启动会重新打开。
+      return '回滚后的库打不开：$error';
     }
-    return true;
+    return null;
   }
 
   /// 把完整回滚目录里的库与图片放回去；不完整时保留当前文件与快照。
@@ -474,14 +491,7 @@ class DataPackageService {
       return false;
     }
 
-    final incoming = File('$dbPath.incoming');
-    if (await incoming.exists()) await incoming.delete();
-    await rollbackDb.copy(incoming.path);
-    for (final suffix in zhixinDbSideFiles) {
-      final file = File('$dbPath$suffix');
-      if (await file.exists()) await file.delete();
-    }
-    await incoming.rename(dbPath);
+    await _installDatabase((incoming) => rollbackDb.copy(incoming.path));
 
     final imagesDir = Directory(p.join(filesDir, imagesEntryDir));
     if (await imagesDir.exists()) await imagesDir.delete(recursive: true);
@@ -515,19 +525,4 @@ class DataPackageService {
       // 清理失败不影响数据正确性。
     }
   }
-}
-
-/// 旧格式数据包预检的结果：导出信息与业务表行数，用于恢复前的影响说明。
-class DataPackageInspection {
-  const DataPackageInspection({
-    required this.schemaVersion,
-    required this.appVersion,
-    required this.exportedAt,
-    required this.rowCount,
-  });
-
-  final int schemaVersion;
-  final String appVersion;
-  final String exportedAt;
-  final int rowCount;
 }

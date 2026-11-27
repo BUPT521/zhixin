@@ -13,6 +13,7 @@ import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
+import 'package:zhixin/domain/models/backup_error.dart';
 import 'package:zhixin/domain/rules/package_budget.dart';
 
 import 'package:zhixin/data/db/sql.dart';
@@ -223,10 +224,6 @@ void main() {
       (await selectRows(restored, 'learning_goal')).single['title'],
       '备份目标二',
     );
-    expect(
-      await packages.validateRepositoryBytes(await File(path).readAsBytes()),
-      isTrue,
-    );
     final inspection = await packages.inspectRepository(
       await File(path).readAsBytes(),
     );
@@ -235,12 +232,11 @@ void main() {
     expect(inspection.commitCount, 3);
     expect(inspection.namedCount, 1);
     expect(inspection.exportedAt, isNotEmpty);
+    expect(inspection.databaseBytes, isNotEmpty);
+    expect(inspection.expectedRows.values.fold(0, (sum, n) => sum + n), 1);
     final broken = await File(path).readAsBytes();
     broken[broken.length ~/ 2] ^= 0xff;
-    await expectLater(
-      packages.validateRepositoryBytes(broken),
-      throwsA(anything),
-    );
+    await expectLater(packages.inspectRepository(broken), throwsA(anything));
   });
 
   test('版本库备份拒绝数据库里额外的触发器，预检也不接受改过的包', () async {
@@ -301,12 +297,62 @@ void main() {
     await expectLater(
       packages.inspectRepository(await File(tamperedZip).readAsBytes()),
       throwsA(
-        isA<FormatException>().having(
+        isA<BackupException>().having(
           (error) => error.message,
           'message',
           contains('触发器'),
         ),
       ),
+    );
+  });
+
+  test('版本库预检按当前结构核对表，恢复入口不再重跑校验', () async {
+    final dir = await Directory.systemTemp.createTemp('zhixin_missing_table');
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final raw = await openZhixinDatabase(path: '${dir.path}/zhixin.db');
+    addTearDown(raw.close);
+    final engine = RevisionEngine();
+    final packages = RevisionPackageService(
+      engine: engine,
+      assets: engine.assets,
+      schemaVersion: zhixinSchemaVersion,
+      appVersion: 'test',
+      clock: () => DateTime(2026, 11, 10, 10),
+    );
+    final path = '${dir.path}/repository.zip';
+    await packages.backupRepository(raw, path);
+
+    // 只删掉一张业务表：对象白名单、完整性与外键仍然通过，只有按当前结构打开
+    // 之后的表核对会发现它。预检必须在这里拒绝，恢复入口才不会重跑一遍校验。
+    final archive = ZipDecoder().decodeBytes(await File(path).readAsBytes());
+    final originalDb = archive.findFile('zhixin.db')!.content as List<int>;
+    final damagedPath = '${dir.path}/damaged.db';
+    await File(damagedPath).writeAsBytes(originalDb);
+    final damaged = sqlite3.sqlite3.open(damagedPath);
+    damaged.execute('DROP TABLE plan_item');
+    damaged.close();
+    final damagedBytes = await File(damagedPath).readAsBytes();
+    final manifest = jsonDecode(
+      utf8.decode(archive.findFile('manifest.json')!.content as List<int>),
+    ) as Map<String, Object?>;
+    manifest['database_sha256'] = sha256.convert(damagedBytes).toString();
+    final damagedZip = '${dir.path}/damaged.zip';
+    final encoder = ZipFileEncoder()..create(damagedZip);
+    encoder.addArchiveFile(
+      ArchiveFile.bytes(
+        'manifest.json',
+        utf8.encode(const JsonEncoder.withIndent('  ').convert(manifest)),
+      ),
+    );
+    encoder.addArchiveFile(ArchiveFile.bytes('zhixin.db', damagedBytes));
+    await encoder.close();
+
+    await expectLater(
+      packages.inspectRepository(await File(damagedZip).readAsBytes()),
+      throwsA(isA<BackupException>()),
+      reason: '预检一次做完完整性、对象与表结构核对，恢复只写入已经通过的字节',
     );
   });
 

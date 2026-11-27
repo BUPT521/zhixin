@@ -5,10 +5,12 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:zhixin/domain/rules/attachments.dart';
 import 'package:zhixin/data/backup/backup_manifest.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
+import 'package:zhixin/data/backup/restore_inspection.dart';
 import 'package:zhixin/data/backup/restore_journal.dart';
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
@@ -70,6 +72,16 @@ Future<Uint8List> _packageBytes(
   }
   return Uint8List.fromList(ZipEncoder().encodeBytes(archive));
 }
+
+/// 一份只用于失败路径的预检产物：库字节打不开，行数为空。
+RestoreInspection _brokenInspection() => RestoreInspection(
+  kind: RestorePackageKind.currentData,
+  schemaVersion: zhixinSchemaVersion,
+  appVersion: 'test',
+  exportedAt: DateTime.utc(2026, 11, 7).toIso8601String(),
+  databaseBytes: Uint8List.fromList([1, 2, 3, 4]),
+  expectedRows: const {},
+);
 
 void main() {
   test('旧格式数据包能在新目录恢复，讨论与归属一起带回', () async {
@@ -169,7 +181,7 @@ void main() {
       schemaVersion: zhixinSchemaVersion,
     );
     final restored = await service2.restorePackage(
-      bytes,
+      inspection,
       currentDb: db2,
       openDb: () => openZhixinDatabase(path: path2),
     );
@@ -411,6 +423,117 @@ void main() {
     expect(await _recordStem(reopened, recordId), '已提交的新数据');
   });
 
+  test('替换后的库打不开时退回原来的数据，阶段记录清掉', () async {
+    final dir = await Directory.systemTemp.createTemp(
+      'zhixin_restore_rollback_',
+    );
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final path = '${dir.path}/zhixin.db';
+    final db = await openZhixinDatabase(path: path);
+    final recordId = await _captureRecord(db, '恢复前的题目');
+    await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    final service = DataPackageService(
+      filesDir: dir.path,
+      dbPath: path,
+      appVersion: 'test',
+      schemaVersion: zhixinSchemaVersion,
+    );
+
+    // 预检产物里的字节已经装进正式库，但打开时失败：恢复应当把快照放回去、
+    // 重新打开成功，并清掉阶段记录与回滚目录。
+    RawDatabase? reopened;
+    var opened = 0;
+    await expectLater(
+      service.restorePackage(
+        _brokenInspection(),
+        currentDb: db,
+        openDb: () async {
+          opened++;
+          if (opened == 1) throw StateError('模拟替换后的库打不开');
+          reopened = await openZhixinDatabase(path: path);
+          return reopened!;
+        },
+      ),
+      throwsA(
+        isA<BackupException>().having(
+          (error) => error.message,
+          'message',
+          contains('已退回原来的数据'),
+        ),
+      ),
+    );
+    addTearDown(() async => reopened?.close());
+
+    expect(opened, 2, reason: '回滚之后要重新打开一次确认可用');
+    expect(await File('${dir.path}/.restore-journal.json').exists(), isFalse);
+    expect(await File('$path.incoming').exists(), isFalse);
+    final rollbackDirs = await dir
+        .list(followLinks: false)
+        .where(
+          (entity) =>
+              entity is Directory &&
+              p.basename(entity.path).startsWith('.restore-'),
+        )
+        .toList();
+    expect(rollbackDirs, isEmpty, reason: '回滚成功之后不留回滚目录');
+    expect(await _recordStem(reopened!, recordId), '恢复前的题目');
+  });
+
+  test('回滚也没有完成时把原因写进异常并保留阶段记录与快照', () async {
+    final dir = await Directory.systemTemp.createTemp(
+      'zhixin_restore_failed_rollback_',
+    );
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final path = '${dir.path}/zhixin.db';
+    final db = await openZhixinDatabase(path: path);
+    final recordId = await _captureRecord(db, '替换失败前的题目');
+    await db.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
+    // `.incoming` 被一个目录占着：新的库写不进去，回滚也写不进去。
+    await Directory('$path.incoming').create(recursive: true);
+    final service = DataPackageService(
+      filesDir: dir.path,
+      dbPath: path,
+      appVersion: 'test',
+      schemaVersion: zhixinSchemaVersion,
+    );
+
+    await expectLater(
+      service.restorePackage(
+        _brokenInspection(),
+        currentDb: db,
+        openDb: () => openZhixinDatabase(path: path),
+      ),
+      throwsA(
+        isA<BackupException>()
+            .having((error) => error.message, 'message', contains('回滚也没有完成'))
+            .having(
+              (error) => error.detail ?? '',
+              'detail',
+              contains('回滚快照没有放回去'),
+            ),
+      ),
+    );
+
+    // 回滚没有完成时不能把阶段记录与快照当成已经处理过。
+    expect(await RestoreJournal(dir.path).read(), isNotNull);
+    final rollbackDirs = await dir
+        .list(followLinks: false)
+        .where(
+          (entity) =>
+              entity is Directory &&
+              p.basename(entity.path).startsWith('.restore-'),
+        )
+        .toList();
+    expect(rollbackDirs, hasLength(1));
+    final recovered = await openZhixinDatabase(path: path);
+    addTearDown(recovered.close);
+    expect(await _recordStem(recovered, recordId), '替换失败前的题目');
+  });
+
   test('其他版本的备份都在恢复入口拒绝，且不碰当前库', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_old_');
     addTearDown(() => dir.delete(recursive: true));
@@ -444,11 +567,7 @@ void main() {
           ArchiveFile.bytes(dbEntryName, Uint8List.fromList([1, 2, 3])),
         );
       await expectLater(
-        service.restorePackage(
-          ZipEncoder().encodeBytes(archive),
-          currentDb: db,
-          openDb: () => openZhixinDatabase(path: path),
-        ),
+        service.inspectPackage(ZipEncoder().encodeBytes(archive)),
         throwsA(isA<BackupException>()),
         reason: 'v$oldVersion 的包应当在替换前被拒绝',
       );
@@ -481,11 +600,7 @@ void main() {
         budget: budget,
       );
       await expectLater(
-        service.restorePackage(
-          bytes,
-          currentDb: db,
-          openDb: () => openZhixinDatabase(path: path),
-        ),
+        service.inspectPackage(bytes),
         throwsA(
           isA<BackupException>().having(
             (error) => error.message,

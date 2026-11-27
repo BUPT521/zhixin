@@ -2,10 +2,24 @@ import '../db/app_database.dart';
 import '../db/raw_executor.dart';
 import '../db/schema.dart';
 import '../db/schema_objects.dart';
+import '../revisions/revision_engine.dart' show versionedTableNames;
 import 'backup_manifest.dart';
 
 /// 暂存库校验发现的第一处问题；[category] 用来说明是哪一类检查。
 typedef StagedValidationProblem = ({String category, String detail});
+
+/// 版本化业务表的行数；两处预检与恢复后的核对共用这一份统计。
+///
+/// 只比行数，不比内容：包里的库在替换或复制时被截断、或打开时落到新建的空库，
+/// 行数变少就能发现。
+Future<Map<String, int>> versionedRowCounts(RawExecutor db) async {
+  final counts = <String, int>{};
+  for (final table in versionedTableNames) {
+    final rows = await db.rawQuery('SELECT COUNT(*) AS n FROM $table');
+    counts[table] = (rows.first['n'] as int?) ?? 0;
+  }
+  return counts;
+}
 
 /// 暂存库校验：数据包恢复预检与版本库备份（导出前、恢复前）共用这一套检查。
 ///

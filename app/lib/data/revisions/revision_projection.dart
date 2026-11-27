@@ -333,9 +333,10 @@ mixin RevisionProjectionMixin {
   ///
   /// 结果与“分别重建 [from] 与 [to] 两份投影再比较”一致，按表名、主键、行级
   /// 新增、修改或删除给出，修改只带真正发生净变化的列。起点之前的提交已经被
-  /// 裁掉、中间有清理历史留下的基线提交或缺少明细的提交时抛出私有的
-  /// [_FoldUnavailable]，由 [compare] 决定是否退回两次重建；提交本身不存在时
-  /// 仍按数据损坏抛出 [RevisionCorruption]。
+  /// 裁掉、中间有清理历史留下的基线提交或明细与提交行记录不符时抛出私有的
+  /// [_FoldUnavailable]，由 [compare] 决定是否退回两次重建；没有数据变化的
+  /// 提交（冲突提交、空导入）不改变任何行，合并时跳过（审查 A10）。提交本身
+  /// 不存在时仍按数据损坏抛出 [RevisionCorruption]。
   Future<List<RevisionChange>> foldChanges(
     RawExecutor executor,
     int from,
@@ -363,7 +364,7 @@ mixin RevisionProjectionMixin {
     final commits = await selectRows(
       executor,
       'revision_commit',
-      columns: ['id', 'parent_id', 'kind'],
+      columns: ['id', 'parent_id', 'kind', 'byte_length'],
       where: 'id > ? AND id <= ?',
       whereArgs: [from, to],
       orderBy: 'id',
@@ -387,8 +388,13 @@ mixin RevisionProjectionMixin {
           RevisionKind.baseline) {
         throw _FoldUnavailable('提交 $id 是一次历史清理留下的基线');
       }
-      // 变更条数不存表：保留区间里的提交都应当有明细，缺明细说明历史不完整。
-      if ((detailCounts[id] ?? 0) == 0) {
+      // 提交行记下了这条提交变更明细的字节数：没有明细时它是 0，正常提交的每条
+      // 变更至少写入主键，因此非 0 而没有明细说明历史不完整。零明细的提交是
+      // 合法的一种：远端应用撞上本机占着的唯一键时整条提交都没有写入，冲突挂在
+      // 提交行上（审查 S18）；导入与恢复的净变化为空时也这样落库。这类提交不
+      // 改变任何业务行，合并时跳过，不因此退回两次整库重建（审查 A10）。
+      if ((detailCounts[id] ?? 0) == 0 &&
+          (row['byte_length'] as int? ?? 0) > 0) {
         throw _FoldUnavailable('提交 $id 的变更明细不完整');
       }
       expectedParent = id;
@@ -1159,15 +1165,6 @@ mixin RevisionProjectionMixin {
       projection: projection,
     );
   }
-
-  /// 提交之后的检查点策略：写事务里不再生成检查点。
-  ///
-  /// 检查点改由 [afterCommitIdle] 在独占区释放之后按累计字节数生成，写入那次
-  /// 事务不再重建整库投影（ADR-0039 第 2 条、方案 R4）。
-  Future<void> checkpointAfterCommit(
-    RawExecutor txn,
-    RevisionCommit commit,
-  ) async {}
 
   /// 一次写入落库、独占区释放之后的空闲工作：空闲检查点与自动留存
   /// （ADR-0039 第 2 条、方案 3.8）。

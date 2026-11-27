@@ -59,9 +59,10 @@ Future<bool> showRestoreConfirmDialog(
 
 /// 数据包恢复的共用流程：选包、预检、说明影响与回退，再整库替换。
 ///
-/// 恢复前的状态由 [DataVersionService.restore] 保存为恢复点，恢复成功后仍保留。
-/// 包被拒时用户可以直接在主按钮上重新选择，不必退出这一页重来；预检期间与
-/// 恢复期间的进度交给 [onStatus] 就地显示，只有最终结果由调用方提示。
+/// 恢复前的状态由 [DataVersionService.restoreInspected] 保存为恢复点，恢复成功后
+/// 仍保留。包被拒时用户可以直接在主按钮上重新选择，不必退出这一页重来；预检
+/// 期间与恢复期间的进度交给 [onStatus] 就地显示，只有最终结果由调用方提示。
+/// 预检产物一路带到恢复入口，同一次恢复只解包与校验一次。
 /// 返回结果提示；用户取消或预检不通过时返回 null。
 Future<String?> runPackageRestore(
   BuildContext context, {
@@ -76,7 +77,7 @@ Future<String?> runPackageRestore(
     onStatus: onStatus,
   );
   if (selected == null || !context.mounted) return null;
-  final (bytes, inspection, fileName) = selected;
+  final (inspection, fileName) = selected;
 
   final summary = await scope.data.versions.currentRestoreSummary();
   if (!context.mounted) return null;
@@ -103,7 +104,7 @@ Future<String?> runPackageRestore(
   onStatus?.call('正在恢复…');
   final Result<String?> restored;
   try {
-    restored = await scope.data.versions.restore(bytes);
+    restored = await scope.data.versions.restoreInspected(inspection);
   } catch (error, stack) {
     if (!context.mounted) return '恢复失败，当前数据没有改动。';
     return describeFailure(
@@ -135,8 +136,9 @@ Future<String?> runPackageRestore(
 
 /// 选包与预检；包被拒时在主按钮上给“重新选择”，用户取消时返回 null。
 ///
-/// 恢复点这类已经定好来源的包不能重选，被拒之后只说明原因。
-Future<(Uint8List, RestoreInspection, String?)?> _selectAndInspect(
+/// 恢复点这类已经定好来源的包不能重选，被拒之后只说明原因。返回的是预检产物
+/// 与文件名：恢复入口只接受预检产物，原来的字节在预检之后就丢掉了。
+Future<(RestoreInspection, String?)?> _selectAndInspect(
   BuildContext context, {
   required Uint8List? preset,
   required void Function(String message)? onStatus,
@@ -201,7 +203,7 @@ Future<(Uint8List, RestoreInspection, String?)?> _selectAndInspect(
 
     switch (inspected) {
       case Success(:final value):
-        return (bytes, value, fileName);
+        return (value, fileName);
       case Failure(:final reason):
         final message = context.mounted
             ? describeFailureReason(

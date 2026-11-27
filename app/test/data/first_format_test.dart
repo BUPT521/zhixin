@@ -51,12 +51,9 @@ void main() {
     );
 
     await expectLater(
-      service.restorePackage(
-        ZipEncoder().encodeBytes(archive),
-        currentDb: db,
-        openDb: () => openZhixinDatabase(path: path),
-      ),
+      service.inspectPackage(ZipEncoder().encodeBytes(archive)),
       throwsA(isA<BackupException>()),
+      reason: '包里的库不能通过预检时，当前库不动',
     );
     final materials = await selectRows(db, 'material');
     expect(materials.single['title'], '当前材料');

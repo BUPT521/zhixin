@@ -61,6 +61,10 @@ class DataVersionPage extends StatefulWidget {
 
 class _DataVersionPageState extends State<DataVersionPage>
     with DataVersionWatcher<DataVersionPage> {
+  /// 页面业务流程：导出、备份、导入、命名、比较、恢复、裁剪、清理与完整性检查
+  /// 的先后顺序与结果文案；State 只调它，不直接持有版本服务。
+  late _DataVersionFlows _flows;
+
   /// 一屏订阅：历史、撤销判断、存储占用与恢复点随写入更新（ADR-0014）。
   Stream<DataVersionOverview>? _stream;
   DataVersionOverview? _view;
@@ -70,9 +74,6 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   /// 冲突读取的序号：两次读取之间又发起了新的，前一次的结果不再回填。
   int _conflictRequest = 0;
-
-  RevisionService get _revisions =>
-      widget.revisions ?? AppScope.of(context).data.revisions;
 
   /// 同步服务持有的设备名册缓存：远端提交的来源按它显示别名（ADR-0048）。
   SyncService get _sync => AppScope.of(context).accountServices.sync;
@@ -113,6 +114,10 @@ class _DataVersionPageState extends State<DataVersionPage>
     super.didChangeDependencies();
     // 页面一进入就订阅整屏读取，写入之后的重新读取由数据层完成。
     final scope = AppScope.of(context);
+    _flows = _DataVersionFlows(
+      scope: scope,
+      revisions: widget.revisions ?? scope.data.revisions,
+    );
     watchDataVersion(scope.dataVersion);
     _stream ??= _createStream();
     // 从“我的”打开时，一级界面切进来之后已经在后台读过一屏。
@@ -152,8 +157,7 @@ class _DataVersionPageState extends State<DataVersionPage>
   /// 读保留天数：设置读取失败时沿用默认值，不打断页面上的其他内容。
   Future<void> _loadRetentionDays() async {
     try {
-      final days = await AppScope.of(context).settings.edit
-          .revisionRetentionDays();
+      final days = await _flows.retentionDays();
       if (!mounted || days == _keepDays) return;
       setState(() => _keepDays = days);
     } catch (_) {
@@ -167,7 +171,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     final previous = _keepDays;
     setState(() => _keepDays = days);
     try {
-      await AppScope.of(context).settings.edit.saveRevisionRetentionDays(days);
+      await _flows.saveRetentionDays(days);
     } catch (error, stack) {
       if (!mounted) return;
       setState(() => _keepDays = previous);
@@ -185,8 +189,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
   }
 
-  Stream<DataVersionOverview> _createStream() =>
-      AppScope.of(context).data.versions.watchOverview();
+  Stream<DataVersionOverview> _createStream() => _flows.watchOverview();
 
   /// 读取被其他设备覆盖、还没有处理的本机修改。
   ///
@@ -196,7 +199,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     final request = ++_conflictRequest;
     unawaited(() async {
       try {
-        final conflicts = await _revisions.conflicts();
+        final conflicts = await _flows.conflicts();
         if (!mounted || request != _conflictRequest) return;
         setState(() => _conflicts = conflicts);
       } catch (_) {
@@ -277,7 +280,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final commit = await _revisions.keepLocal(conflict.id);
+      final commit = await _flows.keepLocal(conflict.id);
       if (!mounted) return;
       if (commit == null) {
         _report('本机修改还没有写回，可以稍后再试');
@@ -309,7 +312,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final dismissed = await _revisions.dismissConflict(conflict.id);
+      final dismissed = await _flows.dismissConflict(conflict.id);
       if (!mounted) return;
       _report(dismissed ? '已忽略这条同步覆盖记录' : '这条记录已经处理过了');
       _loadConflicts();
@@ -352,7 +355,6 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   Future<void> _name([int? commitId]) async {
-    final scope = AppScope.of(context);
     final target = commitId ?? _view?.history.head;
     if (target == null || _busy) return;
     final name = TextEditingController();
@@ -399,7 +401,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (confirmed != true || label.isEmpty) return;
     setState(() => _busy = true);
     try {
-      await scope.data.revisions.name(target, label: label, note: memo);
+      await _flows.name(target, label: label, note: memo);
       _report('已保存命名版本“$label”');
     } catch (error, stack) {
       if (!mounted) return;
@@ -420,9 +422,8 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   Future<void> _details(RevisionCommit commit) async {
-    final scope = AppScope.of(context);
     try {
-      final details = await scope.data.revisions.details(commit.id);
+      final details = await _flows.details(commit.id);
       if (!mounted) return;
       if (details == null) {
         _report('这条提交的明细已经不在本机，提交历史里仍然列着它。');
@@ -522,10 +523,9 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   Future<void> _compare(int head, RevisionCommit commit) async {
-    final scope = AppScope.of(context);
     final RevisionDiff diff;
     try {
-      diff = await scope.data.revisions.compare(commit.id, head);
+      diff = await _flows.compare(commit.id, head);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -600,10 +600,9 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   Future<void> _restore(RevisionCommit commit) async {
     if (_busy) return;
-    final scope = AppScope.of(context);
     setState(() => _busy = true);
     try {
-      final preview = await scope.data.revisions.previewRestore(commit.id);
+      final preview = await _flows.previewRestore(commit.id);
       if (!mounted) return;
       final confirmed = await showRestoreConfirmDialog(
         context,
@@ -621,7 +620,7 @@ class _DataVersionPageState extends State<DataVersionPage>
         rollbackLine: '恢复前的版本留在提交历史里，恢复后可以在这一页回到恢复前。',
       );
       if (!confirmed || !mounted) return;
-      final restored = await scope.data.revisions.restore(
+      final restored = await _flows.restoreVersion(
         commit.id,
         expectedHead: preview.head,
       );
@@ -663,7 +662,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
     setState(() => _busy = true);
     try {
-      final result = await AppScope.of(context).data.undo.undoCommit(commit.id);
+      final result = await _flows.undo(commit.id);
       if (result.applied && mounted) _showAppendedCommit();
       _report(result.message);
     } catch (error, stack) {
@@ -720,15 +719,9 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   Future<void> _exportCurrent() async {
     if (_busy) return;
-    final scope = AppScope.of(context);
-    final day = scope.timePolicy.now;
-    final fileName = 'zhixin-current-${compactDate(day)}.zip';
     setState(() => _busy = true);
     try {
-      final uri = await saveDataPackage(
-        fileName: fileName,
-        writePackage: scope.data.versions.exportCurrentData,
-      );
+      final uri = await _flows.exportCurrent();
       _report(uri == null ? '已取消导出' : '已导出当前数据：$uri');
     } catch (error, stack) {
       if (!mounted) return;
@@ -755,7 +748,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (_busy) return;
     setState(() => _busy = true);
     try {
-      final result = await checkRepositoryIntegrity(_revisions);
+      final result = await _flows.checkIntegrity();
       if (!mounted) return;
       await showIntegrityReport(context, result);
     } catch (error, stack) {
@@ -784,7 +777,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (_busy) return null;
     setState(() => _busy = true);
     try {
-      final result = await checkRepositoryIntegrity(_revisions);
+      final result = await _flows.checkIntegrity();
       if (!mounted) return null;
       return await confirmExportAfterIntegrityCheck(
         context,
@@ -813,21 +806,15 @@ class _DataVersionPageState extends State<DataVersionPage>
   /// 备份版本库：先自动检查完整性，发现不一致时说明并让用户决定是否继续。
   Future<void> _backupRepository() async {
     if (_busy) return;
-    final scope = AppScope.of(context);
     final confirmed = await _confirmIntegrityBeforeExport('备份版本库');
     if (confirmed == null || !mounted) return;
     if (!confirmed) {
       _report('已取消备份');
       return;
     }
-    final day = scope.timePolicy.now;
-    final fileName = 'zhixin-repository-${compactDate(day)}.zip';
     setState(() => _busy = true);
     try {
-      final uri = await saveDataPackage(
-        fileName: fileName,
-        writePackage: scope.data.versions.backupRepository,
-      );
+      final uri = await _flows.backupRepository();
       _report(uri == null ? '已取消备份' : '已备份版本库：$uri');
     } catch (error, stack) {
       if (!mounted) return;
@@ -859,11 +846,10 @@ class _DataVersionPageState extends State<DataVersionPage>
       _report(dataPackageTooLargeMessage(size));
       return;
     }
-    final scope = AppScope.of(context);
     final int expectedHead;
     final Uint8List bytes;
     try {
-      expectedHead = await scope.data.versions.currentHead();
+      expectedHead = await _flows.currentHead();
       bytes = await File(path).readAsBytes();
     } catch (error, stack) {
       if (!mounted) return;
@@ -893,7 +879,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      final imported = await scope.data.versions.importCurrentData(
+      final imported = await _flows.importCurrent(
         bytes,
         expectedHead: expectedHead,
       );
@@ -978,10 +964,9 @@ class _DataVersionPageState extends State<DataVersionPage>
 
   Future<void> _restorePoint(RestorePoint point) async {
     if (_busy) return;
-    final scope = AppScope.of(context);
     final Uint8List bytes;
     try {
-      bytes = await scope.data.versions.readRestorePoint(point);
+      bytes = await _flows.readRestorePoint(point);
     } catch (error, stack) {
       if (!mounted) return;
       _report(
@@ -1016,7 +1001,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).data.versions.deleteRestorePoint(point);
+      await _flows.deleteRestorePoint(point);
       _report('已删除恢复点');
     } catch (error, stack) {
       if (!mounted) return;
@@ -1048,7 +1033,7 @@ class _DataVersionPageState extends State<DataVersionPage>
   }) async {
     final List<String> blockers;
     try {
-      blockers = await _revisions.historyBlockers(clearing: clearing);
+      blockers = await _flows.historyBlockers(clearing: clearing);
     } catch (error, stack) {
       if (!mounted) return false;
       _report(
@@ -1124,8 +1109,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      final result = await AppScope.of(context).data.revisions
-          .prune(retentionDays: _keepDays);
+      final result = await _flows.prune(retentionDays: _keepDays);
       final notice = result.removedCommits > 0 ? '；更早的回执不再提供撤销入口' : '';
       _report(
         '已清理 ${result.removedCommits} 条提交、${result.removedCheckpoints} 个检查点、'
@@ -1168,7 +1152,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).data.revisions.deleteName(ref.name);
+      await _flows.deleteName(ref.name);
       _report('已删除命名版本“${ref.name}”');
     } catch (error, stack) {
       if (!mounted) return;
@@ -1202,7 +1186,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (!confirmed || !mounted) return;
     setState(() => _busy = true);
     try {
-      await AppScope.of(context).data.revisions.clearHistory();
+      await _flows.clearHistory();
       _report('已清理本机历史，当前数据保留；更早的回执不再提供撤销入口');
     } catch (error, stack) {
       if (!mounted) return;
@@ -1351,16 +1335,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             subtitle: const Text('用版本库备份替换当前数据；恢复前自动保存恢复点。'),
             onPress: _busy ? null : _restoreRepository,
           ),
-          if (_restoreStatus case final status?)
-            Padding(
-              padding: EdgeInsets.only(top: theme.space.sm),
-              child: Text(
-                status,
-                style: theme.text.bodySmall.copyWith(
-                  color: theme.colors.onSurfaceVariant,
-                ),
-              ),
-            ),
+          if (_restoreStatus case final status?) ResultNotice(message: status),
           // 只有被其他设备覆盖过、还没处理时才占位置；平时这一节不出现。
           if (_conflicts.isNotEmpty) ...[
             const SectionHeading(
@@ -1373,7 +1348,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             title: '留存',
             subtitle:
                 '共 ${usage.commitCount} 条保留提交 · '
-                '${_sizeLabel(usage.databaseBytes)} · HEAD ${history.head}',
+                '${formatBytes(usage.databaseBytes)} · HEAD ${history.head}',
             action: SectionLink(
               label: '清理本机历史',
               icon: FLucideIcons.eraser,
@@ -1381,7 +1356,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             ),
           ),
           Text(
-            '附件 ${_sizeLabel(usage.assetBytes)}（${usage.assetCount} 个） · '
+            '附件 ${formatBytes(usage.assetBytes)}（${usage.assetCount} 个） · '
             '检查点 ${usage.checkpointCount} 个 · '
             '命名 ${usage.namedCount} 个',
             style: theme.text.bodySmall,
@@ -1715,7 +1690,7 @@ class _DataVersionPageState extends State<DataVersionPage>
       ),
       subtitle: Text(
         '${point.commitCount} 条提交 · ${point.namedCount} 个命名 · '
-        '${_sizeLabel(point.size)}'
+        '${formatBytes(point.size)}'
         '${point.reason.isEmpty ? '' : ' · ${point.reason}'}',
       ),
       suffix: moreMenu(
@@ -1745,15 +1720,8 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (!commit.isRemote) return time;
     final alias = _sync.deviceAlias(commit.originDevice ?? '');
     if (alias != null) return '来自另一台设备 $alias · $time';
-    final device = _maskedDevice(commit.originDevice);
-    return device == null ? '来自另一台设备 · $time' : '来自另一台设备 $device · $time';
-  }
-
-  /// 设备标识脱敏：只保留前 8 位，短的标识原样显示；有别名时由别名代替。
-  static String? _maskedDevice(String? device) {
-    final value = device?.trim() ?? '';
-    if (value.isEmpty) return null;
-    return value.length <= 8 ? value : value.substring(0, 8);
+    final device = maskedDeviceId(commit.originDevice);
+    return device.isEmpty ? '来自另一台设备 · $time' : '来自另一台设备 $device · $time';
   }
 
   String _actorLabel(String actor) => switch (actor) {
@@ -1958,10 +1926,98 @@ class _DataVersionPageState extends State<DataVersionPage>
     };
     return labels?[value];
   }
+}
 
-  String _sizeLabel(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil()} KB';
-    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
-  }
+/// 数据版本页的业务顺序：导出、备份、导入、命名、比较、恢复、裁剪、清理、
+/// 恢复点与完整性检查。
+///
+/// 页面只保留确认框与渲染：先做什么、失败时保留什么、结果文案与影响说明都在
+/// 这里。`application` 目录不属于批 3 的独占范围，所以它先作为页面私有的普通类
+/// 存在，State 不再直接持有版本服务；等应用层接收这些流程时整体上移，页面不需要
+/// 再改。整库恢复的选包、预检与确认仍然需要页面上下文，留在 [DataVersionPage] 里。
+class _DataVersionFlows {
+  _DataVersionFlows({required this.scope, required this.revisions});
+
+  final AppScopeState scope;
+  final RevisionService revisions;
+
+  DataVersionService get _versions => scope.data.versions;
+
+  /// 导出文件名带上当天日期；两类数据包各一个前缀。
+  String get currentDataFileName =>
+      'zhixin-current-${compactDate(scope.timePolicy.now)}.zip';
+  String get repositoryFileName =>
+      'zhixin-repository-${compactDate(scope.timePolicy.now)}.zip';
+
+  Stream<DataVersionOverview> watchOverview() => _versions.watchOverview();
+
+  Future<List<RevisionConflict>> conflicts() => revisions.conflicts();
+
+  Future<RevisionCommit?> keepLocal(int conflictId) =>
+      revisions.keepLocal(conflictId);
+
+  Future<bool> dismissConflict(int conflictId) =>
+      revisions.dismissConflict(conflictId);
+
+  Future<RevisionDetails?> details(int commitId) => revisions.details(commitId);
+
+  Future<RevisionDiff> compare(int from, int to) => revisions.compare(from, to);
+
+  Future<RevisionRestorePreview> previewRestore(int target) =>
+      revisions.previewRestore(target);
+
+  Future<({RevisionCommit commit, String? cacheWarning})> restoreVersion(
+    int target, {
+    required int expectedHead,
+  }) => revisions.restore(target, expectedHead: expectedHead);
+
+  Future<RevisionUndoResult> undo(int commitId) =>
+      scope.data.undo.undoCommit(commitId);
+
+  Future<RevisionRef> name(
+    int commitId, {
+    required String label,
+    String? note,
+  }) => revisions.name(commitId, label: label, note: note);
+
+  Future<void> deleteName(String label) => revisions.deleteName(label);
+
+  Future<List<String>> historyBlockers({required bool clearing}) =>
+      revisions.historyBlockers(clearing: clearing);
+
+  Future<RevisionRetentionResult> prune({required int retentionDays}) =>
+      revisions.prune(retentionDays: retentionDays);
+
+  Future<void> clearHistory() => revisions.clearHistory();
+
+  Future<RepositoryIntegrityResult> checkIntegrity() =>
+      checkRepositoryIntegrity(revisions);
+
+  Future<String?> exportCurrent() => saveDataPackage(
+    fileName: currentDataFileName,
+    writePackage: _versions.exportCurrentData,
+  );
+
+  Future<String?> backupRepository() => saveDataPackage(
+    fileName: repositoryFileName,
+    writePackage: _versions.backupRepository,
+  );
+
+  Future<int> currentHead() => _versions.currentHead();
+
+  Future<Result<String?>> importCurrent(
+    Uint8List bytes, {
+    required int expectedHead,
+  }) => _versions.importCurrentData(bytes, expectedHead: expectedHead);
+
+  Future<int> retentionDays() => scope.settings.edit.revisionRetentionDays();
+
+  Future<void> saveRetentionDays(int days) =>
+      scope.settings.edit.saveRevisionRetentionDays(days);
+
+  Future<Uint8List> readRestorePoint(RestorePoint point) =>
+      _versions.readRestorePoint(point);
+
+  Future<void> deleteRestorePoint(RestorePoint point) =>
+      _versions.deleteRestorePoint(point);
 }

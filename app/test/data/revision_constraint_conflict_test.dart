@@ -61,6 +61,74 @@ Future<Map<String, Object?>?> _row(TestRig rig, String table, String id) async {
 }
 
 void main() {
+  test('跨过零明细的冲突提交，比较仍按变更明细合并', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+    await _insert(rig, 'material', _material('mat1'));
+    await _insert(rig, 'material_page', _page('p-local', 'mat1', 1, '本机写入的正文'));
+
+    // 远端插入撞上本机占着的同一页码：整条提交没有一行写入，但冲突要挂在提交
+    // 行上才能在数据版本页提示，于是形成一条没有变更明细的提交。
+    final applied = await rig.revisions.applyRemoteCommit(
+      uid: 'remote-empty-commit',
+      action: '从其他设备同步',
+      actor: 'user',
+      kind: RevisionKind.write,
+      originDevice: 'device-b',
+      changes: [
+        RevisionChange(
+          commitId: 0,
+          seq: 1,
+          table: 'material_page',
+          rowKey: 'p-remote',
+          op: ChangeOp.insert,
+          after: typedRow(_page('p-remote', 'mat1', 1, '远端写入的正文')),
+        ),
+      ],
+    );
+    expect(applied.skipped, 1);
+    final conflictHead = await rig.engine.headId(rig.raw);
+    expect(
+      await selectRows(
+        rig.raw,
+        'revision_change',
+        where: 'commit_id = ?',
+        whereArgs: [conflictHead],
+      ),
+      isEmpty,
+      reason: '这条提交只有冲突，没有数据变化',
+    );
+    final conflictCommit = (await selectRows(
+      rig.raw,
+      'revision_commit',
+      where: 'id = ?',
+      whereArgs: [conflictHead],
+    )).single;
+    expect(conflictCommit['byte_length'], 0, reason: '提交行记下了这次没有变更明细');
+
+    // 冲突提交之后又有一次普通写入：跨过零明细提交的比较仍能用变更明细合并，
+    // 不退回两次整库重建，也不把这条提交当成历史损坏。
+    await _insert(rig, 'material', _material('mat2'));
+    final head = await rig.engine.headId(rig.raw);
+    final changes = await rig.engine.foldChanges(rig.raw, 0, head);
+    final keys = {
+      for (final change in changes)
+        '${change.table}/${change.rowKey}/${change.op.value}',
+    };
+    expect(
+      keys,
+      containsAll([
+        'material/mat1/insert',
+        'material/mat2/insert',
+        'material_page/p-local/insert',
+      ]),
+    );
+    expect(
+      changes.where((change) => change.table == 'material_page'),
+      hasLength(1),
+    );
+  });
+
   test('两端插入同一份材料的同一页码时跳过远端这一行并记 unique_key_taken', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

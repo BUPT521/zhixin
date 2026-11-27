@@ -712,11 +712,8 @@ class RevisionValue {
 
   Map<String, Object?> toJson() => {'t': type.value, 'v': value};
 
-  bool equals(RevisionValue other) {
-    if (type != other.type) return false;
-    if (type == RevisionValueType.blob) return value == other.value;
-    return value == other.value;
-  }
+  bool equals(RevisionValue other) =>
+      type == other.type && value == other.value;
 
   @override
   bool operator ==(Object other) => other is RevisionValue && equals(other);

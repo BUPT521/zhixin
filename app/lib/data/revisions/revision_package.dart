@@ -9,6 +9,7 @@ import 'package:path/path.dart' as p;
 import '../../domain/rules/package_budget.dart';
 import '../../domain/rules/time_policy.dart';
 import '../backup/backup_manifest.dart';
+import '../backup/restore_inspection.dart';
 import '../backup/restore_validation.dart';
 import 'asset_store.dart';
 import 'revision_engine.dart';
@@ -28,7 +29,6 @@ class RevisionPackageService {
     required this.schemaVersion,
     required this.appVersion,
     this.budget = const PackageBudget(),
-    this.chunkSize = 64 * 1024,
     this.clock = systemClock,
   });
 
@@ -40,7 +40,6 @@ class RevisionPackageService {
   /// 解压预算；当前数据包在读取 manifest、data 与附件之前执行，
   /// 版本库备份在确认 kind 与 schema 之后、读取 `zhixin.db` 之前执行。
   final PackageBudget budget;
-  final int chunkSize;
   final Clock clock;
 
   static const String _manifestEntry = 'manifest.json';
@@ -231,18 +230,12 @@ class RevisionPackageService {
     }
   }
 
-  /// 恢复版本库之前先在暂存处核对：完整性、schema、`HEAD`、可重建性与附件。
-  ///
-  /// 返回 false 表示这不是版本库备份（仍可交给旧的当前数据包恢复流程）；
-  /// 声明为版本库但校验失败时直接抛错，调用方不得覆盖当前库。
-  Future<bool> validateRepositoryBytes(Uint8List bytes) async =>
-      await inspectRepository(bytes) != null;
-
-  /// 预检版本库备份：校验通过后返回包内 `HEAD`、提交条数、命名版本数与导出时间。
+  /// 预检版本库备份：校验通过后返回包内规模、导出信息与可以恢复的字节。
   ///
   /// 不是版本库备份时返回 null；声明为版本库但校验失败时抛出 [FormatException]。
-  /// 恢复入口先调用它，向用户说明包内规模，再决定是否覆盖当前库。
-  Future<RepositoryInspection?> inspectRepository(Uint8List bytes) async {
+  /// 恢复入口先调用它，向用户说明包内规模，再决定是否覆盖当前库。结果与当前
+  /// 数据包共用 [RestoreInspection]，`schemaVersion` 取 manifest 里已经核对过的值。
+  Future<RestoreInspection?> inspectRepository(Uint8List bytes) async {
     final Archive archive;
     try {
       archive = ZipDecoder().decodeBytes(bytes);
@@ -254,7 +247,7 @@ class RevisionPackageService {
     final manifest = jsonDecode(utf8.decode(manifestFile.content as List<int>));
     if (manifest is! Map || manifest['kind'] != 'repository') return null;
     final version = manifest['schema_version'];
-    if (version != schemaVersion) {
+    if (version is! int || version != schemaVersion) {
       throw FormatException('版本库备份是 schema v$version，当前只接受 v$schemaVersion');
     }
     _checkBudget(archive, bytes.length);
@@ -272,10 +265,10 @@ class RevisionPackageService {
     RawDatabase? copy;
     try {
       await File(path).writeAsBytes(data, flush: true);
-      final stagedProblem = await _stagedProblem(path);
-      if (stagedProblem != null) {
-        throw FormatException('版本库备份校验失败：$stagedProblem');
-      }
+      // 恢复入口不再重跑校验：版本、对象白名单、物理完整性、外键与表结构都在
+      // 这里一次做完，恢复只写入已经通过的字节。
+      await StagedRestoreValidator(schemaVersion: schemaVersion)
+          .validate(path: path, manifestSchemaVersion: version);
       copy = openReadOnlyDatabase(path);
       final head = await engine.headId(copy);
       final declaredHead = manifest['head'];
@@ -297,16 +290,26 @@ class RevisionPackageService {
           rows.isEmpty ? 0 : (rows.first['count'] as int? ?? 0);
       final exportedAt = manifest['exported_at'];
       final appVersionOfBackup = manifest['app_version'];
-      return RepositoryInspection(
+      return RestoreInspection(
+        kind: RestorePackageKind.repository,
+        schemaVersion: version,
         head: head,
         commitCount: countOf(commits),
         namedCount: countOf(names),
         exportedAt: exportedAt is String ? exportedAt : '',
         appVersion: appVersionOfBackup is String ? appVersionOfBackup : '',
+        databaseBytes: data,
+        expectedRows: await versionedRowCounts(copy),
       );
     } finally {
       await copy?.close();
-      if (await dir.exists()) await dir.delete(recursive: true);
+      // 清理失败不能顶替校验结论：按当前结构打开失败时文件句柄可能还没归还，
+      // 临时目录留给系统清理，预检仍然按发现的问题报告。
+      try {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      } catch (_) {
+        // 忽略清理失败。
+      }
     }
   }
 
@@ -335,21 +338,4 @@ class RevisionPackageService {
     if (problem == null) return null;
     return '${problem.category}：${problem.detail}';
   }
-}
-
-/// 版本库备份预检的结果：包内规模与导出信息，用于恢复前的影响说明。
-class RepositoryInspection {
-  const RepositoryInspection({
-    required this.head,
-    required this.commitCount,
-    required this.namedCount,
-    required this.exportedAt,
-    required this.appVersion,
-  });
-
-  final int head;
-  final int commitCount;
-  final int namedCount;
-  final String exportedAt;
-  final String appVersion;
 }
