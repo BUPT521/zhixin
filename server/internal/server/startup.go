@@ -77,9 +77,10 @@ func prepareStartup(ctx context.Context, cfg config.Config, catalog llmproxy.Cat
 		if err != nil {
 			return startupDependencies{}, fmt.Errorf("ZHIXIN_SECRET_KEY is unusable: %w", err)
 		}
-	} else if cfg.AdminToken != "" {
-		return startupDependencies{}, errors.New("ZHIXIN_SECRET_KEY is required for administration with PostgreSQL")
 	}
+	// 没有密钥的可达路径只有 setup 模式与内存存储：前者在这里随机生成过 key，
+	// 后者的 DatabaseURL 为空、上面也已经生成。带后台与数据库却没有密钥的情况
+	// 已由 config.Load 一处拒绝，这里不再维护一条只有测试能构造的重复分支。
 
 	router := llmproxy.NewRouter(catalog, box, log)
 	if err := router.Reload(ctx); err != nil {
