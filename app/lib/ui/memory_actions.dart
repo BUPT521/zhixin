@@ -184,7 +184,9 @@ Future<bool> deleteMemory(
 /// 删除前说明会影响哪些建议：按类型说清不再被参考的内容，按范围说清影响面。
 String memoryDeleteImpact(Memory memory, Map<String, String> scopeLabels) {
   final scope = memory.scope;
-  final place = scope == null ? '全部学习里' : '「${scopeLabels[scope] ?? '范围已删除'}」下';
+  final place = scope == null
+      ? '全部学习里'
+      : '「${memoryScopeLabel(scopeLabels, scope)}」下';
   final effect = switch (memory.kind) {
     MemoryKind.episodic => '讲解与安排不再参考这件事',
     MemoryKind.semantic => '回答不再按这条事实与限制',
@@ -193,6 +195,17 @@ String memoryDeleteImpact(Memory memory, Map<String, String> scopeLabels) {
   };
   return '删除后，$place的$effect。';
 }
+
+/// 目标或材料被删除之后范围名字的写法：记忆页、记忆查找页与提案页共用这一处。
+const String memoryScopeDeleted = '范围已删除';
+
+/// 范围标识换成显示名；目标或材料已经被删除时统一写 [memoryScopeDeleted]。
+String memoryScopeLabel(Map<String, String>? scopeLabels, String scope) =>
+    scopeLabels?[scope] ?? memoryScopeDeleted;
+
+/// 范围标识换成显示名；不限定范围时返回空，由调用方决定要不要显示这一行。
+String? memoryScopeOf(Map<String, String>? scopeLabels, String? scope) =>
+    scope == null ? null : memoryScopeLabel(scopeLabels, scope);
 
 /// 保存、删除与恢复的提示条指向各自提交；撤销按反向规则写回。
 ///

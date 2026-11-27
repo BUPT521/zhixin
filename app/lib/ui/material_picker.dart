@@ -22,13 +22,17 @@ class MaterialSelection {
     required this.materialId,
     required this.materialTitle,
     required this.pageNo,
+    required this.position,
   });
 
   final String materialId;
   final String materialTitle;
   final int pageNo;
 
-  String get label => '《$materialTitle》第 $pageNo 页';
+  /// 这一处在材料里的写法：普通材料是“第 N 页”，Word 材料是“第 N 个片段”。
+  final String position;
+
+  String get label => '《$materialTitle》$position';
 }
 
 /// 选择材料与页码；没有材料时提示先去记录里导入。
@@ -78,12 +82,12 @@ Future<MaterialSelection?> showMaterialPicker(
   final pages = await _readPages(context, material);
   if (pages == null || !context.mounted) return null;
   if (pages.isEmpty) {
-    showToast(context, '这份材料还没有页面');
+    showToast(context, '这份材料还没有${material.isDocx ? '片段' : '页面'}');
     return null;
   }
   final page = await showZhixinSheet<MaterialPage>(
     context: context,
-    title: '《${material.title}》的哪一页',
+    title: '《${material.title}》的${material.isDocx ? '哪一个片段' : '哪一页'}',
     builder: (context) => ListView(
       shrinkWrap: true,
       padding: EdgeInsets.zero,
@@ -97,7 +101,7 @@ Future<MaterialSelection?> showMaterialPicker(
                   : FLucideIcons.fileText,
             ),
             title: Text(
-              '第 ${pages[index].pageNo} ${material.isDocx ? '个片段' : '页'}'
+              '${material.position(pages[index].pageNo)}'
               '${pages[index].label == null ? '' : ' · ${pages[index].label}'}',
             ),
             subtitle: Text(
@@ -116,6 +120,7 @@ Future<MaterialSelection?> showMaterialPicker(
     materialId: material.id,
     materialTitle: material.title,
     pageNo: page.pageNo,
+    position: material.position(page.pageNo),
   );
 }
 

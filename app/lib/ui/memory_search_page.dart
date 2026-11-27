@@ -408,9 +408,7 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
   /// 一条结果：正文片段、类别、来源与来源对象、有效期、状态，以及原有编辑入口。
   Widget _tile(ZhixinTheme theme, Memory memory) {
     final expired = !memory.isValidAt(AppScope.of(context).timePolicy.now);
-    final scope = memory.scope == null
-        ? null
-        : _scopeLabels[memory.scope] ?? '范围已删除';
+    final scope = memoryScopeOf(_scopeLabels, memory.scope);
     return Padding(
       padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(

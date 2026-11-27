@@ -229,9 +229,7 @@ class _MemoryPageState extends State<MemoryPage> {
     DateTime now,
   ) {
     final expired = !memory.isValidAt(now);
-    final scope = memory.scope == null
-        ? null
-        : scopeLabels[memory.scope] ?? '范围已删除';
+    final scope = memoryScopeOf(scopeLabels, memory.scope);
     return Padding(
       padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(

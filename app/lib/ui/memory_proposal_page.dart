@@ -11,7 +11,7 @@ import '../application/memory_proposal_service.dart';
 import '../domain/models/question.dart';
 import 'failure_feedback.dart';
 import 'live_view.dart';
-import 'undo_feedback.dart';
+import 'memory_actions.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_toast.dart';
@@ -147,13 +147,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
         showToast(context, result.skippedReason ?? '这条来源已经处理过，没有重复写入。');
         return;
       }
-      showActionToast(
-        context,
-        '已记下这条记忆',
-        label: '撤销',
-        onPressed: () =>
-            undoCommitWithFeedback(context, result.commitId!, reload: _reload),
-      );
+      showMemoryReceipt(context, '已记下这条记忆', result.commitId!, reload: _reload);
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {
@@ -184,7 +178,7 @@ class _MemoryProposalPageState extends State<MemoryProposalPage> {
     if (scope == null) return '全部学习';
     final labels = _scopeLabels;
     if (labels == null) return '所属目标或材料';
-    return labels[scope] ?? '范围已删除';
+    return memoryScopeLabel(labels, scope);
   }
 
   @override
