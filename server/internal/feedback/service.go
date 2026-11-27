@@ -20,9 +20,6 @@ const (
 	MaxAppVersionRunes  = 64
 	MaxPlatformRunes    = 32
 	MaxContactBytes     = 254
-	// DefaultKeepDays 是反馈的默认保留天数，与配置项 ZHIXIN_FEEDBACK_KEEP_DAYS
-	// 的默认值一致；更早的行由每日清理删除。
-	DefaultKeepDays = 365
 )
 
 // Submission 是处理器从请求里取出、还没校验的一条反馈。
@@ -47,8 +44,11 @@ type Service struct {
 	keepDays int
 }
 
+// NewService 返回的 Service 默认不清理历史：保留天数只由配置层给出，装配处
+// 按 ZHIXIN_FEEDBACK_KEEP_DAYS 调用 SetKeepDays，这里不再写一份与配置默认值
+// 相同的兜底，免得两处靠人工同步。
 func NewService(store Store) *Service {
-	return &Service{store: store, now: time.Now, keepDays: DefaultKeepDays}
+	return &Service{store: store, now: time.Now}
 }
 
 // SetKeepDays 设置反馈的保留天数，与 ZHIXIN_FEEDBACK_KEEP_DAYS 对应；设成 0
