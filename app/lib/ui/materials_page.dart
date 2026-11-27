@@ -14,6 +14,7 @@ import 'failure_feedback.dart';
 import 'format.dart';
 import 'goal_picker.dart';
 import 'live_view.dart';
+import 'material_find_controller.dart';
 import 'materials_list.dart';
 import 'navigation.dart';
 import 'study_plan_setup.dart';
@@ -58,7 +59,7 @@ class MaterialDetailPage extends StatefulWidget {
 }
 
 class _MaterialDetailPageState extends State<MaterialDetailPage> {
-  /// 材料行与页码各一条订阅：任一表被写入之后由数据层重读（ADR-0014）。
+  /// 材料行与页码两条订阅：任一表被写入之后由数据层重读（ADR-0014）。
   ///
   /// 更正一页、补充一页、撤销与改归属之后不再由页面重读；从讨论返回时保持
   /// 当前内容，不另起一次读取。
@@ -67,21 +68,18 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   bool _started = false;
   bool _showAllPages = false;
 
-  /// 读取失败时就地说明；已经显示的材料与页面保持上一份。
-  String? _notice;
+  /// 两条订阅各自的读取失败说明：任一条的数据到达只清自己那一条，不抢着清。
+  String? _materialNotice;
+  String? _pagesNotice;
 
-  /// 在材料内查找正文：输入框、已经生效的查询、当前这一处与全部命中的位置。
+  /// 在材料内查找正文：输入框、命中的位置、当前这一处与翻页。
   ///
-  /// 命中处由页面按页高亮，上一处、下一处只改当前序号并滚到对应页；查找全部
-  /// 在本机完成，不调用模型。
-  final TextEditingController _find = TextEditingController();
+  /// 命中计算与序号由 [MaterialFindController] 持有，页面只给输入、订阅读到的
+  /// 页面与上一处、下一处，并在命中变化之后滚到对应页。
+  final TextEditingController _findField = TextEditingController();
+  final MaterialFindController _find = MaterialFindController();
   final ScrollController _scroll = ScrollController();
   final Map<int, GlobalKey> _pageKeys = {};
-  Timer? _findDebounce;
-  String _findQuery = '';
-  int _findIndex = 0;
-  List<MaterialPage> _allPages = const [];
-  List<_PageMatch> _findMatches = const [];
 
   bool get _hasRange => widget.pageFrom != null || widget.pageTo != null;
 
@@ -93,6 +91,13 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     return pages
         .where((page) => page.pageNo >= from && page.pageNo <= to)
         .toList(growable: false);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _find.onJumpRequested = _scheduleJump;
+    _find.addListener(_onFindChanged);
   }
 
   @override
@@ -111,56 +116,45 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
 
   @override
   void dispose() {
-    _findDebounce?.cancel();
+    _find.removeListener(_onFindChanged);
     _find.dispose();
+    _findField.dispose();
     _scroll.dispose();
     super.dispose();
   }
 
+  void _onFindChanged() {
+    if (mounted) setState(() {});
+  }
+
   /// 输入停下之后再在材料内找一次，免得每敲一个字都把全部页面扫一遍。
-  void _onFindChanged(String text) {
-    _findDebounce?.cancel();
+  void _onFindInput(String text) {
     setState(() {});
-    _findDebounce = Timer(const Duration(milliseconds: 250), () {
-      if (mounted) _applyFind(text);
-    });
+    _find.onInputChanged(text);
   }
 
   /// 生效这次查询，并把当前一处定位到第一处命中。
-  void _applyFind(String text) {
-    _findDebounce?.cancel();
-    setState(() {
-      _findQuery = text.trim();
-      _findIndex = 0;
-    });
-    if (_findQuery.isEmpty) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToMatch());
-  }
+  void _applyFind(String text) => _find.apply(text);
 
   /// 清空材料内查找；查询与高亮一起撤掉，页面回到原来的样子。
   void _clearFind() {
-    _findDebounce?.cancel();
+    _findField.clear();
     _find.clear();
-    setState(() {
-      _findQuery = '';
-      _findIndex = 0;
-    });
   }
 
   /// 上一处、下一处；到头之后从另一头继续，按键始终可用。
-  void _stepFind(int delta) {
-    if (_findMatches.isEmpty) return;
-    setState(() {
-      _findIndex =
-          (_findIndex + delta + _findMatches.length) % _findMatches.length;
-    });
+  void _stepFind(int delta) => _find.step(delta);
+
+  /// 命中变化之后滚到当前这一处；等这一帧排完再量位置。
+  void _scheduleJump() {
     WidgetsBinding.instance.addPostFrameCallback((_) => _jumpToMatch());
   }
 
   /// 滚到当前这一处所在的页；命中页在本次范围之外时先展开全部页面。
   Future<void> _jumpToMatch() async {
-    if (!mounted || _findMatches.isEmpty) return;
-    final match = _findMatches[_findIndex.clamp(0, _findMatches.length - 1)];
+    if (!mounted) return;
+    final match = _find.current;
+    if (match == null) return;
     if (!_showAllPages && _hasRange && !_inRange(match.pageNo)) {
       setState(() => _showAllPages = true);
       await WidgetsBinding.instance.endOfFrame;
@@ -188,7 +182,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       );
       return;
     }
-    final pages = _visiblePages(_allPages);
+    final pages = _visiblePages(_find.pages);
     final index = pages.indexWhere((page) => page.pageNo == pageNo);
     if (index < 0 || !_scroll.hasClients) return;
     // ListView 只建可视范围附近的页：先按页序滚到大致位置，让目标页进入
@@ -211,31 +205,23 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     }
   }
 
-  /// 这一份材料里与查询逐字相同的每一处，按页码与位置先后排列。
-  static List<_PageMatch> _findIn(List<MaterialPage> pages, String query) {
-    if (query.isEmpty) return const [];
-    final matches = <_PageMatch>[];
-    for (final page in pages) {
-      for (final start in literalOccurrences(page.content, query)) {
-        matches.add(
-          _PageMatch(pageNo: page.pageNo, start: start, length: query.length),
-        );
-      }
-    }
-    return matches;
-  }
-
   /// 读取失败后的重试：换两条新流，读到结果之前保留已经显示的内容。
   void _reload() {
     setState(() {
-      _notice = null;
+      _materialNotice = null;
+      _pagesNotice = null;
       _subscribe();
     });
   }
 
-  void _clearNotice() {
-    if (_notice == null) return;
-    setState(() => _notice = null);
+  void _clearMaterialNotice() {
+    if (_materialNotice == null) return;
+    setState(() => _materialNotice = null);
+  }
+
+  void _clearPagesNotice() {
+    if (_pagesNotice == null) return;
+    setState(() => _pagesNotice = null);
   }
 
   void _reportMaterialFailure(Object error, StackTrace stack) {
@@ -249,7 +235,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       kept: '材料与页面没有改动',
       next: '可以点重试再读一次',
     );
-    setState(() => _notice = message);
+    setState(() => _materialNotice = message);
   }
 
   void _reportPagesFailure(Object error, StackTrace stack) {
@@ -263,7 +249,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
       kept: '材料没有改动',
       next: '可以点重试再读一次',
     );
-    setState(() => _notice = message);
+    setState(() => _pagesNotice = message);
   }
 
   Future<void> _startDiscussion(MaterialPage page, Material material) async {
@@ -519,7 +505,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     return LiveView<Material?>(
       stream: _materialStream,
       onError: _reportMaterialFailure,
-      onData: (_) => _clearNotice(),
+      onData: (_) => _clearMaterialNotice(),
       builder: (context, material, loading) => DetailScaffold(
         header: ZhixinHeader(
           title: Text(material?.title ?? '材料'),
@@ -543,8 +529,8 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
             ? ListView(
                 padding: theme.space.pageInsets(),
                 children: [
-                  if (_notice != null)
-                    InlineNotice(message: _notice!, onRetry: _reload),
+                  if (_materialNotice != null)
+                    InlineNotice(message: _materialNotice!, onRetry: _reload),
                   const ListSkeleton(rows: 3),
                 ],
               )
@@ -552,8 +538,8 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
             ? ListView(
                 padding: theme.space.pageInsets(),
                 children: [
-                  if (_notice != null)
-                    InlineNotice(message: _notice!, onRetry: _reload),
+                  if (_materialNotice != null)
+                    InlineNotice(message: _materialNotice!, onRetry: _reload),
                   EmptyState(
                     icon: FLucideIcons.fileText,
                     title: '未找到这份材料',
@@ -570,7 +556,11 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
             : LiveView<List<MaterialPage>>(
                 stream: _pagesStream,
                 onError: _reportPagesFailure,
-                onData: (_) => _clearNotice(),
+                onData: (pages) {
+                  // 命中按订阅读到的页面重算，不在排版时改状态。
+                  _find.updatePages(pages);
+                  _clearPagesNotice();
+                },
                 builder: (context, pages, pagesLoading) =>
                     _body(theme, material, pages, pagesLoading),
               ),
@@ -590,17 +580,14 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   ) {
     final all = pages ?? const <MaterialPage>[];
     final visible = loading ? const <MaterialPage>[] : _visiblePages(all);
-    // 命中位置与当前一处按最后一次建出来的页面计算：高亮、计数与翻页读同一份。
-    _allPages = all;
-    _findMatches = _findIn(all, _findQuery);
-    _findIndex = _findMatches.isEmpty
-        ? 0
-        : _findIndex.clamp(0, _findMatches.length - 1);
     // 材料信息固定在最前面，页面正文按需构建：只有滚到附近的一页才解析与排版
     // 自己的整段原文，打开几十页的材料时首帧开销与页数无关；列表外层只放一个
     // 选择区，逐页的 SelectableText 换成普通 Text，每页不再各带一套选择状态。
     final leading = <Widget>[
-      if (_notice != null) InlineNotice(message: _notice!, onRetry: _reload),
+      if (_materialNotice != null)
+        InlineNotice(message: _materialNotice!, onRetry: _reload),
+      if (_pagesNotice != null)
+        InlineNotice(message: _pagesNotice!, onRetry: _reload),
       TagRow(
         children: [
           StatusTag(material.kindLabel),
@@ -702,8 +689,8 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
 
   /// 材料内查找：输入框、命中计数与上一处、下一处；没有命中时保留查询并给清除。
   Widget _findBar(ZhixinTheme theme) {
-    final matches = _findMatches;
-    final hasQuery = _findQuery.isNotEmpty;
+    final matches = _find.matches;
+    final hasQuery = _find.hasQuery;
     return Padding(
       padding: EdgeInsets.fromLTRB(
         theme.space.page,
@@ -716,8 +703,8 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
           forui.FTextField(
             key: const ValueKey('material-find-entry'),
             control: .managed(
-              controller: _find,
-              onChange: (value) => _onFindChanged(value.text),
+              controller: _findField,
+              onChange: (value) => _onFindInput(value.text),
             ),
             textInputAction: TextInputAction.search,
             onSubmit: _applyFind,
@@ -729,7 +716,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
                   variants,
                   const Icon(FLucideIcons.search, size: 16),
                 ),
-            suffixBuilder: (_, style, _) => _find.text.isEmpty
+            suffixBuilder: (_, style, _) => _findField.text.isEmpty
                 ? const SizedBox.shrink()
                 : ZhixinIconButton(
                     tooltip: '清除查找',
@@ -747,8 +734,8 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
                   Expanded(
                     child: Text(
                       matches.isEmpty
-                          ? '没有找到「$_findQuery」'
-                          : '第 ${_findIndex + 1} 处 / 共 ${matches.length} 处',
+                          ? '没有找到「${_find.query}」'
+                          : '第 ${_find.index + 1} 处 / 共 ${matches.length} 处',
                       style: theme.text.bodySmall,
                     ),
                   ),
@@ -839,7 +826,7 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   /// `SelectableText` 每页各建一套文本选择状态，一页原文很长时还要为选中
   /// 再排版一遍，逐页构建之后这部分开销可以省掉。
   Widget _pageContent(ZhixinTheme theme, MaterialPage page) {
-    if (_findQuery.isEmpty) {
+    if (!_find.hasQuery) {
       return Text(page.content, style: theme.text.bodyMedium);
     }
     return Text.rich(
@@ -851,16 +838,17 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
   /// 一页正文按命中位置切成若干段，当前这一处用留意色，其余命中用主色浅底。
   List<InlineSpan> _highlightSpans(ZhixinTheme theme, MaterialPage page) {
     final content = page.content;
-    final positions = literalOccurrences(content, _findQuery);
+    final query = _find.query;
+    final positions = literalOccurrences(content, query);
     if (positions.isEmpty) return [TextSpan(text: content)];
-    final current = _findMatches.isEmpty ? null : _findMatches[_findIndex];
+    final current = _find.current;
     final spans = <InlineSpan>[];
     var cursor = 0;
     for (final start in positions) {
       if (start > cursor) {
         spans.add(TextSpan(text: content.substring(cursor, start)));
       }
-      final end = start + _findQuery.length;
+      final end = start + query.length;
       final isCurrent =
           current != null &&
           current.pageNo == page.pageNo &&
@@ -883,19 +871,6 @@ class _MaterialDetailPageState extends State<MaterialDetailPage> {
     }
     return spans;
   }
-}
-
-/// 材料正文里的一处命中：第几页、从第几个字符开始、有多长。
-class _PageMatch {
-  const _PageMatch({
-    required this.pageNo,
-    required this.start,
-    required this.length,
-  });
-
-  final int pageNo;
-  final int start;
-  final int length;
 }
 
 /// 材料当前归属的目标名：归属只存标识，目标改名之后这里跟着订阅重读。
