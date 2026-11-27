@@ -20,6 +20,10 @@ function addUsage(total, part) {
 function successRate(u) {
   return u.attempts ? percent.format(u.successes / u.attempts) : '—';
 }
+// 按 0 结算的尝试只记估算列，估算量可能大于 Token 合计，此时不能再写“含估算”。
+function estimateNote(tokens, estimated) {
+  return estimated > tokens ? `另估算 ${number.format(estimated)}` : `含估算 ${number.format(estimated)}`;
+}
 
 // 已有日汇总的输入量含缺报记录，只有上报完整时才有可用的命中率分母。
 function cacheRatio(input, cached, inputReports, cachedReports) {
@@ -164,7 +168,7 @@ function renderUsage() {
   }
   $('#usage-period').textContent = `${days[0].day} 至 ${days.at(-1).day} · ${report.timezone}`;
   $('#usage-tokens').textContent = number.format(totals.tokens);
-  $('#usage-estimate').textContent = `含估算 ${number.format(totals.estimated_tokens)}`;
+  $('#usage-estimate').textContent = estimateNote(totals.tokens, totals.estimated_tokens);
   $('#usage-cache').textContent = cacheNotes(chatTotals);
   $('#usage-attempts').textContent = number.format(totals.attempts);
   $('#usage-attempt-detail').textContent = `${number.format(totals.first_attempts)} 次首次 · ${number.format(totals.failover_attempts)} 次故障切换`;
@@ -217,7 +221,7 @@ function updateUsageDay(date, routes, byDate) {
   const detail = $('#usage-day-detail');
   const total = day ? addUsage(addUsage(usagePart(), day.chat), day.embedding) : null;
   detail.textContent = total
-    ? `${date} · ${number.format(total.tokens)} Token（含估算 ${number.format(total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试（${number.format(total.first_attempts)} 首次，${number.format(total.failover_attempts)} 故障切换） · ${number.format(total.attempts - total.successes)} 次未成功${cacheHitRate(day.chat) ? ` · 输入缓存命中 ${cacheHitRate(day.chat)}` : ''}`
+    ? `${date} · ${number.format(total.tokens)} Token（${estimateNote(total.tokens, total.estimated_tokens)}） · ${number.format(total.attempts)} 次尝试（${number.format(total.first_attempts)} 首次，${number.format(total.failover_attempts)} 故障切换） · ${number.format(total.attempts - total.successes)} 次未成功${cacheHitRate(day.chat) ? ` · 输入缓存命中 ${cacheHitRate(day.chat)}` : ''}`
     : ($('#usage-chart-wrap').hidden ? '' : '选择日期查看当天明细。');
   renderUsageTable(routes, date);
 }

@@ -110,7 +110,7 @@ func (p *Proxy) Embeddings(w http.ResponseWriter, r *http.Request, params api.Po
 }
 
 // parseInputs 接受字符串或字符串数组；token 数组之类的形式不转发，因为服务端
-// 要按条拆批，也要在缺少 usage 时按输入字节估算用量。
+// 要按条拆批，也要在没有拿到用量时按输入字节记录估算量。
 func parseInputs(raw json.RawMessage) ([]string, error) {
 	if len(raw) == 0 {
 		return nil, errors.New("input is required")
@@ -226,11 +226,16 @@ func (res embedResult) failure() string {
 }
 
 type chunkOut struct {
-	resp              rawResponse
-	err               error
-	tokens, estimated int64
+	resp rawResponse
+	err  error
+	// tokens 是来源报告的用量；没有拿到用量的批次记 0，不拿输入字节数顶替。
+	tokens int64
+	// estimated 是没有拿到用量的批次按输入字节估算的量，只进路由统计。
+	estimated int64
 }
 
+// embeddingEstimate 返回一批输入的总字节数，用于预留与失败尝试的统计估算；
+// 它不是 token 数，不能直接当用量结算。
 func embeddingEstimate(inputs []string) int64 {
 	var size int64
 	for _, s := range inputs {
@@ -293,6 +298,10 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 		res.usage.estimated += o.estimated
 		res.reached = res.reached || (o.resp.status != 0 && o.resp.status != http.StatusUnauthorized)
 	}
+	// 没有一批拿到带 usage 的 2xx 时，这次尝试按 0 结算：连接失败、来源拒绝与
+	// 响应读不出来都不产生可核对的上游用量，估算的输入只进路由统计。只要有一批
+	// 报告了用量，就按报告的用量结算，其余批次不补记（ADR-0070、ADR-0084）。
+	res.usage.unbilled = res.usage.usage.Total() <= 0
 	// Shared credential and connection failures take precedence over individual batch errors.
 	for _, o := range outs {
 		if o.resp.status == http.StatusUnauthorized {
@@ -379,17 +388,13 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 	estimate := embeddingEstimate(chunk)
 	resp, err := p.attempt(ctx, rt.Provider, "/embeddings", body, false, p.cfg.HeaderTimeout, "")
 	if err != nil {
-		return chunkOut{err: err, tokens: estimate, estimated: estimate}
+		return chunkOut{err: err, estimated: estimate}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		used := int64(0)
-		if rejectedUsage(resp.StatusCode) < 0 {
-			used = estimate
-		}
 		return chunkOut{
-			resp:   rawResponse{status: resp.StatusCode, retryAfter: resp.Header.Get("Retry-After")},
-			tokens: used, estimated: used,
+			resp:      rawResponse{status: resp.StatusCode, retryAfter: resp.Header.Get("Retry-After")},
+			estimated: estimate,
 		}
 	}
 	limit := int64(maxEmbedResponse)
@@ -398,11 +403,11 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 	}
 	b, err := readResponse(allowanceReader{r: resp.Body, a: allowance}, limit)
 	if err != nil {
-		return chunkOut{resp: rawResponse{status: resp.StatusCode}, err: err, tokens: estimate, estimated: estimate}
+		return chunkOut{resp: rawResponse{status: resp.StatusCode}, err: err, estimated: estimate}
 	}
 	used := parseUsage(b, KindEmbedding).Total()
 	if used <= 0 {
-		return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: estimate, estimated: estimate}
+		return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, estimated: estimate}
 	}
 	return chunkOut{resp: rawResponse{status: resp.StatusCode, body: b}, tokens: used}
 }

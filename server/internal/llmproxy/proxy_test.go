@@ -1137,9 +1137,8 @@ func TestEmbeddingsDimensionMismatchTriesNextSource(t *testing.T) {
 	}
 }
 
-func TestEmbeddingsInputValidationAndEstimate(t *testing.T) {
+func TestEmbeddingsInputValidation(t *testing.T) {
 	src := newEmbedSource(t, 1, 4)
-	src.noUsage = true
 	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
 		putProvider(t, c, box, "p", src.URL, "sk")
 		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
@@ -1158,13 +1157,108 @@ func TestEmbeddingsInputValidationAndEstimate(t *testing.T) {
 	if src.calls.Load() != 0 {
 		t.Fatal("不合法的输入不应转发")
 	}
+}
+
+// TestEmbeddingsWithoutUsageBillsNothing 核对来源回了 2xx 却没有 usage 时结算记
+// 0：估算的输入只进路由统计的估算列，既不扣账号额度，也不写进返回给客户端的
+// usage（ADR-0084）。两条输入共 13 字节，估算列记 13，Token 列仍是 0。
+func TestEmbeddingsWithoutUsageBillsNothing(t *testing.T) {
+	src := newEmbedSource(t, 1, 4)
+	src.noUsage = true
+	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+		putProvider(t, c, box, "p", src.URL, "sk")
+		putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
+	})
+	usage := NewMemoryUsage()
+	env.proxy.SetUsageStore(usage)
+	token := signIn(t, env.authSvc, "no-usage@b.cn")
+
 	var out embedOut
-	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token, map[string]any{"model": "emb", "input": []string{"text-1", "text-22"}}, &out); code != http.StatusOK {
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token,
+		map[string]any{"model": "emb", "input": []string{"text-1", "text-22"}}, &out); code != http.StatusOK {
 		t.Fatalf("embeddings: %d", code)
 	}
-	// 来源没有返回 usage：按字数估算 6+7。
-	if out.Usage.TotalTokens != 13 {
-		t.Fatalf("缺 usage 时按字数估算：%+v", out.Usage)
+	if out.Usage.TotalTokens != 0 {
+		t.Fatalf("没有来源用量时响应里的 usage 应为 0：%+v", out.Usage)
+	}
+	var q struct {
+		Used    int64 `json:"used_tokens"`
+		EmbUsed int64 `json:"embedding_used_tokens"`
+	}
+	env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q)
+	if q.Used != 0 || q.EmbUsed != 0 {
+		t.Fatalf("没有来源用量不应扣额度：%+v", q)
+	}
+	rows, err := usage.RouteUsage(t.Context(), env.proxy.day(), env.proxy.day())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("应有一条路由的用量，得到 %+v, %v", rows, err)
+	}
+	row := rows[0].UsageCounts
+	if row.Tokens != 0 || row.EstimatedTokens != 13 || row.Successes != 1 {
+		t.Fatalf("估算量应只进统计列：%+v", row)
+	}
+}
+
+// TestEmbeddingsDoNotBillFailures 核对连接失败、来源拒绝与响应读不出来都不按
+// 输入字节扣额度：三条路径的批次都记 0，估算的 24 字节只进统计的估算列。
+func TestEmbeddingsDoNotBillFailures(t *testing.T) {
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closedURL := closed.URL
+	closed.Close()
+
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"connection", closedURL},
+		{"rejected", ""},
+		{"truncated", ""},
+	}
+	rejected := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		fmt.Fprint(w, `{"error":{"message":"bad gateway"}}`)
+	}))
+	defer rejected.Close()
+	truncated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "4096")
+		fmt.Fprint(w, `{"object":"list","data":[`)
+	}))
+	defer truncated.Close()
+	cases[1].url, cases[2].url = rejected.URL, truncated.URL
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
+				putProvider(t, c, box, "p", tc.url, "sk")
+				putModel(t, c, ModelRecord{Name: "emb", Kind: KindEmbedding, Routes: []Route{{ProviderID: "p", UpstreamModel: "m"}}})
+			})
+			usage := NewMemoryUsage()
+			env.proxy.SetUsageStore(usage)
+			token := signIn(t, env.authSvc, tc.name+"@b.cn")
+
+			var p testutil.Problem
+			if code := env.c.JSON(http.MethodPost, "/v1/llm/embeddings", token,
+				map[string]any{"model": "emb", "input": inputs(4)}, &p); code != http.StatusBadGateway {
+				t.Fatalf("三批都失败时应回 502：%d %+v", code, p)
+			}
+			var q struct {
+				Used    int64 `json:"used_tokens"`
+				EmbUsed int64 `json:"embedding_used_tokens"`
+			}
+			env.c.JSON(http.MethodGet, "/v1/llm/quota", token, nil, &q)
+			if q.Used != 0 || q.EmbUsed != 0 {
+				t.Fatalf("失败不应扣额度：%+v", q)
+			}
+			rows, err := usage.RouteUsage(t.Context(), env.proxy.day(), env.proxy.day())
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("应有一条路由的用量，得到 %+v, %v", rows, err)
+			}
+			row := rows[0].UsageCounts
+			if row.Tokens != 0 || row.EstimatedTokens != 24 || row.Attempts != 1 {
+				t.Fatalf("估算量应只进统计列：%+v", row)
+			}
+		})
 	}
 }
 

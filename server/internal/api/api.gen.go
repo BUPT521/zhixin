@@ -875,7 +875,7 @@ type AdminUsageCounts struct {
 	// CanceledAttempts 客户端取消或断开时未完成的尝试
 	CanceledAttempts int64 `json:"canceled_attempts"`
 
-	// EstimatedTokens tokens 中按估算结算的部分
+	// EstimatedTokens 按估算计入的原始 token；没有上游用量的尝试也记在这里，不参与扣减
 	EstimatedTokens int64 `json:"estimated_tokens"`
 
 	// FailoverAttempts 同一请求内首次尝试失败后实际执行的路由尝试
@@ -911,7 +911,9 @@ type AdminUsageCounts struct {
 	// InputTokens 上游报告的输入量之和；没有报告时为 0
 	InputTokens int64 `json:"input_tokens"`
 	Successes   int64 `json:"successes"`
-	Tokens      int64 `json:"tokens"`
+
+	// Tokens 原始 token 合计；按 0 结算的尝试不计入，嵌入没有用量时的估算量只记在 estimated_tokens
+	Tokens int64 `json:"tokens"`
 
 	// TruncatedAttempts 达到输出上限的尝试
 	TruncatedAttempts int64 `json:"truncated_attempts"`

@@ -15,13 +15,14 @@ type attemptResult struct {
 	// unknown 表示这次没有拿到 usage（请求失败、来源不报用量），结算改用估算。
 	usage   Usage
 	unknown bool
-	// estimated 是按估算记账的原始 token 数，只进后台用量统计，不参与扣减：
-	// 扣减看 usage 与估算。
+	// estimated 是没有拿到上游用量的部分按输入估算的原始 token 数，只进后台
+	// 用量统计的估算列，不参与扣减：扣减只认 usage，拿不到就记 0。
 	estimated int64
 	// unbilled 表示这次尝试不向账号结算：请求没有发出、连接都没有建立，来源
 	// 明确拒绝（非 2xx），或者来源虽然回了 2xx 却没有可核对的上游用量（页面、
 	// 错误体、正文根本没有读）。来源回了带 usage 或能解析成响应对象的整段响应时
-	// 按用量的口径结算，不记 0（ADR-0070）。
+	// 按用量的口径结算，不记 0（ADR-0070）；嵌入只要没有一批带回 usage 就按这条
+	// 记 0，估算的输入只进统计（ADR-0084）。
 	unbilled bool
 	// outputEstimate 是已经转给客户端的输出 token 估算；没有 usage 时按它加
 	// 输入估算结算，不沿用预留量。
@@ -101,7 +102,9 @@ func routeAttemptUsage(kind Kind, estimate Usage, result attemptResult, first, c
 	counts := UsageCounts{Attempts: 1, InputTokens: result.usage.Input, CachedTokens: result.usage.Cached}
 	switch {
 	case result.unbilled:
-		// 上游拒绝请求时保留尝试次数，Token 记 0。
+		// 上游拒绝请求或没有带回用量时按 0 结算，保留尝试次数；估算的输入只记
+		// 进估算列，后台看得见这类尝试原本的量。
+		counts.EstimatedTokens = result.estimated
 	case result.usage.Total() > 0:
 		counts.Tokens, counts.EstimatedTokens = result.usage.Total(), result.estimated
 	default:

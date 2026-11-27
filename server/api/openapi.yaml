@@ -1821,8 +1821,8 @@ components:
         successes: { type: integer, format: int64 }
         truncated_attempts: { type: integer, format: int64, description: 达到输出上限的尝试 }
         canceled_attempts: { type: integer, format: int64, description: 客户端取消或断开时未完成的尝试 }
-        tokens: { type: integer, format: int64 }
-        estimated_tokens: { type: integer, format: int64, description: tokens 中按估算结算的部分 }
+        tokens: { type: integer, format: int64, description: 原始 token 合计；按 0 结算的尝试不计入，嵌入没有用量时的估算量只记在 estimated_tokens }
+        estimated_tokens: { type: integer, format: int64, description: 按估算计入的原始 token；没有上游用量的尝试也记在这里，不参与扣减 }
         input_tokens: { type: integer, format: int64, description: 上游报告的输入量之和；没有报告时为 0 }
         cached_tokens: { type: integer, format: int64, description: input_tokens 中命中上游缓存的部分，用于计算缓存命中占比 }
         first_input_tokens: { type: integer, format: int64, description: 首次尝试报告的输入量之和 }
