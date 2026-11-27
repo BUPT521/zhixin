@@ -70,20 +70,39 @@ func TestPublicOperationsMatchSpec(t *testing.T) {
 	}
 }
 
-// TestUploadAndCacheOperationsAreExplicit 守住另外两张表：上传限流只覆盖备份与
-// 附件上传，可缓存响应只覆盖公开清单，不能顺手把账号接口加进来。
-func TestUploadAndCacheOperationsAreExplicit(t *testing.T) {
-	for _, pattern := range []string{"POST /v1/backups", "PUT /v1/blobs/{sha256}"} {
-		if !IsUpload(pattern) {
-			t.Errorf("%s 应当按账号限流", pattern)
+func TestCloudWritePoliciesMatchContract(t *testing.T) {
+	_, all := specOperations(t)
+	for pattern := range all {
+		method, path, _ := strings.Cut(pattern, " ")
+		cloud := path == "/v1/backups" || strings.HasPrefix(path, "/v1/backups/") ||
+			strings.HasPrefix(path, "/v1/blobs/") || strings.HasPrefix(path, "/v1/sync/") ||
+			path == "/v1/cloud" || pattern == "DELETE /v1/me"
+		mutates := method == http.MethodPost || method == http.MethodPut ||
+			method == http.MethodPatch || method == http.MethodDelete
+		if _, ok := CloudWritePolicy(pattern); ok != (cloud && mutates) {
+			t.Errorf("%s: unexpected cloud write coverage %v", pattern, ok)
 		}
 	}
-	for _, pattern := range []string{"GET /v1/blobs/{sha256}", "DELETE /v1/backups", "GET /v1/app/releases"} {
-		if IsUpload(pattern) {
-			t.Errorf("%s 不是上传操作", pattern)
+	wantUpload := map[string]Spool{
+		"POST /v1/backups":       BackupSpool,
+		"PUT /v1/blobs/{sha256}": AttachmentSpool,
+		"POST /v1/sync/commits":  NoSpool,
+	}
+	for pattern, policy := range cloudWrites {
+		if !all[pattern] {
+			t.Errorf("%s: cloud write policy has no operation in OpenAPI", pattern)
+		}
+		spool, upload := wantUpload[pattern]
+		if IsUpload(pattern) != upload || policy.Spool != spool {
+			t.Errorf("%s: upload=%v spool=%v, want upload=%v spool=%v", pattern, policy.Upload, policy.Spool, upload, spool)
+		}
+		if policy.Exclusive && policy.Upload {
+			t.Errorf("%s: exclusive deletion also marked as upload", pattern)
 		}
 	}
+}
 
+func TestCacheOperationsAreExplicit(t *testing.T) {
 	if seconds, ok := CacheSeconds("GET /v1/app/releases"); !ok || seconds <= 0 {
 		t.Fatalf("发布清单应当可以缓存，得到 %d, %v", seconds, ok)
 	}

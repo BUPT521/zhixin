@@ -24,11 +24,41 @@ var publicOperations = []string{
 	"POST /v1/feedback",
 }
 
-// uploadOperations 是写入云端数据的操作，按账号限制请求频率。
-var uploadOperations = []string{
-	"POST /v1/backups",
-	"PUT /v1/blobs/{sha256}",
-	"POST /v1/sync/commits",
+// Spool identifies uploads that reserve space for a temporary file.
+type Spool uint8
+
+const (
+	NoSpool Spool = iota
+	BackupSpool
+	AttachmentSpool
+)
+
+// CloudWrite defines the protections for a write to an account's cloud data.
+type CloudWrite struct {
+	Upload    bool
+	Spool     Spool
+	Exclusive bool
+}
+
+var cloudWrites = map[string]CloudWrite{
+	"POST /v1/backups":        {Upload: true, Spool: BackupSpool},
+	"PUT /v1/blobs/{sha256}":  {Upload: true, Spool: AttachmentSpool},
+	"POST /v1/sync/commits":   {Upload: true},
+	"PUT /v1/sync/snapshot":   {},
+	"PUT /v1/sync/refs":       {},
+	"PUT /v1/sync/devices":    {},
+	"DELETE /v1/backups/{id}": {},
+	"DELETE /v1/cloud":        {Exclusive: true},
+	"DELETE /v1/sync/commits": {Exclusive: true},
+	"DELETE /v1/backups":      {Exclusive: true},
+	"DELETE /v1/me":           {Exclusive: true},
+}
+
+// CloudWritePolicy reports whether a matched operation takes part in cloud
+// deletion exclusion and which upload limits apply to it.
+func CloudWritePolicy(pattern string) (CloudWrite, bool) {
+	policy, ok := cloudWrites[pattern]
+	return policy, ok
 }
 
 // keyOperations 是模型代理密钥可以访问的路由：只有模型调用与它们的元数据。
@@ -62,7 +92,7 @@ func IsPublic(pattern string) bool { return contains(publicOperations, pattern) 
 func RequiresAuth(pattern string) bool { return pattern != "" && !IsPublic(pattern) }
 
 // IsUpload 报告这条已匹配的路由是否属于按账号限流的上传。
-func IsUpload(pattern string) bool { return contains(uploadOperations, pattern) }
+func IsUpload(pattern string) bool { return cloudWrites[pattern].Upload }
 
 // AllowsKey 报告这条已匹配的路由是否接受模型代理密钥。
 func AllowsKey(pattern string) bool { return contains(keyOperations, pattern) }

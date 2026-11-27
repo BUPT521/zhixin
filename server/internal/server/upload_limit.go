@@ -19,12 +19,13 @@ func temporaryUploadBudget(backupBytes, attachmentBytes int64) api.MiddlewareFun
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var size int64
-			switch r.Pattern {
-			case "POST /v1/backups":
+			policy, _ := routepolicy.CloudWritePolicy(r.Pattern)
+			switch policy.Spool {
+			case routepolicy.BackupSpool:
 				size = backupBytes
-			case "PUT /v1/blobs/{sha256}":
+			case routepolicy.AttachmentSpool:
 				size = attachmentBytes
-			default:
+			case routepolicy.NoSpool:
 				next.ServeHTTP(w, r)
 				return
 			}
