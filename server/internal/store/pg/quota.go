@@ -318,16 +318,18 @@ func (s *Store) settleTx(ctx context.Context, p settleParams, deleteID string) e
 		}
 	}
 	instanceDelta := p.actual - p.reserved
-	if limit, limited, err := s.accountLimit(ctx, q, p.userID); err != nil {
+	limit, limited, err := s.accountLimit(ctx, q, p.userID)
+	if err != nil {
 		return err
-	} else if limited {
+	}
+	if limited {
 		// 结算前的账号用量含这次预留，减掉它才是这次请求开始时的用量。
-		if used, err := usedTokens(ctx, q, p.userID, p.day); err != nil {
+		used, err := usedTokens(ctx, q, p.userID, p.day)
+		if err != nil {
 			return err
-		} else {
-			free := max(0, limit-max(0, used-p.reserved))
-			instanceDelta = min(p.actual, free) - min(p.reserved, free)
 		}
+		free := max(0, limit-max(0, used-p.reserved))
+		instanceDelta = min(p.actual, free) - min(p.reserved, free)
 	}
 	rawEmbedding := int64(0)
 	if p.kind == llmproxy.KindEmbedding && p.actual > 0 {
@@ -343,6 +345,22 @@ func (s *Store) settleTx(ctx context.Context, p settleParams, deleteID string) e
 	}
 	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: p.day, Delta: instanceDelta}); err != nil {
 		return fmt.Errorf("pg: 结算实例额度失败: %w", err)
+	}
+	// 核销申请另起一步，用量与待办在同一个事务里落库：进程在那一步之前退出、或者
+	// 那一步读失败时，这一行让补查按当天的累计用量重新申请，跨日也不会漏（ADR-0087）。
+	// 只算已经结算的用量，在途预留还没有产生费用（ADR-0071）。
+	if limited && s.nowpay != nil && p.actual > 0 {
+		settled, err := settledTokens(ctx, q, p.userID, p.day, "")
+		if err != nil {
+			return err
+		}
+		if chargeable := chargeableTokens(settled, limit); chargeable > 0 {
+			if err := q.UpsertPendingCharge(ctx, db.UpsertPendingChargeParams{
+				UserID: p.userID, Day: p.day, ChargeableTokens: chargeable,
+			}); err != nil {
+				return fmt.Errorf("pg: 写入待申请的核销用量失败: %w", err)
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pg: 提交额度结算失败: %w", err)

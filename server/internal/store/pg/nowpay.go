@@ -28,15 +28,16 @@ var (
 // 新增表，缺表时只记日志并停用免费额度之外的放行（ADR-0069），这样已经在收款的
 // 实例可以先部署新版，再按运维手册建表并重启，不会因为建表顺序停服。
 func (s *Store) CheckNowPaySchema(ctx context.Context) error {
-	var installed, balance, purchaseColumns, purchaseIndex bool
+	var installed, balance, purchaseColumns, purchaseIndex, chargePending bool
 	err := s.pool.QueryRow(ctx, `SELECT
 		to_regclass('nowpay_charge') IS NOT NULL AND to_regclass('nowpay_purchase') IS NOT NULL,
 		to_regclass('nowpay_balance') IS NOT NULL,
 		(SELECT count(*) FROM information_schema.columns
 		  WHERE table_name = 'nowpay_purchase'
 		    AND column_name IN ('client_request_no', 'state', 'updated_at')) = 3,
-		to_regclass('nowpay_purchase_client_request_idx') IS NOT NULL`).
-		Scan(&installed, &balance, &purchaseColumns, &purchaseIndex)
+		to_regclass('nowpay_purchase_client_request_idx') IS NOT NULL,
+		to_regclass('llm_charge_pending') IS NOT NULL`).
+		Scan(&installed, &balance, &purchaseColumns, &purchaseIndex, &chargePending)
 	if err != nil {
 		return err
 	}
@@ -46,6 +47,11 @@ func (s *Store) CheckNowPaySchema(ctx context.Context) error {
 	if !purchaseColumns || !purchaseIndex {
 		return errors.New("pg: nowpay_purchase 缺 client_request_no、state、updated_at 或幂等键索引，" +
 			"按运维手册 4.11 的增量语句补齐")
+	}
+	// 结算事务会写这张待办，缺表时每一次结算都会失败，所以启动时直接拒绝，由自动
+	// 部署回滚到上一份可执行文件（ADR-0087）。
+	if !chargePending {
+		return errors.New("pg: 缺少 llm_charge_pending 表，按运维手册 4.11 建表之后再启动")
 	}
 	s.balanceReady.Store(balance)
 	if !balance {

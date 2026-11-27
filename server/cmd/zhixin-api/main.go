@@ -46,6 +46,8 @@ func run(log *slog.Logger) error {
 	var nowpayClient *nowpay.Client
 	// nowpayMaintenance 是补查与保留期用的存储，配置了即刻收商品时才有值。
 	var nowpayMaintenance nowpay.MaintenanceStore
+	// chargePending 是结算之后还没有申请核销的用量，配置了即刻收商品时才有值。
+	var chargePending nowpay.PendingChargeStore
 	if cfg.DatabaseURL == "" {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
@@ -93,6 +95,7 @@ func run(log *slog.Logger) error {
 			pgStore.SetNowPay(meter)
 			nowpayClient = client
 			nowpayMaintenance = pgStore
+			chargePending = pgStore
 			// 启动时查一次商品收费能力：配置错、商品未审核或应用凭证不匹配会在日志里
 			// 先出现，购买接口的第一次请求不必承担这次排查；失败只记日志，不阻塞启动。
 			probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -159,6 +162,7 @@ func run(log *slog.Logger) error {
 	if meter != nil {
 		meter.Start(ctx)
 		go nowpay.SweepLoop(ctx, meter, log)
+		go nowpay.ChargeSweepLoop(ctx, chargePending, log)
 		go nowpay.MaintenanceLoop(ctx, nowpayMaintenance, cfg.Location, log)
 	}
 	// 结算失败留下的预留每十分钟补退一次、每天清一次两天之前的在途预留；它不依赖

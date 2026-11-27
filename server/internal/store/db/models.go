@@ -87,6 +87,13 @@ type InstallActive struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type LlmChargePending struct {
+	UserID           string
+	Day              pgtype.Date
+	ChargeableTokens int64
+	CreatedAt        pgtype.Timestamptz
+}
+
 type LlmInstanceUsage struct {
 	Day    pgtype.Date
 	Tokens int64

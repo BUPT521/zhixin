@@ -37,6 +37,10 @@ type fakeRecorder struct {
 	perPoint  int64
 	refreshed []string
 	charged   []int64
+	// chargedDays 与 charged 一一对应，记下每次申请记在哪一天。
+	chargedDays []string
+	// drop 为真时 Record 什么也不做，模拟进程在结算之后、申请核销之前退出。
+	drop bool
 	// queried 记下管理后台“刷新余额”同步查询过的账号；queryErr 模拟即刻收不可用。
 	queried  []string
 	queryErr error
@@ -45,8 +49,12 @@ type fakeRecorder struct {
 	coalesced bool
 }
 
-func (f *fakeRecorder) Record(_ context.Context, _, _ string, chargeable int64) {
+func (f *fakeRecorder) Record(_ context.Context, _, day string, chargeable int64) {
+	if f.drop {
+		return
+	}
 	f.charged = append(f.charged, chargeable)
+	f.chargedDays = append(f.chargedDays, day)
 }
 
 func (f *fakeRecorder) Resume(context.Context, string) {}

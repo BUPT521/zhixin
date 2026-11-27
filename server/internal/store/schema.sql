@@ -255,6 +255,20 @@ CREATE TABLE llm_settlement_failure (
 CREATE INDEX llm_settlement_failure_user_idx ON llm_settlement_failure (user_id, created_at);
 CREATE INDEX llm_settlement_failure_created_idx ON llm_settlement_failure (created_at);
 
+-- 结算之后还没有申请核销的用量（ADR-0087）。结算把用量提交进 llm_usage，申请核销
+-- 另起一步，进程在两步之间退出、或者申请那一步读失败时，这一段用量只有当天之后的
+-- 结算按累计差额补；跨日之后没有结算再写这一天，用量就收不到了。结算事务里同时写
+-- 下这一天该收的计费 token，每十分钟一次的补查按它重新申请，收齐之后删除。
+CREATE TABLE llm_charge_pending (
+  user_id           TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day               DATE NOT NULL,              -- ZHIXIN_TIMEZONE 下的自然日
+  chargeable_tokens BIGINT NOT NULL CHECK (chargeable_tokens > 0),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, day)
+);
+-- 补查按创建时间取最早的一批；行在收齐之后立即删除，正常时这张表接近空的。
+CREATE INDEX llm_charge_pending_created_idx ON llm_charge_pending (created_at);
+
 -- 每条模型路由的每日汇总，与账号额度各自记录。
 --
 -- input_tokens 与 cached_tokens 是合计；first_* 与 failover_* 是同一组数字按
