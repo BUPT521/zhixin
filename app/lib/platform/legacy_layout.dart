@@ -44,9 +44,9 @@ typedef LegacyLayoutFailure = void Function(
 /// 删除 0.2.0 留在应用私有目录根下的学习数据，返回删掉的条目名。
 ///
 /// 只处理 0.2.0 的固定条目与三个前缀，不碰当前布局的 `spaces/`、
-/// `active_space`、`cloud.json`、诊断与崩溃记录、匿名上报状态；重复调用不会
-/// 重复删除，也不会因为某一项被占用而放弃其余条目。清理成功之后写
-/// [legacyLayoutMarkerName]，之后的启动直接返回，不再每次扫一遍根目录。
+/// `active_space`、`device.json`、`sync.json`、诊断与崩溃记录、匿名上报状态；
+/// 重复调用不会重复删除，也不会因为某一项被占用而放弃其余条目。清理成功之后
+/// 写 [legacyLayoutMarkerName]，之后的启动直接返回，不再每次扫一遍根目录。
 /// 启动时在打开任何数据库之前调用。
 Future<Set<String>> deleteLegacyLayoutData(
   String filesDir, {
