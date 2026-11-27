@@ -24,7 +24,7 @@ type Limiter struct {
 	burst int
 	// idle 是键多久不用就回收；为零时不回收。
 	idle time.Duration
-	// maxKeys 是保留的键数上限；为零时不设上限。
+	// maxKeys 是保留的键数上限；New 总会给出一个正值，表不会无限增长。
 	maxKeys int
 	// lastReap 是上一次全表回收的时间。清理最多每 idle/4 一次，避免每次 Take
 	// 都扫一遍表：按来源地址限流时表可以很大，逐个请求扫表会变成 CPU 热点。
@@ -41,12 +41,22 @@ type entry struct {
 	elem   *list.Element
 }
 
+// defaultMaxKeys 是调用方没有给出键数上限时保留的桶数。取与配置层
+// ZHIXIN_RATE_LIMIT_KEYS 默认值相同的 100000：漏传上限不再静默退化成无上限的
+// map，按来源地址分桶的表仍然有边界（S32）。
+const defaultMaxKeys = 100000
+
 // New 建一个限流器：每秒补充 limit 个令牌，最多积到 burst 个。idle 是键多久不用
-// 就回收，为零时不回收。maxKeys 可选，给出时是保留的键数上限：到达上限先按
-// idle/4 的节奏清理空闲键，仍然满就淘汰最久未用的键，表不会随请求无限增长。
+// 就回收，为零时不回收。maxKeys 可选，给出正值时是保留的键数上限：到达上限先按
+// idle/4 的节奏清理空闲键，仍然满就淘汰最久未用的键。漏传或传非正值时使用
+// defaultMaxKeys，表不会随请求无限增长。
 func New(limit rate.Limit, burst int, idle time.Duration, maxKeys ...int) *Limiter {
 	if burst < 1 {
 		burst = 1
+	}
+	keys := defaultMaxKeys
+	if len(maxKeys) > 0 && maxKeys[0] > 0 {
+		keys = maxKeys[0]
 	}
 	l := &Limiter{
 		buckets: map[string]*entry{},
@@ -54,10 +64,8 @@ func New(limit rate.Limit, burst int, idle time.Duration, maxKeys ...int) *Limit
 		limit:   limit,
 		burst:   burst,
 		idle:    idle,
+		maxKeys: keys,
 		nowFn:   time.Now,
-	}
-	if len(maxKeys) > 0 && maxKeys[0] > 0 {
-		l.maxKeys = maxKeys[0]
 	}
 	l.lastReap = l.nowFn()
 	return l
