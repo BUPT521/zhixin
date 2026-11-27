@@ -1351,16 +1351,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             subtitle: const Text('用版本库备份替换当前数据；恢复前自动保存恢复点。'),
             onPress: _busy ? null : _restoreRepository,
           ),
-          if (_restoreStatus case final status?)
-            Padding(
-              padding: EdgeInsets.only(top: theme.space.sm),
-              child: Text(
-                status,
-                style: theme.text.bodySmall.copyWith(
-                  color: theme.colors.onSurfaceVariant,
-                ),
-              ),
-            ),
+          if (_restoreStatus case final status?) ResultNotice(message: status),
           // 只有被其他设备覆盖过、还没处理时才占位置；平时这一节不出现。
           if (_conflicts.isNotEmpty) ...[
             const SectionHeading(
@@ -1373,7 +1364,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             title: '留存',
             subtitle:
                 '共 ${usage.commitCount} 条保留提交 · '
-                '${_sizeLabel(usage.databaseBytes)} · HEAD ${history.head}',
+                '${formatBytes(usage.databaseBytes)} · HEAD ${history.head}',
             action: SectionLink(
               label: '清理本机历史',
               icon: FLucideIcons.eraser,
@@ -1381,7 +1372,7 @@ class _DataVersionPageState extends State<DataVersionPage>
             ),
           ),
           Text(
-            '附件 ${_sizeLabel(usage.assetBytes)}（${usage.assetCount} 个） · '
+            '附件 ${formatBytes(usage.assetBytes)}（${usage.assetCount} 个） · '
             '检查点 ${usage.checkpointCount} 个 · '
             '命名 ${usage.namedCount} 个',
             style: theme.text.bodySmall,
@@ -1715,7 +1706,7 @@ class _DataVersionPageState extends State<DataVersionPage>
       ),
       subtitle: Text(
         '${point.commitCount} 条提交 · ${point.namedCount} 个命名 · '
-        '${_sizeLabel(point.size)}'
+        '${formatBytes(point.size)}'
         '${point.reason.isEmpty ? '' : ' · ${point.reason}'}',
       ),
       suffix: moreMenu(
@@ -1745,15 +1736,8 @@ class _DataVersionPageState extends State<DataVersionPage>
     if (!commit.isRemote) return time;
     final alias = _sync.deviceAlias(commit.originDevice ?? '');
     if (alias != null) return '来自另一台设备 $alias · $time';
-    final device = _maskedDevice(commit.originDevice);
-    return device == null ? '来自另一台设备 · $time' : '来自另一台设备 $device · $time';
-  }
-
-  /// 设备标识脱敏：只保留前 8 位，短的标识原样显示；有别名时由别名代替。
-  static String? _maskedDevice(String? device) {
-    final value = device?.trim() ?? '';
-    if (value.isEmpty) return null;
-    return value.length <= 8 ? value : value.substring(0, 8);
+    final device = maskedDeviceId(commit.originDevice);
+    return device.isEmpty ? '来自另一台设备 · $time' : '来自另一台设备 $device · $time';
   }
 
   String _actorLabel(String actor) => switch (actor) {
@@ -1957,11 +1941,5 @@ class _DataVersionPageState extends State<DataVersionPage>
       _ => null,
     };
     return labels?[value];
-  }
-
-  String _sizeLabel(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil()} KB';
-    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 }

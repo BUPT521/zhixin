@@ -125,7 +125,7 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
       final backup = await AppScope.of(context).accountServices.backups
           .upload();
       _report(
-        '已上传备份：${_sizeLabel(backup.size)}'
+        '已上传备份：${formatBytes(backup.size)}'
         '${backup.createdAt == null ? '' : '，${shortTime(backup.createdAt!)}'}',
       );
       await _load();
@@ -295,7 +295,7 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
           first: true,
           subtitle: '云端备份按账号保存；登录之后可以上传整库快照，换机时下载恢复。',
         ),
-        InlineNotice(message: _notice ?? '还没有登录，云端备份与同步都不可用。'),
+        ResultNotice(message: _notice ?? '还没有登录，云端备份与同步都不可用。', failed: true),
         Align(
           alignment: Alignment.centerLeft,
           child: forui.FButton(
@@ -329,12 +329,11 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
                 ),
         ),
         if (_notice != null)
-          _failed
-              ? InlineNotice(message: _notice!, onRetry: _busy ? null : _load)
-              : Padding(
-                  padding: EdgeInsets.only(bottom: theme.space.sm),
-                  child: Text(_notice!, style: theme.text.bodySmall),
-                ),
+          ResultNotice(
+            message: _notice!,
+            failed: _failed,
+            onRetry: _busy ? null : _load,
+          ),
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
@@ -390,7 +389,7 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
                   overflow: TextOverflow.ellipsis,
                 ),
                 subtitle: Text(
-                  '${_sizeLabel(backup.size)}'
+                  '${formatBytes(backup.size)}'
                   '${backup.deviceName.isEmpty ? '' : ' · ${backup.deviceName}'}'
                   ' · schema ${backup.schemaVersion}',
                 ),
@@ -415,11 +414,5 @@ class _CloudBackupPageState extends State<CloudBackupPage> {
         ),
       ],
     );
-  }
-
-  String _sizeLabel(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).ceil()} KB';
-    return '${(bytes / 1024 / 1024).toStringAsFixed(1)} MB';
   }
 }
