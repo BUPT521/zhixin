@@ -192,3 +192,20 @@ func TestRetryWaitAboveTheConfiguredLimitGivesUp(t *testing.T) {
 		t.Fatalf("超过上限的等待应直接放弃，实际用了 %v", elapsed)
 	}
 }
+
+// TestNewMailerAppliesTransportDefaults 守住 S23：并发、尝试次数与等待上限的默认
+// 值只放配置层一处，NewMailer 不再自己补一份；直接构造 MailerConfig 时
+// NewSMTPMailer 的兜底只服务测试。
+func TestNewMailerAppliesTransportDefaults(t *testing.T) {
+	m, err := NewMailer(MailerConfig{Addr: "smtp.example.test:587", From: "noreply@example.test"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	smtp, ok := m.(*smtpMailer)
+	if !ok {
+		t.Fatalf("NewMailer 应返回 SMTP 发信器，得到 %T", m)
+	}
+	if smtp.cfg.MaxConcurrent != 4 || smtp.cfg.MaxAttempts != 3 || smtp.cfg.MaxRetryAfter != 30*time.Second {
+		t.Fatalf("默认值 = %d/%d/%v，想要 4/3/30s", smtp.cfg.MaxConcurrent, smtp.cfg.MaxAttempts, smtp.cfg.MaxRetryAfter)
+	}
+}

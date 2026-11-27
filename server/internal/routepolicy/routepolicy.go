@@ -8,6 +8,8 @@
 // mux 的兜底 404，不在这里做判断。
 package routepolicy
 
+import "slices"
+
 // publicOperations 显式列出 openapi.yaml 里声明 security: [] 的操作，写法与
 // 生成代码注册的模式一致。除这些之外，只要 r.Pattern 非空就要求 Bearer；新增
 // 公开接口必须同时改这里与契约，否则会被默认拒绝，或者被契约测试发现两边漂移。
@@ -35,18 +37,24 @@ const (
 
 // CloudWrite defines the protections for a write to an account's cloud data.
 type CloudWrite struct {
-	Upload    bool
-	Spool     Spool
-	Exclusive bool
+	// Upload 表示这条写入按账号限流并预留临时空间，只有备份、附件与提交推送
+	// 三条真正接收请求体的路由为真。
+	Upload bool
+	// RequireVerified 表示写入前要求账号至少有一种登录方式已经确认。它覆盖全部
+	// 云端写入，比 Upload 更宽：快照登记、命名版本与设备名册不占上传配额，但
+	// 同样是账号的云端数据，没有已验证联系方式时一并返回 403（ADR-0038）。
+	RequireVerified bool
+	Spool           Spool
+	Exclusive       bool
 }
 
 var cloudWrites = map[string]CloudWrite{
-	"POST /v1/backups":        {Upload: true, Spool: BackupSpool},
-	"PUT /v1/blobs/{sha256}":  {Upload: true, Spool: AttachmentSpool},
-	"POST /v1/sync/commits":   {Upload: true},
-	"PUT /v1/sync/snapshot":   {},
-	"PUT /v1/sync/refs":       {},
-	"PUT /v1/sync/devices":    {},
+	"POST /v1/backups":        {Upload: true, RequireVerified: true, Spool: BackupSpool},
+	"PUT /v1/blobs/{sha256}":  {Upload: true, RequireVerified: true, Spool: AttachmentSpool},
+	"POST /v1/sync/commits":   {Upload: true, RequireVerified: true},
+	"PUT /v1/sync/snapshot":   {RequireVerified: true},
+	"PUT /v1/sync/refs":       {RequireVerified: true},
+	"PUT /v1/sync/devices":    {RequireVerified: true},
 	"DELETE /v1/backups/{id}": {},
 	"DELETE /v1/cloud":        {Exclusive: true},
 	"DELETE /v1/sync/commits": {Exclusive: true},
@@ -98,7 +106,7 @@ func PublicOperations() []string {
 }
 
 // IsPublic 报告这条已匹配的路由是否公开。
-func IsPublic(pattern string) bool { return contains(publicOperations, pattern) }
+func IsPublic(pattern string) bool { return slices.Contains(publicOperations, pattern) }
 
 // RequiresAuth 报告已匹配的路由是否要求 Bearer。没有匹配到路由时 r.Pattern 为空，
 // 这时不该在这里拒绝，否则 mux 的 404 会变成 401，客户端也拿不到 problem 体。
@@ -108,7 +116,7 @@ func RequiresAuth(pattern string) bool { return pattern != "" && !IsPublic(patte
 func IsUpload(pattern string) bool { return cloudWrites[pattern].Upload }
 
 // AllowsKey 报告这条已匹配的路由是否接受模型代理密钥。
-func AllowsKey(pattern string) bool { return contains(keyOperations, pattern) }
+func AllowsKey(pattern string) bool { return slices.Contains(keyOperations, pattern) }
 
 // KeyOperations 返回密钥可以访问的操作副本，供契约测试核对。
 func KeyOperations() []string {
@@ -120,13 +128,4 @@ func KeyOperations() []string {
 func CacheSeconds(pattern string) (int, bool) {
 	seconds, ok := cacheableOperations[pattern]
 	return seconds, ok
-}
-
-func contains(list []string, pattern string) bool {
-	for _, item := range list {
-		if item == pattern {
-			return true
-		}
-	}
-	return false
 }

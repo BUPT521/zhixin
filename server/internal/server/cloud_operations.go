@@ -30,7 +30,9 @@ func cloudOperations(requireVerified bool) api.MiddlewareFunc {
 				return
 			}
 			principal := auth.MustPrincipal(r.Context())
-			if policy.Upload && requireVerified && !principal.ContactVerified {
+			// 门槛覆盖全部云端写入，不只是按账号限流的上传：快照登记、命名版本
+			// 与设备名册同样是账号的云端数据（ADR-0038、S11）。
+			if policy.RequireVerified && requireVerified && !principal.ContactVerified {
 				httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeContactUnverified, "verify one of your sign-in identities before writing cloud data")
 				return
 			}

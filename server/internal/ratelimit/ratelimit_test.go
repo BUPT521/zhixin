@@ -174,6 +174,18 @@ func TestReapRunsAtMostEveryQuarterIdle(t *testing.T) {
 	}
 }
 
+// TestNewDefaultsToMaxKeys 守住 S32：漏传 maxKeys 时使用默认上限，而不是静默
+// 退化成无上限的 map。
+func TestNewDefaultsToMaxKeys(t *testing.T) {
+	l := New(rate.Limit(0), 1, 0)
+	for i := 0; i < defaultMaxKeys+10; i++ {
+		l.Take(fmt.Sprintf("key-%d", i))
+	}
+	if l.Len() != defaultMaxKeys {
+		t.Fatalf("键数应停在默认上限 %d，得到 %d", defaultMaxKeys, l.Len())
+	}
+}
+
 // TestMaxKeysEvictsLeastRecentlyUsed 守住键数上限：到上限且没有可回收的空闲键时，
 // 淘汰最久没用到的键，新请求仍然能建桶。
 func TestMaxKeysEvictsLeastRecentlyUsed(t *testing.T) {

@@ -233,43 +233,22 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 	//
 	// 每个进程内限流器都带桶数量上限（cfg.RateLimitKeys）：按来源地址分桶的表
 	// 本来会随不同地址无限增长，到上限之后先清理空闲桶、再淘汰最久未用的键。
-	var byAddr, refreshLimits, uploadLimits, codeLimits, feedbackLimits, telemetryLimits *ratelimit.Limiter
-	var loginFails *ratelimit.Limiter
-	if cfg.AuthRatePerSecond > 0 {
-		byAddr = ratelimit.New(rate.Limit(cfg.AuthRatePerSecond), cfg.AuthBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.LoginFailRatePerSecond > 0 {
-		loginFails = ratelimit.New(rate.Limit(cfg.LoginFailRatePerSecond), cfg.LoginFailBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.RefreshRatePerSecond > 0 {
-		refreshLimits = ratelimit.New(rate.Limit(cfg.RefreshRatePerSecond), cfg.RefreshBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.UploadRatePerSecond > 0 {
-		uploadLimits = ratelimit.New(rate.Limit(cfg.UploadRatePerSecond), cfg.UploadBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.CodeRatePerSecond > 0 {
-		codeLimits = ratelimit.New(rate.Limit(cfg.CodeRatePerSecond), cfg.CodeBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.FeedbackRatePerSecond > 0 {
-		feedbackLimits = ratelimit.New(rate.Limit(cfg.FeedbackRatePerSecond), cfg.FeedbackBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.TelemetryRatePerSecond > 0 {
-		telemetryLimits = ratelimit.New(rate.Limit(cfg.TelemetryRatePerSecond), cfg.TelemetryBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	// 反馈与匿名上报除按地址限流外还有全局写入上限，换地址也刷不满表。
-	var feedbackGlobal, telemetryGlobal *ratelimit.Limiter
+	// 速率非正表示关闭，newLimiter 返回 nil，中间件与处理器按“一律放行”处理。
+	byAddr := newLimiter(cfg.AuthRatePerSecond, cfg.AuthBurst, cfg.RateLimitKeys)
+	loginFails := newLimiter(cfg.LoginFailRatePerSecond, cfg.LoginFailBurst, cfg.RateLimitKeys)
+	refreshLimits := newLimiter(cfg.RefreshRatePerSecond, cfg.RefreshBurst, cfg.RateLimitKeys)
+	uploadLimits := newLimiter(cfg.UploadRatePerSecond, cfg.UploadBurst, cfg.RateLimitKeys)
+	codeLimits := newLimiter(cfg.CodeRatePerSecond, cfg.CodeBurst, cfg.RateLimitKeys)
+	feedbackLimits := newLimiter(cfg.FeedbackRatePerSecond, cfg.FeedbackBurst, cfg.RateLimitKeys)
+	telemetryLimits := newLimiter(cfg.TelemetryRatePerSecond, cfg.TelemetryBurst, cfg.RateLimitKeys)
 	// 注册也是公开入口，除按来源地址的桶之外再有一层实例级上限：未确认邮箱的
 	// 账号同样会占着邮箱与账号行（ADR-0037）。
-	var registerGlobal *ratelimit.Limiter
-	if cfg.RegisterGlobalRatePerSecond > 0 {
-		registerGlobal = ratelimit.New(rate.Limit(cfg.RegisterGlobalRatePerSecond), cfg.RegisterGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.FeedbackGlobalRatePerSecond > 0 {
-		feedbackGlobal = ratelimit.New(rate.Limit(cfg.FeedbackGlobalRatePerSecond), cfg.FeedbackGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
-	if cfg.TelemetryGlobalRatePerSecond > 0 {
-		telemetryGlobal = ratelimit.New(rate.Limit(cfg.TelemetryGlobalRatePerSecond), cfg.TelemetryGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
+	registerGlobal := newLimiter(cfg.RegisterGlobalRatePerSecond, cfg.RegisterGlobalBurst, cfg.RateLimitKeys)
+	// 反馈与匿名上报除按地址限流外还有全局写入上限，换地址也刷不满表。
+	feedbackGlobal := newLimiter(cfg.FeedbackGlobalRatePerSecond, cfg.FeedbackGlobalBurst, cfg.RateLimitKeys)
+	telemetryGlobal := newLimiter(cfg.TelemetryGlobalRatePerSecond, cfg.TelemetryGlobalBurst, cfg.RateLimitKeys)
+	// 管理接口的令牌校验也有失败预算，与其余限流器同一段构造。
+	adminLimits := newLimiter(cfg.AdminRatePerSecond, cfg.AdminBurst, cfg.RateLimitKeys)
 	// 发信按登录方式分发：现在只有邮箱走 SMTP，手机号与微信没有对应发送方时
 	// 请求返回 501（ADR-0038）。
 	authSvc.ConfigureCodes(auth.NewSenders(startup.mailer), startup.codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
@@ -304,7 +283,9 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		SetDeviceActive(cfg.SyncDeviceActive).
 		SetLogger(log).
 		SetSnapshotBytes(cfg.MaxAttachmentBytes)
-	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
+	// 提交推送的请求体上限就是整批推送上限，不再用 16*MaxJSONBytes 另写一个表达式：
+	// 后者默认恰好等于 16 MiB，调整 MaxJSONBytes 之后两层会给出不同结论（S27）。
+	syncHandler := syncsvc.NewHandler(syncSvc, log, syncsvc.MaxPushBytes)
 
 	// 备份的元数据与字节分两步写，中断会留下没有元数据的对象：按周期对账一次，
 	// 删掉库里查不到、且写于一小时之前的遗留字节（ADR-0037）。attachments/ 与
@@ -323,11 +304,6 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 	// 云端清除编排备份、提交序列、附件与遗留对象；清除与写请求的互斥、清除
 	// 期间写请求的 409 由进程内的 cloudOperations 中间件保证（审查 9.3 的 V10）。
 	purgeSvc := cloudpurge.New(st.Backups, st.Sync, st.Blobs, st.Cache, st.Objects)
-
-	var adminLimits *ratelimit.Limiter
-	if cfg.AdminRatePerSecond > 0 {
-		adminLimits = ratelimit.New(rate.Limit(cfg.AdminRatePerSecond), cfg.AdminBurst, 15*time.Minute, cfg.RateLimitKeys)
-	}
 
 	adminGuard := admin.Middleware(admin.Options{Token: cfg.AdminToken, Limiter: adminLimits, ClientHost: clientHost})
 
@@ -435,6 +411,19 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		httpx.Recover(log),
 		httpx.BodyReadTimeout(cfg.BodyIdleTimeout, cfg.BodyTotalTimeout),
 	), nil
+}
+
+// limiterIdleTimeout 是按键限流器回收空闲键的时间窗口：15 分钟没用到的桶在下一次
+// 全表回收时删掉，所有按账号或来源地址分桶的限流器共用同一个窗口。
+const limiterIdleTimeout = 15 * time.Minute
+
+// newLimiter 按配置构造一个按键限流器，速率非正表示关闭并返回 nil。调用方沿用
+// 既有约定：nil 由中间件与处理器按“一律放行”处理。
+func newLimiter(ratePerSecond float64, burst, keys int) *ratelimit.Limiter {
+	if ratePerSecond <= 0 {
+		return nil
+	}
+	return ratelimit.New(rate.Limit(ratePerSecond), burst, limiterIdleTimeout, keys)
 }
 
 // cachePublic 给明确可缓存的公开响应覆盖默认的 no-store，目前只有发布清单。

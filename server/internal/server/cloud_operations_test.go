@@ -57,6 +57,29 @@ func TestCloudOperationsRequireVerificationAndKeepDeletionExclusive(t *testing.T
 	}
 }
 
+// TestUnverifiedAccountCannotWriteCloudData 守住 S11：未确认邮箱的账号写
+// PUT /v1/sync/snapshot 返回 403，不只是按上传配额的三条路由。同步快照、命名
+// 版本与设备名册同样是账号的云端数据，README 与 ADR-0038 承诺整体拦截。
+func TestUnverifiedAccountCannotWriteCloudData(t *testing.T) {
+	handler := cloudOperations(true)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	serve := newCloudOperationsServer(handler)
+	for _, route := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/sync/commits"},
+		{http.MethodPut, "/v1/sync/snapshot"},
+		{http.MethodPut, "/v1/sync/refs"},
+		{http.MethodPut, "/v1/sync/devices"},
+	} {
+		if status := serve(route.method, route.path, "user", false); status != http.StatusForbidden {
+			t.Fatalf("未验证账号 %s %s：%d，想要 403", route.method, route.path, status)
+		}
+		if status := serve(route.method, route.path, "user", true); status != http.StatusNoContent {
+			t.Fatalf("已验证账号 %s %s：%d，想要 204", route.method, route.path, status)
+		}
+	}
+}
+
 // TestCloudOperationsBlockWritesDuringDeletion 守住进程内互斥覆盖的三个写入口：
 // 清除进行中时快照登记、命名版本写入与改设备别名都返回 409，读请求照常；反过来
 // 这三个入口进行中时，整库清除同样返回 409（审查 9.3 的 V10 删掉数据库标记之后

@@ -89,15 +89,6 @@ func NewMailer(cfg MailerConfig, log *slog.Logger) (Mailer, error) {
 	if cfg.Username != "" && cfg.Password == "" {
 		return nil, errors.New("auth: 配置了 SMTP 用户名就必须配置口令")
 	}
-	if cfg.MaxConcurrent <= 0 {
-		cfg.MaxConcurrent = 4
-	}
-	if cfg.MaxAttempts <= 0 {
-		cfg.MaxAttempts = 3
-	}
-	if cfg.MaxRetryAfter <= 0 {
-		cfg.MaxRetryAfter = defaultMailMaxRetryAfter
-	}
 	return NewSMTPMailer(cfg), nil
 }
 
@@ -123,8 +114,12 @@ type smtpMailer struct {
 	pausedUntil time.Time
 }
 
-// NewSMTPMailer 按配置建一个 SMTP 发信器，并发与重试参数在这里取默认值，
-// 装配处与用例共用，不必各自补齐。
+// NewSMTPMailer 按配置建一个 SMTP 发信器。
+//
+// 并发数、尝试次数与等待上限的默认值只由配置层一处给出（
+// ZHIXIN_SMTP_MAX_CONCURRENT=4、ZHIXIN_SMTP_MAX_ATTEMPTS=3、
+// ZHIXIN_SMTP_MAX_RETRY_AFTER=30s），配置层的 num 与 dur 已拒绝非正值，生产路径
+// 不会命中的补零只服务直接构造 MailerConfig 的测试，改默认值请改 config.go。
 func NewSMTPMailer(cfg MailerConfig) *smtpMailer {
 	if cfg.MaxConcurrent <= 0 {
 		cfg.MaxConcurrent = 4

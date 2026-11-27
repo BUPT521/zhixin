@@ -78,6 +78,16 @@ func (g *cacheGuard) Write(b []byte) (int, error) {
 	return g.ResponseWriter.Write(b)
 }
 
+// SetPattern 把生成代码记录的注册模式转交给内层 ResponseWriter（访问日志的
+// statusRecorder）。SecurityHeaders 夹在 RecordPattern 与访问日志之间，不实现
+// 这个方法时 RecordPattern 的类型断言必然失败，访问日志只能靠外层请求上的
+// r.Pattern 兜底（S19）。
+func (g *cacheGuard) SetPattern(pattern string) {
+	if rec, ok := g.ResponseWriter.(interface{ SetPattern(string) }); ok {
+		rec.SetPattern(pattern)
+	}
+}
+
 // Flush 让流式响应继续可用，并把默认响应头在第一次刷新之前写好。
 func (g *cacheGuard) Flush() {
 	if !g.wrote {
