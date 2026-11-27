@@ -1,9 +1,15 @@
+import 'dart:io';
+
 import 'package:drift/drift.dart' show DatabaseConnectionUser;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
+import 'package:sqlite3/sqlite3.dart' as sqlite;
 import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
+
+import '../../support/test_db.dart';
 
 /// 记录 rawQuery 落在哪个执行器上；外层连接与事务执行器各一份。
 class _CountingExecutor implements RawExecutor {
@@ -98,5 +104,33 @@ void main() {
 
     expect(fake.outer.queries, ['SELECT 1 FROM app_meta']);
     expect(rows.single['source'], 'outer');
+  });
+
+  test('driftConnection 在事务内外都取当前主库连接', () async {
+    final rig = await openTestRig();
+    addTearDown(rig.close);
+
+    // 事务之外也是当前主库，按连接直接读的统计不需要事务也能读到。
+    expect(rig.db.driftConnection, isA<AppDatabase>());
+    expect(rig.db.driftConnection, same(rig.raw.driftConnection));
+
+    final inside = await rig.db.command(
+      (txn) async => rig.db.driftConnection,
+      label: '读连接',
+    );
+    expect(inside, isA<AppDatabase>());
+  });
+
+  test('只读副本没有 drift 连接，取连接时报用法错误', () async {
+    final directory = await Directory.systemTemp.createTemp('zhixin_readonly');
+    addTearDown(() => directory.delete(recursive: true));
+    final path = p.join(directory.path, 'copy.db');
+    final writable = sqlite.sqlite3.open(path)..close();
+    expect(writable, isNotNull);
+
+    final copy = openReadOnlyDatabase(path);
+    addTearDown(copy.close);
+    expect(copy.driftConnection, isNull);
+    expect(() => requireAppDatabase(copy), throwsStateError);
   });
 }

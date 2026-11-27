@@ -38,10 +38,12 @@ SqlStatementKind sqlStatementKind(String sql) {
 }
 
 abstract class RawExecutor {
-  /// 生成代码使用的 drift 连接；只读副本等实现返回空。
+  /// 生成代码使用的 drift 连接；事务内是本次事务的连接，只读副本等实现返回空。
   ///
-  /// 仓库层迁进 `.drift` 文件之后，生成的查询方法要在同一个连接上执行，因此
-  /// 从这里取连接，而不是另开一个 [RawExecutor]（ADR-0011 第 4 条）。
+  /// 这个入口只取当前连接，不经过 [selectGenerated] 与 [writeGenerated] 的访问
+  /// 协调：它给按连接直接执行生成查询、且能容忍换库期间读到当前库的读取用（例如
+  /// 记忆使用统计按设备现算）。需要与恢复、清空互斥的读写一律走这两个入口，
+  /// 不要自己取连接再执行。
   DatabaseConnectionUser? get driftConnection => null;
 
   /// 执行一条语句；插入返回新行编号，更新与删除返回受影响的行数，其余返回 0。
