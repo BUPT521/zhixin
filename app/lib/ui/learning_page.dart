@@ -351,7 +351,10 @@ class _LearningPageState extends State<LearningPage> {
       if (!mounted) return;
       setState(() {
         _generating = false;
-        _result = answerNoticeText(result.outcome);
+        _result = mergeAnswerNotice(
+          answerNoticeText(result.outcome),
+          result.skipped,
+        );
       });
       if (!mounted) return;
       if (!result.fromModel &&

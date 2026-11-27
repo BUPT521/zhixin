@@ -1,7 +1,20 @@
 import '../ai/llm_client.dart';
 import '../application/answer_outcome.dart';
 import '../application/attachment_service.dart';
+import '../application/buddy_actions.dart';
 import '../domain/rules/notices.dart';
+
+/// 把回答收尾说明与这次没有保存的记忆并成一条：回答的情况在前，跳过的记忆在后。
+///
+/// 超长的记忆卡片仍留在回答下面，用户点“记下”时确认入口再给一次同样的说明；
+/// 发送后先在提示里说清哪一条没有保存，避免同一句话只在点击后才出现。
+String? mergeAnswerNotice(String? notice, Iterable<MemorySkip> skipped) {
+  final parts = <String>[
+    if (notice != null && notice.trim().isNotEmpty) notice.trim(),
+    for (final skip in skipped) skip.message,
+  ];
+  return parts.isEmpty ? null : parts.join(' ');
+}
 
 /// 把回答收尾的提示状态写成界面说明。
 ///

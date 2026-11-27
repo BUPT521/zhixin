@@ -206,6 +206,27 @@ void main() {
     await tester.pump(const Duration(milliseconds: 150));
   });
 
+  testWidgets('超过写入长度的记忆写明未保存，卡片仍可记下或忽略', (tester) async {
+    await tester.pumpWidget(
+      wrap(
+        MemoryCard(
+          item: memory(content: '记' * 201),
+          onAccept: () {},
+          onDismiss: () {},
+          onUndo: () {},
+        ),
+      ),
+    );
+
+    expect(find.text('记忆内容超过 200 字，未保存。'), findsOneWidget);
+    expect(find.text('记忆建议'), findsOneWidget);
+    expect(find.text('待确认'), findsOneWidget);
+    expect(find.text('记下'), findsOneWidget);
+    expect(find.text('不记'), findsOneWidget);
+    expect(find.text('已记下'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('窄屏与放大文字下记忆卡不溢出', (tester) async {
     tester.view.physicalSize = const Size(320, 700);
     tester.view.devicePixelRatio = 1;

@@ -61,6 +61,15 @@ class MemoryCard extends StatelessWidget {
       statusTone: pending ? TagTone.attention : TagTone.neutral,
       children: [
         Text(draft.content, style: theme.text.bodyMedium),
+        if (pending && draft.tooLong) ...[
+          SizedBox(height: theme.space.xs),
+          // 超长不截半句，也不悄悄丢卡片：写明没有保存，用户可以删减后再点“记下”。
+          Text(
+            '记忆内容超过 $memoryContentLimit 字，未保存。',
+            key: const ValueKey('memory-card-too-long'),
+            style: theme.text.bodySmall.copyWith(color: theme.colors.error),
+          ),
+        ],
         SizedBox(height: theme.space.xs),
         Text(
           '${draft.kind.label} · $source · $valid',

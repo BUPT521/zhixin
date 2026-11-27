@@ -468,13 +468,17 @@ class DiscussionChatState extends State<DiscussionChat> {
   ///
   /// 记忆卡片、建议与回执不在收尾时另读一遍，订阅在写入之后会把这些一并
   /// 重读并回填（ADR-0014）；这里只处理发送流程自己的按钮与提示。
-  void _settleReply(List<ChatMessage> messages, String? notice) {
+  void _settleReply(
+    List<ChatMessage> messages,
+    String? notice, {
+    List<MemorySkip> skipped = const [],
+  }) {
     final followReply = _isNearBottom;
     _reply.settle();
     setState(() {
       _draftMessages = messages;
       _failure = null;
-      _result = notice;
+      _result = mergeAnswerNotice(notice, skipped);
       _retryableNotice = false;
     });
     if (followReply) _jumpToEnd();
@@ -581,10 +585,11 @@ class DiscussionChatState extends State<DiscussionChat> {
         _stream ??= _createStream();
       });
       // 两条消息先交给页面即时显示；记录、建议与卡片由订阅回填。
-      _settleReply([
-        result.userMessage,
-        result.assistantMessage,
-      ], _visibleAnswerNotice(result.outcome));
+      _settleReply(
+        [result.userMessage, result.assistantMessage],
+        _visibleAnswerNotice(result.outcome),
+        skipped: result.skipped,
+      );
       // 消息已经写进库，缓存里的取图副本可以删了；发送失败时保留，用户可以再发一次。
       await deleteTemporaryCaptures(picks);
     } catch (error, stack) {
@@ -866,11 +871,15 @@ class DiscussionChatState extends State<DiscussionChat> {
       );
       if (!mounted) return;
       // 新回答先按编号去重接在最后；订阅随后回填同一条消息时不会重复。
-      _settleReply([
-        for (final message in _draftMessages)
-          if (message.id != result.assistantMessage.id) message,
-        result.assistantMessage,
-      ], _visibleAnswerNotice(result.outcome));
+      _settleReply(
+        [
+          for (final message in _draftMessages)
+            if (message.id != result.assistantMessage.id) message,
+          result.assistantMessage,
+        ],
+        _visibleAnswerNotice(result.outcome),
+        skipped: result.skipped,
+      );
     } on LlmException catch (error) {
       final next = switch (error.failure) {
         LlmFailure.notConfigured => '登录知新服务之后再试',
