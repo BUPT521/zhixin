@@ -53,6 +53,8 @@ func signIn(t *testing.T, svc *auth.Service, email string) auth.Tokens {
 }
 
 // TestHandlerPurgeEmptyAccount 守住空账号也回 204、重复调用幂等、未登录 401。
+// 用例走生产的鉴权中间件：鉴权不再注入调用者时，带令牌的请求拿不到 204，这条
+// 用例直接失败，不再用跳过掩盖装配缺失。
 // 并发清除与清除期间的写请求由 server 包的 cloudOperations 回 409，不经过这里
 // （审查 9.3 的 V10）。
 func TestHandlerPurgeEmptyAccount(t *testing.T) {
