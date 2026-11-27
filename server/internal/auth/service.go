@@ -93,13 +93,13 @@ type Service struct {
 	// 按内存预算设置之后才生效。
 	passwords *PasswordBudget
 
-	// maxSessions 是每个账号保留的会话数上限，新登录超过时删最旧的。默认值
-	// 与配置 ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致，装配处可以覆盖。
+	// maxSessions 是每个账号保留的会话数上限，新登录超过时删最旧的。生产由装配
+	// 处用配置值调用 SetMaxSessions 覆盖；未装配时的兜底只服务测试。
 	maxSessions int
 
 	// unverifiedKeep 是没有任何已验证登录方式的账号的保留期：注册之后超过这段
-	// 时间仍未确认的账号由每日清理删除。默认值与配置
-	// ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值一致，装配处可以覆盖。
+	// 时间仍未确认的账号由每日清理删除。生产由装配处用配置值调用
+	// SetUnverifiedKeep 覆盖；未装配时的兜底只服务测试。
 	unverifiedKeep time.Duration
 
 	// registerEmailDomains 是注册允许的邮箱域名，按 @ 之后的部分精确匹配；
@@ -155,13 +155,13 @@ func (s *Service) mailPause() int64 {
 
 const maxCodeAttempts = 5
 
-// defaultMaxSessions 是每个账号保留的会话数上限的默认值，与配置
-// ZHIXIN_MAX_SESSIONS_PER_USER 的默认值一致。
-const defaultMaxSessions = 20
-
-// defaultUnverifiedKeep 是未验证账号的默认保留期，与配置
-// ZHIXIN_UNVERIFIED_KEEP_DAYS 的默认值一致。
-const defaultUnverifiedKeep = 7 * 24 * time.Hour
+// maxSessionsFallback 与 unverifiedKeepFallback 只服务没有调用 setter 的测试：
+// 生产的默认值只在配置层写一份（ZHIXIN_MAX_SESSIONS_PER_USER 与
+// ZHIXIN_UNVERIFIED_KEEP_DAYS），装配处一定会用配置值覆盖这两个兜底值。
+const (
+	maxSessionsFallback    = 20
+	unverifiedKeepFallback = 7 * 24 * time.Hour
+)
 
 // 手机号的形状：可选的加号加 6 至 20 位数字。识别出来之后注册与登录仍然拒绝，
 // 因为手机号的登录入口还没有接（ADR-0038）。
@@ -170,7 +170,7 @@ var phoneIdentifier = regexp.MustCompile(`^\+?[0-9]{6,20}$`)
 func NewService(store Store, accessTTL, refreshTTL time.Duration) *Service {
 	return &Service{
 		store: store, now: time.Now, accessTTL: accessTTL, refreshTTL: refreshTTL,
-		maxSessions: defaultMaxSessions, unverifiedKeep: defaultUnverifiedKeep,
+		maxSessions: maxSessionsFallback, unverifiedKeep: unverifiedKeepFallback,
 		keyTouch: map[string]time.Time{},
 	}
 }
@@ -229,9 +229,10 @@ func (s *Service) SetMaxSessions(n int) {
 	}
 }
 
-// SetUnverifiedKeep 设定未验证账号的保留天数；小于等于零的值忽略，沿用默认
-// 7 天。每日清理按注册时间早于 now-days、且没有任何一种已验证登录方式的账号
-// 删除，忽略零值也避免把保留期配成 0 之后“注册即删”。
+// SetUnverifiedKeep 设定未验证账号的保留天数；小于等于零的值忽略，沿用测试
+// 兜底值。生产的默认值由配置层给出，配置层已经拒绝非正值，所以这里的零值分支
+// 只服务没有调用它的测试。每日清理按注册时间早于 now-days、且没有任何一种已验证
+// 登录方式的账号删除，忽略零值也避免把保留期配成 0 之后“注册即删”。
 func (s *Service) SetUnverifiedKeep(days int) {
 	if days > 0 {
 		s.unverifiedKeep = time.Duration(days) * 24 * time.Hour

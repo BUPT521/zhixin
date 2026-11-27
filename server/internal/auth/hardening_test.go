@@ -190,7 +190,7 @@ func TestMemoryPruneUnverified(t *testing.T) {
 
 // TestPruneLoopDeletesUnverifiedUsers 核对每日清理按保留期删除未验证账号：启动
 // 清理时按 now-days 算截止时间，超过保留期未确认的账号被删，保留期内的与已确认
-// 的账号保留；保留天数默认 7 天，SetUnverifiedKeep 可以覆盖。
+// 的账号保留；保留天数由 SetUnverifiedKeep 覆盖，未装配时用测试兜底值。
 func TestPruneLoopDeletesUnverifiedUsers(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -231,7 +231,7 @@ func TestPruneLoopDeletesUnverifiedUsers(t *testing.T) {
 			t.Fatalf("%s 应保留: %v", id, err)
 		}
 	}
-	if got := NewService(NewMemoryStore(), time.Hour, 24*time.Hour).unverifiedKeep; got != 7*24*time.Hour {
-		t.Fatalf("默认保留期应为 7 天，得到 %v", got)
+	if got := NewService(NewMemoryStore(), time.Hour, 24*time.Hour).unverifiedKeep; got != unverifiedKeepFallback {
+		t.Fatalf("未装配时应使用测试兜底保留期 %v，得到 %v", unverifiedKeepFallback, got)
 	}
 }

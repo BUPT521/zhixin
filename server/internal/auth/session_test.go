@@ -40,8 +40,8 @@ func TestSessionLimitDropsOldest(t *testing.T) {
 	}
 }
 
-// TestDefaultSessionLimit 核对默认上限 20：注册一台再登录 20 台，共 21 次建
-// 会话之后只剩最新的 20 条，注册那一台被删掉。
+// TestDefaultSessionLimit 核对未调用 SetMaxSessions 时的测试兜底上限：注册一台
+// 再登录同样多次，最后只剩兜底值那么多条会话，注册那一台被删掉。
 func TestDefaultSessionLimit(t *testing.T) {
 	ctx := context.Background()
 	s, c := newTestService()
@@ -49,14 +49,14 @@ func TestDefaultSessionLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < maxSessionsFallback; i++ {
 		c.t = c.t.Add(time.Second)
 		if _, err := s.Login(ctx, "a@b.cn", "password1", fmt.Sprintf("phone-%d", i)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := sessionCount(s); got != 20 {
-		t.Fatalf("默认上限应保留 20 条会话，得到 %d", got)
+	if got := sessionCount(s); got != maxSessionsFallback {
+		t.Fatalf("兜底上限应保留 %d 条会话，得到 %d", maxSessionsFallback, got)
 	}
 	if _, err := s.Authenticate(ctx, first.AccessToken); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("最早的一台应当被踢掉，得到 %v", err)
