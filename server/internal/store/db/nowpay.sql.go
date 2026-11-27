@@ -375,7 +375,7 @@ func (q *Queries) PurchaseByClientRequestNo(ctx context.Context, arg PurchaseByC
 	return i, err
 }
 
-const readyPurchaseLink = `-- name: ReadyPurchaseLink :exec
+const readyPurchaseLink = `-- name: ReadyPurchaseLink :execrows
 UPDATE nowpay_purchase
 SET purchase_url = $1,
     expires_at = $2,
@@ -390,9 +390,12 @@ type ReadyPurchaseLinkParams struct {
 	OutRequestNo string
 }
 
-func (q *Queries) ReadyPurchaseLink(ctx context.Context, arg ReadyPurchaseLinkParams) error {
-	_, err := q.db.Exec(ctx, readyPurchaseLink, arg.PurchaseUrl, arg.ExpiresAt, arg.OutRequestNo)
-	return err
+func (q *Queries) ReadyPurchaseLink(ctx context.Context, arg ReadyPurchaseLinkParams) (int64, error) {
+	result, err := q.db.Exec(ctx, readyPurchaseLink, arg.PurchaseUrl, arg.ExpiresAt, arg.OutRequestNo)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const recentChargesByUser = `-- name: RecentChargesByUser :many
@@ -448,7 +451,7 @@ func (q *Queries) RecentChargesByUser(ctx context.Context, arg RecentChargesByUs
 	return items, nil
 }
 
-const replacePurchaseLink = `-- name: ReplacePurchaseLink :exec
+const replacePurchaseLink = `-- name: ReplacePurchaseLink :execrows
 UPDATE nowpay_purchase
 SET out_request_no = $1,
     sku_id = $2,
@@ -469,15 +472,18 @@ type ReplacePurchaseLinkParams struct {
 }
 
 // 同一个幂等键重新生成入口：换成新的 out_request_no，回到 creating 等 purchase.create。
-func (q *Queries) ReplacePurchaseLink(ctx context.Context, arg ReplacePurchaseLinkParams) error {
-	_, err := q.db.Exec(ctx, replacePurchaseLink,
+func (q *Queries) ReplacePurchaseLink(ctx context.Context, arg ReplacePurchaseLinkParams) (int64, error) {
+	result, err := q.db.Exec(ctx, replacePurchaseLink,
 		arg.OutRequestNo,
 		arg.SkuID,
 		arg.ExpiresAt,
 		arg.UserID,
 		arg.ClientRequestNo,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const saveBalance = `-- name: SaveBalance :exec

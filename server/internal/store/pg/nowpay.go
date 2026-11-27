@@ -413,10 +413,14 @@ func (s *Store) ReplacePurchaseLink(ctx context.Context, userID string, purchase
 	if err != nil {
 		return err
 	}
-	return s.q.ReplacePurchaseLink(ctx, db.ReplacePurchaseLinkParams{
+	updated, err := s.q.ReplacePurchaseLink(ctx, db.ReplacePurchaseLinkParams{
 		OutRequestNo: purchase.OutRequestNo, SkuID: purchase.SKU,
 		ExpiresAt: expires, UserID: text(userID), ClientRequestNo: purchase.ClientRequestNo,
 	})
+	if err == nil && updated == 0 {
+		return pgx.ErrNoRows
+	}
+	return err
 }
 
 // ReadyPurchaseLink 把 creating 行更新成 ready，写入托管购买页链接与真实有效期。
@@ -425,10 +429,14 @@ func (s *Store) ReadyPurchaseLink(ctx context.Context, outRequestNo, url string,
 	if err != nil {
 		return err
 	}
-	return s.q.ReadyPurchaseLink(ctx, db.ReadyPurchaseLinkParams{
+	updated, err := s.q.ReadyPurchaseLink(ctx, db.ReadyPurchaseLinkParams{
 		PurchaseUrl: pgtype.Text{String: url, Valid: url != ""},
 		ExpiresAt:   expires, OutRequestNo: outRequestNo,
 	})
+	if err == nil && updated == 0 {
+		return pgx.ErrNoRows
+	}
+	return err
 }
 
 // FailPurchaseLink 把 creating 行更新成 failed，保留原 out_request_no 供下一次点击重试。

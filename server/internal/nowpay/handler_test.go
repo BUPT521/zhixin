@@ -21,14 +21,15 @@ import (
 // fakePurchases 是购买入口存储的内存实现：按幂等键存行，LockPurchase 用一把单独的
 // 互斥锁模拟真实实现里的 advisory lock。
 type fakePurchases struct {
-	lockMu  sync.Mutex
-	mu      sync.Mutex
-	byKey   map[string]Purchase
-	latest  Purchase
-	has     bool
-	created []Purchase
-	// failCreate 让用例模拟写库失败。
-	failCreate error
+	lockMu      sync.Mutex
+	mu          sync.Mutex
+	byKey       map[string]Purchase
+	latest      Purchase
+	has         bool
+	created     []Purchase
+	failCreate  error
+	failReplace error
+	failReady   error
 }
 
 func (f *fakePurchases) LatestPurchaseLink(context.Context, string, time.Time) (Purchase, bool, error) {
@@ -62,6 +63,9 @@ func (f *fakePurchases) CreatePurchaseLink(_ context.Context, _ string, purchase
 }
 
 func (f *fakePurchases) ReplacePurchaseLink(_ context.Context, _ string, purchase Purchase) error {
+	if f.failReplace != nil {
+		return f.failReplace
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.byKey == nil {
@@ -73,6 +77,9 @@ func (f *fakePurchases) ReplacePurchaseLink(_ context.Context, _ string, purchas
 }
 
 func (f *fakePurchases) ReadyPurchaseLink(_ context.Context, outRequestNo, url string, expiresAt time.Time) error {
+	if f.failReady != nil {
+		return f.failReady
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for key, purchase := range f.byKey {
@@ -516,22 +523,57 @@ func TestPurchaseWithoutClientRequestNoCreatesNewLinks(t *testing.T) {
 	}
 }
 
-// TestPurchaseStillReturnsTheLinkWhenTheRowCannotBeStored 守住写库失败不挡购买：链接
-// 照常返回，只记日志（ADR-0074）。
-func TestPurchaseStillReturnsTheLinkWhenTheRowCannotBeStored(t *testing.T) {
+func TestPurchaseStopsWhenTheCreatingRowCannotBeStored(t *testing.T) {
+	writeErr := errors.New("pg: 写入失败")
+	for _, tc := range []struct {
+		name      string
+		purchases *fakePurchases
+	}{
+		{"insert", &fakePurchases{failCreate: writeErr}},
+		{"replace", &fakePurchases{failReplace: writeErr, byKey: map[string]Purchase{
+			"req-1": {OutRequestNo: "np_old", State: PurchaseFailed},
+		}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			caller := &fakeCaller{replies: map[string]string{methodCharge: purchaseCapability}}
+			handler := newTestHandler(newTestClient(t, caller), tc.purchases)
+			response := httptest.NewRecorder()
+			handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", `{"sku_id":"S1","client_request_no":"req-1"}`))
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("占位写入失败应回 503，得到 %d", response.Code)
+			}
+			if calls := caller.calls(); len(calls) != 1 || calls[0] != methodCharge {
+				t.Fatalf("占位写入失败时只允许查询商品，得到 %v", calls)
+			}
+		})
+	}
+}
+
+func TestPurchaseRetriesTheOriginalOrderWhenTheLinkCannotBeStored(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodCharge:   purchaseCapability,
 		methodPurchase: purchaseReply,
 	}}
-	purchases := &fakePurchases{failCreate: errors.New("pg: 写入失败")}
+	purchases := &fakePurchases{failReady: errors.New("pg: 写入失败")}
 	handler := newTestHandler(newTestClient(t, caller), purchases)
+	const body = `{"sku_id":"S1","client_request_no":"req-1"}`
 	response := httptest.NewRecorder()
-	handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", `{"sku_id":"S1","client_request_no":"req-1"}`))
-	if response.Code != http.StatusOK {
-		t.Fatalf("写库失败时仍应返回链接，得到 %d", response.Code)
+	handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", body))
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("链接写入失败应回 503，得到 %d", response.Code)
 	}
-	if link := decode[api.QuotaPurchaseLink](t, response); link.PurchaseUrl == "" {
-		t.Fatalf("应返回链接: %+v", link)
+	creating := purchases.byKey["req-1"]
+	if creating.State != PurchaseCreating || creating.OutRequestNo == "" {
+		t.Fatalf("链接写入失败应保留已落库的占位: %+v", creating)
+	}
+	purchases.failReady = nil
+	response = httptest.NewRecorder()
+	handler.Purchase(response, request(http.MethodPost, "/v1/me/model-quota-purchases", body))
+	if response.Code != http.StatusOK {
+		t.Fatalf("重试应返回链接，得到 %d", response.Code)
+	}
+	if link := decode[api.QuotaPurchaseLink](t, response); link.OutRequestNo != creating.OutRequestNo {
+		t.Fatalf("应使用原请求号，得到 %s", link.OutRequestNo)
 	}
 }
 

@@ -137,7 +137,7 @@ VALUES
    sqlc.narg(state), sqlc.narg(purchase_url), sqlc.arg(expires_at));
 
 -- 同一个幂等键重新生成入口：换成新的 out_request_no，回到 creating 等 purchase.create。
--- name: ReplacePurchaseLink :exec
+-- name: ReplacePurchaseLink :execrows
 UPDATE nowpay_purchase
 SET out_request_no = sqlc.arg(out_request_no),
     sku_id = sqlc.arg(sku_id),
@@ -148,7 +148,7 @@ SET out_request_no = sqlc.arg(out_request_no),
     updated_at = now()
 WHERE user_id = sqlc.arg(user_id) AND client_request_no = sqlc.arg(client_request_no);
 
--- name: ReadyPurchaseLink :exec
+-- name: ReadyPurchaseLink :execrows
 UPDATE nowpay_purchase
 SET purchase_url = sqlc.arg(purchase_url),
     expires_at = sqlc.arg(expires_at),
