@@ -2603,5 +2603,3 @@ components:
           minLength: 16
           maxLength: 128
           description: 首次启动时随机生成并保存在应用私有目录，卸载或清空数据后重新生成
-        app_version: { type: string, maxLength: 64 }
-        platform: { type: string, maxLength: 32 }

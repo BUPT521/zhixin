@@ -76,7 +76,6 @@ CREATE TABLE session_refresh_used (
   request_id            TEXT NOT NULL DEFAULT '',
   rotated_at            TIMESTAMPTZ NOT NULL,
   grace_until           TIMESTAMPTZ NOT NULL,
-  replaced_access_hash  TEXT NOT NULL,          -- 本次轮换发出的访问令牌摘要
   replaced_refresh_hash TEXT NOT NULL           -- 本次轮换发出的刷新令牌摘要
 );
 CREATE INDEX session_refresh_used_session ON session_refresh_used(session_id);
@@ -332,8 +331,6 @@ CREATE TABLE user_active (
 CREATE TABLE install_active (
   install_hash  TEXT NOT NULL,
   day           DATE NOT NULL,
-  app_version   TEXT NOT NULL DEFAULT '',
-  platform      TEXT NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (install_hash, day)
 );

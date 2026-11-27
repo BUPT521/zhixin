@@ -5,11 +5,8 @@
 
 -- 匿名活跃：同一个安装标识在同一天重复上报只留一行，客户端重试是幂等的。
 -- name: MarkInstallActive :exec
-INSERT INTO install_active (install_hash, day, app_version, platform)
-VALUES (
-  sqlc.arg(install_hash), sqlc.arg(day)::date,
-  sqlc.arg(app_version), sqlc.arg(platform)
-)
+INSERT INTO install_active (install_hash, day)
+VALUES (sqlc.arg(install_hash), sqlc.arg(day)::date)
 ON CONFLICT (install_hash, day) DO NOTHING;
 
 -- 登录账号的活跃：一个账号一天一行。

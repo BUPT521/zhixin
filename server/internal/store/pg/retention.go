@@ -9,7 +9,7 @@ import (
 
 // MarkInstallActive 保存一次匿名活跃；同一安装标识同一天重复上报由主键冲突
 // 忽略，客户端重试是幂等的。
-func (s *Store) MarkInstallActive(ctx context.Context, hash, day, appVersion, platform string) error {
+func (s *Store) MarkInstallActive(ctx context.Context, hash, day string) error {
 	date, err := pgDate(day)
 	if err != nil {
 		return err
@@ -17,8 +17,6 @@ func (s *Store) MarkInstallActive(ctx context.Context, hash, day, appVersion, pl
 	return s.q.MarkInstallActive(ctx, db.MarkInstallActiveParams{
 		InstallHash: hash,
 		Day:         date,
-		AppVersion:  appVersion,
-		Platform:    platform,
 	})
 }
 

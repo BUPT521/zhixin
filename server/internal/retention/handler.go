@@ -67,25 +67,15 @@ func (h *Handler) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.svc.RecordInstall(r.Context(), Ping{
-		InstallID:  in.InstallId,
-		AppVersion: valueOrEmpty(in.AppVersion),
-		Platform:   valueOrEmpty(in.Platform),
+		InstallID: in.InstallId,
 	})
 	switch {
 	case errors.Is(err, ErrInvalid):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"install_id must be 16 to 128 letters, digits, '-' or '_'; app_version at most 64 and platform at most 32 characters")
+			"install_id must be 16 to 128 letters, digits, '-' or '_'")
 	case err != nil:
 		httpx.WriteInternal(w, r, h.log, err)
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
-}
-
-// valueOrEmpty 把契约里的可选字符串取成服务层使用的空串。
-func valueOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

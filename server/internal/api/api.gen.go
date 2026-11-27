@@ -1498,11 +1498,8 @@ type SyncSnapshot struct {
 
 // TelemetryPing defines model for TelemetryPing.
 type TelemetryPing struct {
-	AppVersion *string `json:"app_version,omitempty"`
-
 	// InstallId 首次启动时随机生成并保存在应用私有目录，卸载或清空数据后重新生成
-	InstallId string  `json:"install_id"`
-	Platform  *string `json:"platform,omitempty"`
+	InstallId string `json:"install_id"`
 }
 
 // Tokens defines model for Tokens.

@@ -153,7 +153,7 @@ func TestPostgresAuthAndSessions(t *testing.T) {
 		t.Fatalf("put code: %v", err)
 	}
 	gotCode, err := st.Code(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn")
-	if err != nil || gotCode.CodeHash != "hash-1" || gotCode.Attempts != 0 || gotCode.UserID != u.ID {
+	if err != nil || gotCode.CodeHash != "hash-1" || gotCode.UserID != u.ID {
 		t.Fatalf("get code: %v %+v", err, gotCode)
 	}
 	if n, err := st.IncrementCodeAttempts(ctx, auth.PurposeVerifyContact, auth.KindEmail, "a@b.cn"); err != nil || n != 1 {
@@ -387,7 +387,7 @@ func TestPostgresRefreshRotation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("更新后读取旧令牌记录: %v", err)
 	}
-	if afterUpdate.ReplacedRefreshHash != "rh3" || afterUpdate.ReplacedAccessHash != "ah3" {
+	if afterUpdate.ReplacedRefreshHash != "rh3" {
 		t.Fatalf("本次发出的令牌应更新，得到 %+v", afterUpdate)
 	}
 	if !afterUpdate.GraceUntil.Equal(used.GraceUntil) || afterUpdate.RequestID != "req-1" {
@@ -1305,15 +1305,15 @@ func TestPostgresRetention(t *testing.T) {
 		if err := st.MarkUserActive(ctx, "u1", "2026-11-18"); err != nil {
 			t.Fatalf("mark user active %d: %v", i+1, err)
 		}
-		if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-18", "0.2.0", "android"); err != nil {
+		if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-18"); err != nil {
 			t.Fatalf("mark install active %d: %v", i+1, err)
 		}
 	}
-	if err := st.MarkInstallActive(ctx, "hash-old", "2026-01-01", "", ""); err != nil {
+	if err := st.MarkInstallActive(ctx, "hash-old", "2026-01-01"); err != nil {
 		t.Fatalf("seed old install: %v", err)
 	}
 	// 同一个安装一周后再活跃一次，用来核对队列留存的日期比较。
-	if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-25", "0.2.0", "android"); err != nil {
+	if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-25"); err != nil {
 		t.Fatalf("seed returning install: %v", err)
 	}
 

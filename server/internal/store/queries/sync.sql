@@ -211,21 +211,6 @@ VALUES (sqlc.arg(user_id), sqlc.arg(device_id))
 ON CONFLICT (user_id, device_id) DO UPDATE
 SET last_seen = now();
 
--- 推送之后推进设备位置：确有新提交写入时推到新 head，整批重放时只按 base 取较大值，
--- 两种情况都不超过当前 head；位置没有前进时不写这一行（ADR-0054）。
--- name: AdvanceSyncDevice :exec
-UPDATE sync_device
-SET synced_seq = least(
-      greatest(synced_seq, sqlc.arg(base_seq)::bigint,
-        CASE WHEN sqlc.arg(to_head)::boolean THEN sqlc.arg(head)::bigint ELSE 0::bigint END),
-      sqlc.arg(head)::bigint),
-    last_seen = now()
-WHERE user_id = sqlc.arg(user_id) AND device_id = sqlc.arg(device_id)
-  AND least(
-      greatest(synced_seq, sqlc.arg(base_seq)::bigint,
-        CASE WHEN sqlc.arg(to_head)::boolean THEN sqlc.arg(head)::bigint ELSE 0::bigint END),
-      sqlc.arg(head)::bigint) > synced_seq;
-
 -- name: SyncDevices :many
 SELECT device_id, alias, snapshot_capable, synced_seq, first_seen, last_seen
 FROM sync_device

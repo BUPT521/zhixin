@@ -11,41 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const advanceSyncDevice = `-- name: AdvanceSyncDevice :exec
-UPDATE sync_device
-SET synced_seq = least(
-      greatest(synced_seq, $1::bigint,
-        CASE WHEN $2::boolean THEN $3::bigint ELSE 0::bigint END),
-      $3::bigint),
-    last_seen = now()
-WHERE user_id = $4 AND device_id = $5
-  AND least(
-      greatest(synced_seq, $1::bigint,
-        CASE WHEN $2::boolean THEN $3::bigint ELSE 0::bigint END),
-      $3::bigint) > synced_seq
-`
-
-type AdvanceSyncDeviceParams struct {
-	BaseSeq  int64
-	ToHead   bool
-	Head     int64
-	UserID   string
-	DeviceID string
-}
-
-// 推送之后推进设备位置：确有新提交写入时推到新 head，整批重放时只按 base 取较大值，
-// 两种情况都不超过当前 head；位置没有前进时不写这一行（ADR-0054）。
-func (q *Queries) AdvanceSyncDevice(ctx context.Context, arg AdvanceSyncDeviceParams) error {
-	_, err := q.db.Exec(ctx, advanceSyncDevice,
-		arg.BaseSeq,
-		arg.ToHead,
-		arg.Head,
-		arg.UserID,
-		arg.DeviceID,
-	)
-	return err
-}
-
 const attachmentsOrphanedBefore = `-- name: AttachmentsOrphanedBefore :many
 SELECT a.sha256
 FROM attachment a

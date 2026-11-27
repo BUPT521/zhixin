@@ -30,7 +30,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	used := auth.RefreshUsed{
 		TokenHash: "rh1", SessionID: "s1", UserID: "u1", RequestID: "req-1",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
-		ReplacedAccessHash: "ah2", ReplacedRefreshHash: "rh2",
+		ReplacedRefreshHash: "rh2",
 	}
 	if err := st.RotateSessionAndRecord(ctx, "s1", "rh1", "ah2", "rh2",
 		now.Add(2*time.Hour), now.Add(48*time.Hour), used); err != nil {
@@ -49,7 +49,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	retry := auth.RefreshUsed{
 		TokenHash: "rh1", SessionID: "s1", UserID: "u1", RequestID: "req-1",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
-		ReplacedAccessHash: "ah5", ReplacedRefreshHash: "rh5",
+		ReplacedRefreshHash: "rh5",
 	}
 	if err := st.RotateSessionAndRecord(ctx, "s1", "rh2", "ah5", "rh5",
 		now.Add(3*time.Hour), now.Add(72*time.Hour), retry); err != nil {
@@ -67,7 +67,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	bad := auth.RefreshUsed{
 		TokenHash: "rh5", SessionID: "missing-session", UserID: "u1", RequestID: "req-2",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
-		ReplacedAccessHash: "ah6", ReplacedRefreshHash: "rh6",
+		ReplacedRefreshHash: "rh6",
 	}
 	if err := st.RotateSessionAndRecord(ctx, "s1", "rh5", "ah6", "rh6",
 		now.Add(4*time.Hour), now.Add(96*time.Hour), bad); err == nil {
@@ -87,7 +87,7 @@ func TestPostgresRotateSessionAndRecordIsAtomic(t *testing.T) {
 	stale := auth.RefreshUsed{
 		TokenHash: "rh-old", SessionID: "s1", UserID: "u1", RequestID: "req-3",
 		RotatedAt: now, GraceUntil: now.Add(time.Minute),
-		ReplacedAccessHash: "ah7", ReplacedRefreshHash: "rh7",
+		ReplacedRefreshHash: "rh7",
 	}
 	if err := st.RotateSessionAndRecord(ctx, "s1", "rh-old", "ah7", "rh7",
 		now.Add(5*time.Hour), now.Add(120*time.Hour), stale); !errors.Is(err, auth.ErrInvalidToken) {

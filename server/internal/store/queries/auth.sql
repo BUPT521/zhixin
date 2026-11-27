@@ -189,21 +189,20 @@ WHERE id = sqlc.arg(id) AND refresh_hash = sqlc.arg(old_refresh_hash);
 -- name: InsertRefreshUsed :exec
 INSERT INTO session_refresh_used (
   token_hash, session_id, user_id, request_id, rotated_at, grace_until,
-  replaced_access_hash, replaced_refresh_hash
+  replaced_refresh_hash
 )
 VALUES (
   sqlc.arg(token_hash), sqlc.arg(session_id), sqlc.arg(user_id),
   sqlc.arg(request_id), sqlc.arg(rotated_at), sqlc.arg(grace_until),
-  sqlc.arg(replaced_access_hash), sqlc.arg(replaced_refresh_hash)
+  sqlc.arg(replaced_refresh_hash)
 )
 ON CONFLICT (token_hash) DO UPDATE SET
   rotated_at = excluded.rotated_at,
-  replaced_access_hash = excluded.replaced_access_hash,
   replaced_refresh_hash = excluded.replaced_refresh_hash;
 
 -- name: RefreshUsed :one
 SELECT token_hash, session_id, user_id, request_id, rotated_at, grace_until,
-  replaced_access_hash, replaced_refresh_hash
+  replaced_refresh_hash
 FROM session_refresh_used
 WHERE token_hash = sqlc.arg(token_hash);
 
@@ -237,7 +236,7 @@ ON CONFLICT (purpose, kind, identifier) DO UPDATE SET
   created_at = excluded.created_at;
 
 -- name: AuthCode :one
-SELECT purpose, kind, identifier, user_id, code_hash, expires_at, attempts, created_at
+SELECT purpose, kind, identifier, user_id, code_hash, expires_at, created_at
 FROM auth_code
 WHERE purpose = sqlc.arg(purpose)
   AND kind = sqlc.arg(kind)

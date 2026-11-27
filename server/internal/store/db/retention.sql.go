@@ -146,19 +146,14 @@ func (q *Queries) InstallRetentionCohorts(ctx context.Context, since pgtype.Date
 
 const markInstallActive = `-- name: MarkInstallActive :exec
 
-INSERT INTO install_active (install_hash, day, app_version, platform)
-VALUES (
-  $1, $2::date,
-  $3, $4
-)
+INSERT INTO install_active (install_hash, day)
+VALUES ($1, $2::date)
 ON CONFLICT (install_hash, day) DO NOTHING
 `
 
 type MarkInstallActiveParams struct {
 	InstallHash string
 	Day         pgtype.Date
-	AppVersion  string
-	Platform    string
 }
 
 // 留存统计的活跃数据（internal/store/schema.sql 的 user_active 与 install_active）。
@@ -167,12 +162,7 @@ type MarkInstallActiveParams struct {
 // 不会让另一个位置的 $n 顺序悄悄错位。
 // 匿名活跃：同一个安装标识在同一天重复上报只留一行，客户端重试是幂等的。
 func (q *Queries) MarkInstallActive(ctx context.Context, arg MarkInstallActiveParams) error {
-	_, err := q.db.Exec(ctx, markInstallActive,
-		arg.InstallHash,
-		arg.Day,
-		arg.AppVersion,
-		arg.Platform,
-	)
+	_, err := q.db.Exec(ctx, markInstallActive, arg.InstallHash, arg.Day)
 	return err
 }
 
