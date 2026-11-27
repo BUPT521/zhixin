@@ -7,8 +7,10 @@ import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/application/buddy_actions.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/discussion_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/attachment_store.dart';
@@ -171,7 +173,7 @@ void main() {
     h.epoch++;
     h.ai.resume!.complete();
 
-    await expectLater(pending, throwsA(isA<StateError>()));
+    await expectLater(pending, throwsA(isA<UserFailure>()));
     final messages = await h.conversations.recent(id);
     expect(messages, hasLength(1));
     expect(messages.single.role, MessageRole.user);
@@ -797,7 +799,7 @@ void main() {
         draft: pending.first.draft,
         goalId: null,
       ),
-      throwsA(isA<StateError>()),
+      throwsA(isA<UserFailure>()),
     );
     expect(await h.tasks.items(), hasLength(1));
 
@@ -1121,6 +1123,52 @@ void main() {
       await h.service.history(conversationId),
     );
     expect(items.single.pending, isTrue);
+  });
+
+  test('超过写入长度的记忆保留卡片，确认时说明未保存', () async {
+    final h = _Harness(
+      reply: BuddyReply(
+        text: '记住了',
+        memories: [
+          MemoryDraft(
+            kind: MemoryKind.semantic,
+            content: '长' * 201,
+            source: MemorySource.user,
+          ),
+        ],
+      ),
+    );
+    await h.open();
+    addTearDown(h.db.close);
+
+    final result = await h.service.reply(text: '记一下');
+    final conversationId = result.userMessage.conversationId;
+    // 超过 200 字：没有写入，结果里带上跳过原因，不再只说“已经存在”。
+    expect(result.skipped, hasLength(1));
+    expect(result.skipped.single.reason, MemorySkipReason.tooLong);
+    expect(result.skipped.single.message, contains('200'));
+    expect(await h.memories.list(), isEmpty);
+    final items = await h.service.memoryItemsFromMessages(
+      await h.service.history(conversationId),
+    );
+    expect(items, hasLength(1), reason: '卡片保留');
+    expect(items.single.pending, isTrue);
+
+    final accepted = await h.service.acceptMemoryItem(
+      conversationId: conversationId,
+      messageId: items.single.messageId!,
+      itemId: items.single.itemId,
+    );
+    expect(accepted.applied, isFalse);
+    expect(accepted.notice, contains('未保存'));
+    expect(accepted.skip?.reason, MemorySkipReason.tooLong);
+    // 卡片没有收起，用户可以改写内容或再点一次。
+    final after = await h.service.memoryItemsFromMessages(
+      await h.service.history(conversationId),
+    );
+    expect(after, hasLength(1));
+    expect(after.single.pending, isTrue);
+    expect(await h.memories.list(), isEmpty);
   });
 
   test('用户明确说的记忆先写入，卡片可以撤销', () async {

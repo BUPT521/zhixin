@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/application/failure_notice.dart';
 import 'package:zhixin/application/sync_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/domain/models/backup_error.dart';
 
@@ -31,6 +32,18 @@ void main() {
     expect(text, contains('题目与本地回答已经保存'));
     expect(text, isNot(contains('sk-secret')));
     expect(text, isNot(contains('401')));
+  });
+
+  test('可预期失败直接显示原因，不再退化成“动作没有完成”', () {
+    final text = failureNotice(
+      const UserFailure('未找到这条讨论，可能已经被删除。'),
+      action: '发送消息',
+      kept: '已经写下的消息没有改动',
+      next: '返回记录列表重新打开',
+    );
+
+    expect(text, '未找到这条讨论，可能已经被删除，已经写下的消息没有改动。返回记录列表重新打开。');
+    expect(text, isNot(contains('发送消息没有完成')));
   });
 
   test('备份失败保留已经说明的原因，不重复句末标点', () {

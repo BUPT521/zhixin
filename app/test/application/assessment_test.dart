@@ -6,10 +6,12 @@ import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/ai/buddy_prompt.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/llm_config.dart';
+import 'package:zhixin/application/buddy_actions.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/application/learning_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_service.dart';
@@ -159,7 +161,7 @@ void main() {
         isCorrect: false,
         independent: true,
       ),
-      throwsA(isA<StateError>()),
+      throwsA(isA<UserFailure>()),
     );
     expect(
       (await h.attempts.attemptById(attempt.id))!.userAnswer,
@@ -329,6 +331,48 @@ void main() {
     );
   });
 
+  test('作答里超过写入长度的记忆保留卡片，点记下时说未保存', () async {
+    final h = _Harness(
+      reply: BuddyReply(
+        text: '先看定义',
+        memories: [MemoryDraft(kind: MemoryKind.semantic, content: '长' * 201)],
+      ),
+    );
+    await h.open();
+    addTearDown(h.db.close);
+
+    final questionId = await h.service.capture(stem: '求条件概率');
+    final result = await h.service.help(
+      questionId: questionId,
+      mode: BuddyMode.hint,
+    );
+    expect(result.skipped, hasLength(1));
+    expect(result.skipped.single.reason, MemorySkipReason.tooLong);
+    expect(result.skipped.single.message, contains('200'));
+    expect(await h.memories.list(), isEmpty);
+    final stored = (await h.attempts.attemptsFor(questionId)).single;
+    final items = await h.service.memoryItemsFor(stored);
+    expect(items, hasLength(1), reason: '卡片保留');
+    expect(items.single.pending, isTrue);
+
+    final accepted = await h.service.acceptMemory(
+      attemptId: stored.id,
+      helpIndex: 0,
+      itemId: items.single.itemId,
+    );
+    expect(accepted.applied, isFalse);
+    expect(accepted.notice, contains('未保存'));
+    expect(accepted.skip?.reason, MemorySkipReason.tooLong);
+    expect(await h.memories.list(), isEmpty);
+    expect(
+      await h.service.memoryItemsFor(
+        (await h.attempts.attemptsFor(questionId)).single,
+      ),
+      hasLength(1),
+      reason: '卡片没有收起',
+    );
+  });
+
   test('记忆写入失败时帮助照常保存，建议留作待确认', () async {
     final h = _Harness(
       reply: const BuddyReply(
@@ -461,6 +505,9 @@ void main() {
     expect(result.fromModel, isFalse);
     expect(result.notices, [Notice.modelCallFailed]);
     expect(result.outcome.failure, LlmFailure.offline);
+    // 调用失败按统一口径记为模型失败，界面据此给重试入口；不再写死为假。
+    expect(result.outcome.modelFailed, isTrue);
+    expect(result.outcome.usable, isFalse);
     expect(result.attempt.helps.single.content, isNotEmpty);
   });
 
@@ -866,7 +913,7 @@ void main() {
         independent: false,
         checkable: '旧页面覆盖的依据',
       ),
-      throwsA(isA<StateError>()),
+      throwsA(isA<UserFailure>()),
     );
 
     expect((await h.attempts.attemptById(attempt.id))!.userAnswer, '提交时的答案');
@@ -1068,7 +1115,7 @@ void main() {
     h.epoch++;
     h.ai.resume!.complete();
 
-    await expectLater(pending, throwsA(isA<StateError>()));
+    await expectLater(pending, throwsA(isA<UserFailure>()));
     expect(await h.assessments.forAttempt(attempt.id), isEmpty);
   });
 

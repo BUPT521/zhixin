@@ -19,11 +19,9 @@ import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
-import '../domain/rules/content_identity.dart';
 import '../domain/rules/notices.dart';
 import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
-import 'buddy_answer.dart';
 import 'attachment_service.dart';
 import '../../domain/rules/uuid_v7.dart';
 import 'context_request.dart';
@@ -31,7 +29,9 @@ import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
+import 'answer_pipeline.dart';
 import 'service_runtime.dart';
+import 'user_failure.dart';
 import 'used_pages.dart';
 
 /// 一道题的当前状态：原题、尝试、一条未提交尝试，以及学习页要显示的判断与
@@ -61,11 +61,18 @@ class QuestionView {
 }
 
 class HelpResult {
-  const HelpResult({required this.outcome, required this.attempt});
+  const HelpResult({
+    required this.outcome,
+    required this.attempt,
+    this.skipped = const [],
+  });
 
   /// 这次讲解的正文、来源与中断情况。
   final AnswerOutcome outcome;
   final Attempt attempt;
+
+  /// 这次帮助里没有保存的记忆与原因；超长的卡片仍随帮助保留。
+  final List<MemorySkip> skipped;
 
   /// 正文；停止或中断时是已经生成的部分。
   String get text => outcome.text;
@@ -160,7 +167,7 @@ class LearningService {
       attempts.attemptsFor(conversationId),
       conversations.recent(conversationId, limit: _recentMessageCount),
     ).wait;
-    if (question == null) throw StateError('未找到这道题');
+    if (question == null) throw UserFailure('未找到这道题');
     final open = recordAttempts.where((attempt) => attempt.isOpen).firstOrNull;
     return QuestionView(
       question: question,
@@ -301,7 +308,7 @@ class LearningService {
         .where((path) => path.trim().isNotEmpty)
         .toList(growable: false);
     final text = stem.trim();
-    if (text.isEmpty && images.isEmpty) throw ArgumentError('题目不能为空');
+    if (text.isEmpty && images.isEmpty) throw UserFailure('题目不能为空');
     // 记录、原题消息、场次与草稿属于同一次“带入题目”，整组写入或整组回滚；
     // 同时到达的两次带入只会留下一条未提交草稿。
     return transactions.run((txn) async {
@@ -328,7 +335,7 @@ class LearningService {
         transaction: txn,
       );
       final message = await conversations.lastUserMessage(conversationId);
-      if (message == null) throw StateError('题目消息没有写入');
+      if (message == null) throw UserFailure('题目消息没有写入');
       await conversations.setQuestionMessage(
         conversationId,
         message.id,
@@ -353,15 +360,15 @@ class LearningService {
   Future<String> startAnswering({required String conversationId}) async {
     final requestEpoch = runtime.dataEpoch;
     final record = await conversations.byId(conversationId);
-    if (record == null) throw StateError('未找到这条讨论');
+    if (record == null) throw UserFailure('未找到这条讨论');
     final message = await conversations.lastUserMessage(conversationId);
     final question = await conversations.question(conversationId);
     if (question == null ||
         (question.stem.trim().isEmpty && question.imagePaths.isEmpty)) {
-      throw StateError('这条讨论还没有可以作答的题目内容');
+      throw UserFailure('这条讨论还没有可以作答的题目内容');
     }
     await transactions.run((txn) async {
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       if (message != null) {
         await conversations.setQuestionMessage(
           conversationId,
@@ -393,7 +400,7 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final question = await conversations.question(questionId);
-    if (question == null) throw StateError('未找到这道题');
+    if (question == null) throw UserFailure('未找到这道题');
     final conversation = await conversations.byId(questionId);
     final resolved = await memoryScope.resolve(
       questionId,
@@ -401,7 +408,7 @@ class LearningService {
     );
     final goalId = resolved.goalId;
     final storedAttempt = await transactions.run((txn) async {
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       final session = await _ensureSession(
         conversationId: questionId,
         goalId: goalId,
@@ -472,14 +479,13 @@ class LearningService {
     );
     final prompt = modePrompt(mode);
 
-    var text = '';
-    var fromModel = false;
-    var stopped = false;
-    var interrupted = false;
-
-    final run = await askBuddyModel(
+    // 调用模型、核对代次与收尾状态都在共用的回答流水线里；这里只管求助特有
+    // 的本地兜底与帮助落库。
+    final run = await runAnswer(
       ai: ai,
       filesDir: () => runtime.filesDir,
+      runtime: runtime,
+      requestEpoch: requestEpoch,
       context: facts,
       history: const [],
       prompt: prompt,
@@ -487,79 +493,38 @@ class LearningService {
       imagePaths: question.imagePaths,
       onPartial: onText,
       cancelToken: cancelToken,
-      recordFailure: runtime.recordFailure,
+      localFallback: () =>
+          localBuddyReply(facts, hasImages: question.hasImages),
     );
-    _ensureCurrentEpoch(requestEpoch);
-    var notices = run.notices;
-    String? detail;
-    final answer = run.answer;
-    if (answer != null) {
-      final outcome = interpretModelAnswer(
-        answer,
-        notices: notices,
-        omittedImages: run.omittedImages,
-        failure: run.failure,
-        quotaReason: run.quotaReason,
-        localFallback: () =>
-            localBuddyReply(facts, hasImages: question.hasImages),
-      );
-      text = outcome.text;
-      fromModel = outcome.fromModel;
-      stopped = outcome.stopped;
-      interrupted = outcome.interrupted;
-      notices = outcome.notices;
-      detail = outcome.detail;
-      // 没有正文就停下时不记一条空的帮助；提示条已经说明已停止。
-      if (stopped && !fromModel) text = '';
-    } else {
-      text = localBuddyReply(facts, hasImages: question.hasImages);
+    var outcome = run.outcome;
+    // 没有正文就停下时不记一条空的帮助；提示条已经说明已停止。
+    if (outcome.stopped && !outcome.fromModel) {
+      outcome = outcome.copyWith(text: '');
     }
 
-    if (text.trim().isNotEmpty) {
+    final skipped = <MemorySkip>[];
+    if (outcome.text.trim().isNotEmpty) {
       // 记住的意思要用户点“记下”才落库；建议随帮助保存，离开页面再回来仍在。
-      final suggestions = <MemoryDraft>[];
-      final modelAnswer = answer;
-      if (modelAnswer != null &&
-          !modelAnswer.stopped &&
-          !modelAnswer.interrupted &&
-          !modelAnswer.truncated) {
-        final drafts = uniqueById(
-          modelAnswer.memories,
-          (draft) => draft.contentId,
-        );
-        for (final (index, draft) in drafts.indexed) {
-          final content = draft.content.trim();
-          if (content.isEmpty) continue;
-          suggestions.add(
-            MemoryDraft(
-              id: 'm$index',
-              kind: draft.kind,
-              content: content,
-              validUntil: draft.validUntil,
-            ),
-          );
-        }
-      }
+      // 卡片统一按写入长度标记超长：卡片照常保留，确认入口给出“未保存”。
+      final cards = memoryCards(
+        run.usable ? run.answer!.memories : const <MemoryDraft>[],
+      );
+      final suggestions = cards.cards;
+      skipped.addAll(cards.skipped);
       await transactions.run((txn) async {
-        _ensureCurrentEpoch(requestEpoch);
+        ensureAnswerEpoch(runtime, requestEpoch);
         await attempts.appendHelp(
           storedAttempt.id,
           HelpEntry(
             kind: mode.value,
-            content: text,
+            content: outcome.text,
             at: runtime.policy.now,
             memories: suggestions,
-            fromModel: fromModel,
-            notices: notices,
-            failureName: run.failure?.name,
-            quotaReason: run.quotaReason?.name,
-            usedPages: answer == null
-                ? const <ChatUsedPage>[]
-                : usedPagesOf(
-                    facts,
-                    answer.providedSources,
-                    currentPage: facts.materialPage?.pageKey,
-                  ),
+            fromModel: outcome.fromModel,
+            notices: outcome.notices,
+            failureName: run.run.failure?.name,
+            quotaReason: run.run.quotaReason?.name,
+            usedPages: run.usedPages,
           ),
           transaction: txn,
         );
@@ -567,19 +532,9 @@ class LearningService {
     }
     final updated = await attempts.attemptById(attempt.id);
     return HelpResult(
-      outcome: AnswerOutcome(
-        text: text,
-        fromModel: fromModel,
-        stopped: stopped,
-        interrupted: interrupted,
-        modelFailed: false,
-        notices: notices,
-        detail: detail,
-        omittedImages: run.omittedImages,
-        failure: run.failure,
-        quotaReason: run.quotaReason,
-      ),
+      outcome: outcome,
       attempt: updated ?? attempt,
+      skipped: skipped,
     );
   }
 
@@ -620,21 +575,21 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final attempt = await attempts.attemptById(attemptId);
-    if (attempt == null) throw StateError('未找到这次作答');
+    if (attempt == null) throw UserFailure('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
-    if (item == null) throw StateError('未找到这条记忆');
+    if (item == null) throw UserFailure('未找到这条记忆');
     if (item.status == MemoryCardStatus.accepted) {
       // 同一张卡连点两次：上一次已经写入，按重试返回，不再形成提交。
       return const AcceptedMemory(applied: true, notice: '这条记忆已经处理。');
     }
     if (item.status != MemoryCardStatus.pending) {
-      throw StateError('这条记忆已经处理');
+      throw UserFailure('这条记忆已经处理');
     }
     final scope = (await memoryScope.resolve(attempt.conversationId)).scope;
     try {
       return await transactions.run(
         (txn) async {
-          _ensureCurrentEpoch(requestEpoch);
+          ensureAnswerEpoch(runtime, requestEpoch);
           return confirmMemoryDraft(
             transaction: txn,
             transactions: transactions,
@@ -678,14 +633,14 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final attempt = await attempts.attemptById(attemptId);
-    if (attempt == null) throw StateError('未找到这次作答');
+    if (attempt == null) throw UserFailure('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
-    if (item == null) throw StateError('未找到这条记忆');
+    if (item == null) throw UserFailure('未找到这条记忆');
     if (item.status != MemoryCardStatus.pending) {
-      throw StateError('这条记忆已经处理');
+      throw UserFailure('这条记忆已经处理');
     }
     await transactions.run((txn) async {
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       await _setHelpMemoryStatus(
         attemptId,
         helpIndex,
@@ -752,11 +707,11 @@ class LearningService {
     final requestEpoch = runtime.dataEpoch;
     return transactions.run(
       (txn) async {
-        _ensureCurrentEpoch(requestEpoch);
+        ensureAnswerEpoch(runtime, requestEpoch);
         final before = await attempts.attemptById(attemptId, transaction: txn);
-        if (before == null) throw StateError('未找到这次作答');
+        if (before == null) throw UserFailure('未找到这次作答');
         if (before.submitted) {
-          throw StateError('这次作答已经提交，请新建一次作答');
+          throw UserFailure('这次作答已经提交，请新建一次作答');
         }
         await assessments.saveUserBasisDraft(
           attemptId,
@@ -773,7 +728,7 @@ class LearningService {
           feedback: feedback,
           transaction: txn,
         );
-        if (changed != 1) throw StateError('这次作答已提交，请新建一次作答');
+        if (changed != 1) throw UserFailure('这次作答已提交，请新建一次作答');
         return txn.result();
       },
       label: '提交作答',
@@ -797,12 +752,12 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final question = await conversations.question(questionId);
-    if (question == null) throw StateError('未找到这道题');
+    if (question == null) throw UserFailure('未找到这道题');
     final conversation = await conversations.byId(questionId);
     final attempt = await attempts.attemptById(attemptId);
-    if (attempt == null) throw StateError('未找到这次作答');
+    if (attempt == null) throw UserFailure('未找到这次作答');
     if (attempt.conversationId != questionId) {
-      throw ArgumentError('这次作答不属于当前题目');
+      throw UserFailure('这次作答不属于当前题目');
     }
     final goalId = conversation?.goalId;
     final facts = await context.load(
@@ -823,7 +778,7 @@ class LearningService {
     final prepared = await AttachmentService(filesDir: () => runtime.filesDir)
         .prepare(question.imagePaths, enabled: config?.allowImages ?? false);
     if (question.stem.trim().isEmpty && prepared.images.isEmpty) {
-      throw StateError(
+      throw UserFailure(
         prepared.omitted.isEmpty
             ? '没有可发送的题目图片，无法进行模型判断。'
             : '题目图片都没有发送'
@@ -842,16 +797,16 @@ class LearningService {
       configSnapshot: LlmConfigSnapshot(config),
     );
     // 等待模型期间可能发生了整库恢复或版本恢复；迟到的判断不再写回新数据。
-    _ensureCurrentEpoch(requestEpoch);
+    ensureAnswerEpoch(runtime, requestEpoch);
     final draft = answer.assessment;
     if (draft == null) {
-      throw StateError('模型未提供可用判断');
+      throw UserFailure('模型未提供可用判断');
     }
     late final String id;
     try {
       id = await transactions.run(
         (txn) async {
-          _ensureCurrentEpoch(requestEpoch);
+          ensureAnswerEpoch(runtime, requestEpoch);
           return assessments.add(
             attemptId: attemptId,
             kind: AssessmentKind.model,
@@ -905,7 +860,7 @@ class LearningService {
         runtime.policy.now.difference(previous!.submittedAt!) >=
             const Duration(hours: 12);
     return transactions.run((txn) async {
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       final session = await _ensureSession(
         conversationId: conversationId,
         goalId: conversation?.goalId,
@@ -939,11 +894,11 @@ class LearningService {
     final requestEpoch = runtime.dataEpoch;
     await transactions.run(
       (txn) async {
-        _ensureCurrentEpoch(requestEpoch);
+        ensureAnswerEpoch(runtime, requestEpoch);
         final before = await attempts.attemptById(attemptId, transaction: txn);
-        if (before == null) throw StateError('未找到这次作答');
+        if (before == null) throw UserFailure('未找到这次作答');
         if (before.submitted) {
-          throw StateError('这次作答已经提交，草稿不能再修改');
+          throw UserFailure('这次作答已经提交，草稿不能再修改');
         }
         await attempts.saveDraft(
           attemptId,
@@ -1001,7 +956,7 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     return transactions.run((txn) async {
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       await study.end(
         session.id,
         outcome: outcome,
@@ -1044,11 +999,5 @@ class LearningService {
       goalId: resolvedGoalId,
       transaction: transaction,
     );
-  }
-
-  void _ensureCurrentEpoch(int expected) {
-    if (runtime.dataEpoch != expected) {
-      throw StateError('数据已恢复或清空，请重新打开这条学习记录后再求助。');
-    }
   }
 }

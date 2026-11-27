@@ -37,7 +37,7 @@ class LlmMessage {
     required this.content,
     this.compileArgs = true,
   }) : role = 'tool',
-       id = ToolResultMessage.prefix + callId,
+       id = _toolResultIdPrefix + callId,
        toolCallId = callId,
        images = const [],
        toolCalls = const [];
@@ -61,13 +61,11 @@ class LlmMessage {
   final bool compileArgs;
 }
 
-/// 工具结果消息的标识前缀；[callIdOfResult] 反向读取调用编号。
-abstract final class ToolResultMessage {
-  static const String prefix = 'tool-result:';
-
-  static String? callIdOfResult(String id) =>
-      id.startsWith(prefix) ? id.substring(prefix.length) : null;
-}
+/// 工具结果消息在轮内合并历史上的标识前缀。
+///
+/// 它只用于本轮的工具交换：历史消息的标识是 `message:<讨论>:<消息>`，两者
+/// 格式不同，不能按前缀反推消息类型，因此这里不再提供反向解析。
+const String _toolResultIdPrefix = 'tool-result:';
 
 /// 一个可调用的工具；参数是一个 JSON Schema 对象。
 class LlmTool {

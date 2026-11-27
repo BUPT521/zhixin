@@ -23,7 +23,7 @@ void main() {
     expect(validatePersonaText('😀' * 801), contains('超出上限 1 字'));
   });
 
-  test('人格 JSON 往返，损坏的条目跳过', () {
+  test('人格 JSON 往返，损坏的条目跳过，整体读不出来时返回空值', () {
     const persona = Persona(
       id: 'custom',
       name: '自定义',
@@ -33,11 +33,12 @@ void main() {
     );
     final decoded = decodePersonaItems(encodePersonaItems([persona]));
     expect(decoded, hasLength(1));
-    expect(decoded.single.name, '自定义');
+    expect(decoded!.single.name, '自定义');
     expect(decoded.single.text, '设定文本');
-    expect(decodePersonaItems('不是 JSON'), isEmpty);
-    expect(decodePersonaItems('{"id": 1}'), isEmpty);
+    expect(decodePersonaItems('不是 JSON'), isNull);
+    expect(decodePersonaItems('{"id": 1}'), isNull);
     expect(decodePersonaItems('[{"id":"a"}]'), isEmpty, reason: '缺字段的条目跳过');
+    expect(decodePersonaItems('[]'), isEmpty, reason: '空清单不是读失败');
   });
 
   test('两个内置人格不超过上限，也不含改变判分、引用与写入的指令', () {
@@ -59,13 +60,18 @@ void main() {
   test('人格清单写入 app_meta，切换启用项之后重新读取仍然生效', () async {
     final store = MemoryPluginMetadataStore();
     final catalog = PersonaCatalog(store: store);
+    // 读取只读：第一次运行也不在读取路径写库。
     await catalog.load();
     expect(catalog.items.map((persona) => persona.id), [
       'calm-teacher',
       'brief-coach',
     ]);
-    expect(store.values[personaItemsKey], isNotNull, reason: '第一次运行时写入内置人格');
+    expect(store.values[personaItemsKey], isNull, reason: 'load 只读');
     expect(catalog.activeId, isNull);
+
+    // 初次写入放在显式初始化入口。
+    await catalog.ensureInitialized();
+    expect(store.values[personaItemsKey], isNotNull, reason: '初始化时写入内置人格');
 
     await catalog.setActive('brief-coach');
     expect(store.values[personaActiveKey], 'brief-coach');
@@ -82,6 +88,25 @@ void main() {
     await reloaded.setActive(null);
     expect(reloaded.active, isNull);
     expect(store.values[personaActiveKey], isEmpty);
+  });
+
+  test('人格清单读不出来时保留上一次读到的人格并说明原因', () async {
+    final store = MemoryPluginMetadataStore();
+    final catalog = PersonaCatalog(store: store);
+    await catalog.ensureInitialized();
+    expect(catalog.problem, isNull);
+
+    store.values[personaItemsKey] = '不是 JSON';
+    store.values[personaActiveKey] = 'calm-teacher';
+    await catalog.load();
+
+    expect(catalog.problem, contains(personaItemsKey));
+    expect(catalog.items.map((persona) => persona.id), [
+      'calm-teacher',
+      'brief-coach',
+    ], reason: '读不出来时保留上一次读到的人格，不换成内置人格');
+    expect(catalog.active, isNull, reason: '读不出来时不继续启用人格');
+    expect(store.values[personaItemsKey], '不是 JSON', reason: '读取路径不写库');
   });
 
   test('保存超长人格被拒绝，合法的保存可以往返', () async {
@@ -205,11 +230,19 @@ void main() {
       '',
       DateTime(2026, 11, 16, 12),
     );
+    // 回答前的读取只读：清空之后下一轮回答退回内置人格，但不补写 app_meta。
+    expect(await runtime.loadActivePersonaForPrompt(), isNull);
+    expect(await settings.metadata(personaItemsKey), '');
     await runtime.reload();
     expect(runtime.personas.items.map((persona) => persona.id), [
       'calm-teacher',
       'brief-coach',
     ]);
     expect(runtime.activePersonaPrompt, isNull);
+    expect(
+      await settings.metadata(personaItemsKey),
+      isNotNull,
+      reason: '显式初始化把内置人格写回 app_meta',
+    );
   });
 }

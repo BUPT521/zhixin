@@ -12,9 +12,9 @@ import '../domain/rules/search_terms.dart';
 /// 本机的二元组切分。待确认的记忆提案不在 `memory` 表里，确认之前不会成为
 /// 候选。
 ///
-/// 相关层沿用现有“当前范围内的条目全带”的行为，[relatedLimit] 留出得分下限
-/// 定下来之后只带达到下限的条目的位置；超过上限时截到上限。召回本身不在每次
-/// 召回时写库，使用记录交给 [MemoryUsageService] 在内存与本机缓冲。
+/// 相关层沿用现有“当前范围内的条目全带”的行为，得分下限留到定下来之后才用来
+/// 只带达到下限的条目；超过上限时截到上限。召回本身不在每次召回时写库，使用
+/// 记录交给 [MemoryUsageService] 在内存与本机缓冲。
 class MemoryRecallService {
   MemoryRecallService(this.repository, {this.ranker});
 

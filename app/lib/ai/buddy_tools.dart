@@ -6,6 +6,7 @@ import '../domain/models/study_plan.dart' show StudyStepDraft;
 import '../domain/rules/study_plan_steps.dart';
 import 'agent_read_budget.dart';
 import 'agent_tools.dart';
+import 'buddy_capabilities.dart';
 import 'llm_client.dart';
 import 'prompt_text.dart';
 import 'material_page_tool.dart';
@@ -30,20 +31,19 @@ const String proposeStudyStepsTool = 'propose_study_steps';
 class BuddyTurnTools {
   BuddyTurnTools(BuddyContext context)
     : _unit = context.material?.isDocx == true ? '片段' : '页' {
-    final mode = context.mode;
+    // 这一轮开哪些提案工具只从这里读，与提示词里列出的能力保持同一份判断。
+    final capabilities = BuddyCapabilities.of(context.mode);
     final budget = AgentReadBudget();
     // 首轮材料页与本轮补搜到的页放在同一份可补读集合里，读取工具都能分段读。
     final pages = {
       for (final hit in context.additionalMaterialHits) hit.pageKey: hit,
     };
     registry = AgentToolSet([
-      if (mode != BuddyMode.plan) _proposeMemories(_memories),
-      if (mode == BuddyMode.chat) ...[
-        _proposeNextSteps(_nextSteps),
-        _proposeCitations(_citations),
-      ],
-      if (mode == BuddyMode.check) _proposeAssessment(),
-      if (mode == BuddyMode.plan)
+      if (capabilities.memories) _proposeMemories(_memories),
+      if (capabilities.nextSteps) _proposeNextSteps(_nextSteps),
+      if (capabilities.citations) _proposeCitations(_citations),
+      if (capabilities.assessment) _proposeAssessment(),
+      if (capabilities.studySteps)
         _proposeStudySteps(
           context.uniqueOutlinePages.map((page) => page.pageNo).toSet().toList()
             ..sort(),
@@ -57,7 +57,7 @@ class BuddyTurnTools {
           providedSources: _providedSources,
           pages: pages,
         ),
-    ], requiredTool: mode == BuddyMode.plan ? proposeStudyStepsTool : null);
+    ], requiredTool: capabilities.studySteps ? proposeStudyStepsTool : null);
   }
 
   late final AgentToolSet registry;

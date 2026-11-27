@@ -1214,7 +1214,7 @@ void main() {
     expect(items[items.length - 2]['content'], startsWith('29 '));
   });
 
-  test('讨论历史里的工具交换按条目带回', () async {
+  test('讨论历史只有正文，不按标识前缀重建工具结果', () async {
     Map<String, Object?>? captured;
     final service = await serviceWith(
       MockClient((request) async {
@@ -1230,12 +1230,6 @@ void main() {
           conversationId: 'conv-1',
           role: MessageRole.assistant,
           content: '',
-        ),
-        ChatMessage(
-          id: 'tool-result:plan',
-          conversationId: 'conv-1',
-          role: MessageRole.system,
-          content: '{"result":"旧一轮的工具结果"}',
         ),
         ChatMessage(
           id: 'msg-9',
@@ -1359,6 +1353,7 @@ void main() {
 
   test('模型拒绝工具声明时用首轮证据普通请求回答', () async {
     var plainRequests = 0;
+    var plainBudgetMs = 0;
     final client = MockClient((request) async {
       expect(request.headers['X-Zhixin-Session-Id'], 'discussion-7');
       final body = jsonDecode(request.body) as Map<String, dynamic>;
@@ -1373,6 +1368,7 @@ void main() {
         );
       }
       plainRequests++;
+      plainBudgetMs = int.parse(request.headers['X-Zhixin-Round-Budget-Ms']!);
       return _chatReply(text: '依据本轮摘录回答条件概率。');
     });
     final service = await serviceWith(client);
@@ -1401,5 +1397,43 @@ void main() {
     expect(reply.text, '依据本轮摘录回答条件概率。');
     // 400 不在重试范围里，整轮工具请求失败一次之后才走普通请求。
     expect(plainRequests, 1);
+    // 兜底请求与整轮回答共用同一份 90 秒预算，不再退回 30 秒的默认预算。
+    expect(plainBudgetMs, greaterThan(30000));
+    expect(plainBudgetMs, lessThanOrEqualTo(90000));
+  });
+
+  test('兜底请求沿用取消令牌，用户停下之后不再当成普通失败', () async {
+    var requests = 0;
+    final cancel = LlmCancelToken();
+    final client = MockClient((request) async {
+      requests++;
+      // 第二轮是兜底的普通请求；在它返回之前用户点了停止。预算里带着取消
+      // 令牌时这一轮按已停止结束，而不是把一次取消报成响应格式不对。
+      if (requests == 2) cancel.cancel();
+      return http.Response(
+        jsonEncode({
+          'error': {'message': 'tools are not supported'},
+        }),
+        400,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+    final service = await serviceWith(client);
+    await expectLater(
+      service.ask(
+        context: BuddyContext(now: DateTime(2026, 11, 7, 20)),
+        history: const [],
+        text: '条件概率怎么算',
+        cancelToken: cancel,
+      ),
+      throwsA(
+        isA<LlmException>().having(
+          (error) => error.failure,
+          'failure',
+          LlmFailure.cancelled,
+        ),
+      ),
+    );
+    expect(requests, 2);
   });
 }

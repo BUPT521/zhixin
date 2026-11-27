@@ -190,11 +190,11 @@ void main() {
       await tester.runAsync(
         () => Future<void>.delayed(const Duration(milliseconds: 100)),
       );
-      if (find.textContaining('获取帮助没有完成').evaluate().isNotEmpty) break;
+      if (find.textContaining('数据已恢复或清空').evaluate().isNotEmpty) break;
     }
 
     // 迟到的回答留在页面之外，恢复后的作答仍没有帮助记录。
-    expect(find.textContaining('获取帮助没有完成'), findsOneWidget);
+    expect(find.textContaining('数据已恢复或清空'), findsOneWidget);
     expect(find.text('恢复之后才回来的提示'), findsNothing);
     // 读库加超时：以后这条路径再出问题时应报失败，而不是把整条用例挂住。
     final attempt = await tester.runAsync(
