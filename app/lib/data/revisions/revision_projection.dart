@@ -1166,15 +1166,6 @@ mixin RevisionProjectionMixin {
     );
   }
 
-  /// 提交之后的检查点策略：写事务里不再生成检查点。
-  ///
-  /// 检查点改由 [afterCommitIdle] 在独占区释放之后按累计字节数生成，写入那次
-  /// 事务不再重建整库投影（ADR-0039 第 2 条、方案 R4）。
-  Future<void> checkpointAfterCommit(
-    RawExecutor txn,
-    RevisionCommit commit,
-  ) async {}
-
   /// 一次写入落库、独占区释放之后的空闲工作：空闲检查点与自动留存
   /// （ADR-0039 第 2 条、方案 3.8）。
   ///

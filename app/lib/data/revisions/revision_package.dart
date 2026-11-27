@@ -29,7 +29,6 @@ class RevisionPackageService {
     required this.schemaVersion,
     required this.appVersion,
     this.budget = const PackageBudget(),
-    this.chunkSize = 64 * 1024,
     this.clock = systemClock,
   });
 
@@ -41,7 +40,6 @@ class RevisionPackageService {
   /// 解压预算；当前数据包在读取 manifest、data 与附件之前执行，
   /// 版本库备份在确认 kind 与 schema 之后、读取 `zhixin.db` 之前执行。
   final PackageBudget budget;
-  final int chunkSize;
   final Clock clock;
 
   static const String _manifestEntry = 'manifest.json';
