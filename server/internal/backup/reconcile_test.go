@@ -11,6 +11,16 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
+// fakeAttachmentKeys 是附件索引的桩：对账只读取它给出的已知键。
+type fakeAttachmentKeys struct {
+	keys []string
+	err  error
+}
+
+func (f fakeAttachmentKeys) ListAllKeys(context.Context) ([]string, error) {
+	return f.keys, f.err
+}
+
 // TestReconcileRemovesOnlyStaleOrphans 核对对账的三条边界：元数据在、对象也在
 // 时不删；对象没有元数据且超过宽限期时删掉；对象没有元数据但刚写入时保留，
 // 避免删掉一次正在进行中的上传。
@@ -20,6 +30,7 @@ func TestReconcileRemovesOnlyStaleOrphans(t *testing.T) {
 	store := NewMemoryStore()
 	svc := NewService(store, 1<<20, 2, 27)
 	svc.SetObjects(objects)
+	svc.SetAttachmentKeys(fakeAttachmentKeys{})
 	fixed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixed }
 
@@ -69,9 +80,9 @@ func TestReconcileRemovesOnlyStaleOrphans(t *testing.T) {
 	}
 }
 
-// TestReconcileKeepsAttachments 核对对账的范围：只列 backups/ 前缀，attachments/
-// 下的对象即使没有元数据也不会被删，那部分由附件自己的前缀清理负责。
-func TestReconcileKeepsAttachments(t *testing.T) {
+// TestReconcileAttachments 核对附件前缀也走同一套差集：attachment 表里仍登记
+// 的对象保留，没有行且超过宽限期的对象删掉，宽限期内的保留。
+func TestReconcileAttachments(t *testing.T) {
 	ctx := context.Background()
 	objects := objectstore.NewMemory()
 	svc := NewService(NewMemoryStore(), 1<<20, 2, 27)
@@ -79,18 +90,75 @@ func TestReconcileKeepsAttachments(t *testing.T) {
 	fixed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixed }
 
-	attachmentKey := objectstore.AttachmentKey("u1", strings.Repeat("c", 64))
-	if err := objects.PutAt(ctx, attachmentKey, strings.NewReader("att"),
-		objectstore.Info{Size: 3}, fixed.Add(-2*ReconcileGrace)); err != nil {
-		t.Fatalf("put attachment: %v", err)
+	liveKey := objectstore.AttachmentKey("u1", strings.Repeat("a", 64))
+	staleKey := objectstore.AttachmentKey("u1", strings.Repeat("b", 64))
+	freshKey := objectstore.AttachmentKey("u2", strings.Repeat("c", 64))
+	svc.SetAttachmentKeys(fakeAttachmentKeys{keys: []string{liveKey}})
+
+	for _, item := range []struct {
+		key  string
+		at   time.Time
+		body string
+	}{
+		{liveKey, fixed.Add(-2 * ReconcileGrace), "live"},
+		{staleKey, fixed.Add(-2 * ReconcileGrace), "old!"},
+		{freshKey, fixed.Add(-time.Minute), "new!"},
+	} {
+		if err := objects.PutAt(ctx, item.key, strings.NewReader(item.body),
+			objectstore.Info{Size: int64(len(item.body))}, item.at); err != nil {
+			t.Fatalf("put %s: %v", item.key, err)
+		}
 	}
 
 	removed, err := svc.Reconcile(ctx)
-	if err != nil || removed != 0 {
-		t.Fatalf("对账应只处理备份对象: removed=%d err=%v", removed, err)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
 	}
-	if _, err := objects.Stat(ctx, attachmentKey); err != nil {
-		t.Fatalf("附件对象不能删: %v", err)
+	if removed != 1 {
+		t.Fatalf("只应删掉一个没有索引的旧附件，删了 %d 个", removed)
+	}
+	if _, err := objects.Stat(ctx, staleKey); !errors.Is(err, objectstore.ErrNotFound) {
+		t.Fatalf("超过宽限期的遗留附件应被删除，得到 %v", err)
+	}
+	if _, err := objects.Stat(ctx, liveKey); err != nil {
+		t.Fatalf("仍登记的附件不能删: %v", err)
+	}
+	if _, err := objects.Stat(ctx, freshKey); err != nil {
+		t.Fatalf("宽限期内的附件不能删: %v", err)
+	}
+}
+
+// TestReconcileRequiresAttachmentKeys 守住装配遗漏：没有注入附件索引时对账
+// 返回错误，不会只处理 backups/、把 attachments/ 静默留在配额里。
+func TestReconcileRequiresAttachmentKeys(t *testing.T) {
+	svc := NewService(NewMemoryStore(), 1<<20, 2, 27)
+	svc.SetObjects(objectstore.NewMemory())
+	if _, err := svc.Reconcile(context.Background()); err == nil {
+		t.Fatal("没有注入附件索引时应返回错误")
+	}
+}
+
+// TestReconcileStopsOnAttachmentIndexError 核对附件索引读取失败时对账直接返回
+// 错误：两份已知键都拿到之后才开始删对象，不会先删掉一部分再停在半路。
+func TestReconcileStopsOnAttachmentIndexError(t *testing.T) {
+	ctx := context.Background()
+	objects := objectstore.NewMemory()
+	svc := NewService(NewMemoryStore(), 1<<20, 2, 27)
+	svc.SetObjects(objects)
+	svc.SetAttachmentKeys(fakeAttachmentKeys{err: errors.New("附件索引不可用")})
+	fixed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return fixed }
+
+	staleKey := objectstore.BackupKey("u2", strings.Repeat("a", 32))
+	if err := objects.PutAt(ctx, staleKey, strings.NewReader("old"),
+		objectstore.Info{Size: 3}, fixed.Add(-2*ReconcileGrace)); err != nil {
+		t.Fatalf("put stale object: %v", err)
+	}
+	if _, err := svc.Reconcile(ctx); err == nil {
+		t.Fatal("附件索引读取失败时应返回错误")
+	}
+	if _, err := objects.Stat(ctx, staleKey); err != nil {
+		t.Fatalf("索引读取失败时不应删除任何对象: %v", err)
 	}
 }
 

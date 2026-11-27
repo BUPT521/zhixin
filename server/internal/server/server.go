@@ -170,8 +170,8 @@ func DeleteAccountData(deleters ...func(ctx context.Context, userID string) erro
 }
 
 // Build 组装服务，返回完整的处理器。ctx 用于随进程退出的周期任务：会话与
-// 验证码的过期行、反馈保留期、备份对象对账都在启动时先跑一次，之后按各自周期
-// 重跑，进程退出时随 ctx 一起停止。
+// 验证码的过期行、反馈保留期、备份与附件对象对账都在启动时先跑一次，之后按
+// 各自周期重跑，进程退出时随 ctx 一起停止。
 //
 // 模型路由快照只在启动时读一次，之后由管理后台保存配置时整体换新（ADR-0029）；
 // 直接改库或多实例部署的修改要经后台保存一次或重启本进程才会生效。
@@ -308,8 +308,10 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 
 	backupSvc := backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
 	// 备份的元数据与字节分两步写，中断会留下没有元数据的对象：按周期对账一次，
-	// 删掉库里查不到、且写于一小时之前的遗留字节（ADR-0037）。
+	// 删掉库里查不到、且写于一小时之前的遗留字节（ADR-0037）。attachments/ 与
+	// backups/ 共用这份对象存储，附件侧同样按 attachment 表对账。
 	backupSvc.SetObjects(st.Objects)
+	backupSvc.SetAttachmentKeys(st.Blobs)
 	backupSvc.SetReconcileInterval(cfg.BackupReconcileInterval)
 	backupHandler := backup.NewHandler(backupSvc, log)
 

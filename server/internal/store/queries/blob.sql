@@ -28,6 +28,11 @@ WHERE user_id = sqlc.arg(user_id) AND sha256 = sqlc.arg(sha256);
 DELETE FROM attachment
 WHERE user_id = sqlc.arg(user_id);
 
+-- 全部附件索引行的 (账号, 哈希)，供对象存储对账：attachments/ 下在库里找不到
+-- 对应行的对象是遗留字节，见 ADR-0037。
+-- name: ListAllAttachments :many
+SELECT user_id, sha256 FROM attachment;
+
 -- 预留配额前锁住账号行（复用 auth.sql 的 LockUser ... FOR UPDATE）：同一账号的
 -- 两次上传因此排队，求和与写入不会同时读到旧的已用量。账号行不存在时返回零行，
 -- 存储层按账号不存在处理。

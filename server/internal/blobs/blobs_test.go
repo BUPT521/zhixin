@@ -70,6 +70,40 @@ func TestStoreDeleteUser(t *testing.T) {
 	}
 }
 
+// TestStoreListAllKeys 核对索引里的每一行都按对象键规则列出，供备份对账求差集：
+// 两个账号的两份内容都在，没有索引的遗留字节不会从索引凭空出现。
+func TestStoreListAllKeys(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(objectstore.NewMemory())
+	shaB := strings.Repeat("b", 64)
+	if _, err := s.Reserve(ctx, "u1", shaA, 1, 0); err != nil {
+		t.Fatalf("reserve u1: %v", err)
+	}
+	if _, err := s.Reserve(ctx, "u2", shaB, 2, 0); err != nil {
+		t.Fatalf("reserve u2: %v", err)
+	}
+
+	keys, err := s.ListAllKeys(ctx)
+	if err != nil {
+		t.Fatalf("list all keys: %v", err)
+	}
+	got := make(map[string]bool, len(keys))
+	for _, key := range keys {
+		got[key] = true
+	}
+	for _, want := range []string{
+		objectstore.AttachmentKey("u1", shaA),
+		objectstore.AttachmentKey("u2", shaB),
+	} {
+		if !got[want] {
+			t.Fatalf("ListAllKeys 缺少 %q，得到 %v", want, keys)
+		}
+	}
+	if len(keys) != 2 {
+		t.Fatalf("ListAllKeys 应返回 2 个键，得到 %v", keys)
+	}
+}
+
 // TestStoreQuotaReserveRelease 守住预留的语义：重复 sha 不重复计数、超限时带
 // 已用量与上限且不改状态、保存失败回滚、字节已存在时不撤销索引、删账号清空。
 func TestStoreQuotaReserveRelease(t *testing.T) {

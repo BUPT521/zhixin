@@ -124,6 +124,20 @@ func (b *BlobStore) Used(ctx context.Context, userID string) (int64, error) {
 	return b.store.q.SumAttachmentBytes(ctx, userID)
 }
 
+// ListAllKeys 返回全部附件索引行对应的对象键，供备份对账比对 attachments/ 下的
+// 对象：库里查不到的键是遗留字节，见 ADR-0037。
+func (b *BlobStore) ListAllKeys(ctx context.Context) ([]string, error) {
+	rows, err := b.store.q.ListAllAttachments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, objectstore.AttachmentKey(row.UserID, row.Sha256))
+	}
+	return out, nil
+}
+
 // DeleteUser 清掉账号的附件索引与对象存储里的字节，账号行本身不动。先删索引再
 // 按前缀清字节：两步都幂等，中断之后重试即可收敛；任一步失败都原样返回。
 func (b *BlobStore) DeleteUser(ctx context.Context, userID string) error {

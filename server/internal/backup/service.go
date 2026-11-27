@@ -27,9 +27,13 @@ type Service struct {
 	keep          int
 	schemaVersion int
 	now           func() time.Time
-	// objects 是写字节的同一份对象存储，后台对账用它列出 backups/ 下的对象；
-	// 由装配处经 SetObjects 注入，没有注入时对账不执行。
+	// objects 是写字节的同一份对象存储，后台对账用它列出 backups/ 与
+	// attachments/ 下的对象；由装配处经 SetObjects 注入，没有注入时对账返回错误。
 	objects objectstore.Store
+	// attachmentKeys 列出附件索引里仍然有效的对象键，对账据此把 attachments/
+	// 下的对象分成仍登记与遗留字节；由装配处经 SetAttachmentKeys 注入，没有
+	// 注入时对账返回错误，不会只对账备份而漏掉附件。
+	attachmentKeys AttachmentKeys
 	// reconcileInterval 是后台对账的周期，由配置项
 	// ZHIXIN_BACKUP_RECONCILE_INTERVAL 设置；0 表示只在启动时跑一次。
 	reconcileInterval time.Duration

@@ -56,6 +56,9 @@ type Store interface {
 	Release(ctx context.Context, userID, sha string, size int64) error
 	// Used 返回账号已用的附件总字节数；空账号是 0。
 	Used(ctx context.Context, userID string) (int64, error)
+	// ListAllKeys 返回全部附件索引对应的对象键，供后台对账比对 attachments/
+	// 下的对象：库里查不到的键是遗留字节，见 ADR-0037。
+	ListAllKeys(ctx context.Context) ([]string, error)
 	// DeleteUser 删除账号名下的全部附件与索引。
 	DeleteUser(ctx context.Context, userID string) error
 }
@@ -146,6 +149,20 @@ func (o *ObjectStore) Used(_ context.Context, userID string) (int64, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	return sumSizes(o.index[userID]), nil
+}
+
+// ListAllKeys 按内存索引拼出对象键；重建进程之后索引为空，这与内存对象存储
+// 一起丢失字节的语义一致（进程内实现只用于开发与测试）。
+func (o *ObjectStore) ListAllKeys(_ context.Context) ([]string, error) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	var out []string
+	for userID, files := range o.index {
+		for sha := range files {
+			out = append(out, objectstore.AttachmentKey(userID, sha))
+		}
+	}
+	return out, nil
 }
 
 func (o *ObjectStore) DeleteUser(ctx context.Context, userID string) error {

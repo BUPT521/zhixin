@@ -81,6 +81,37 @@ func (q *Queries) InsertAttachment(ctx context.Context, arg InsertAttachmentPara
 	return result.RowsAffected(), nil
 }
 
+const listAllAttachments = `-- name: ListAllAttachments :many
+SELECT user_id, sha256 FROM attachment
+`
+
+type ListAllAttachmentsRow struct {
+	UserID string
+	Sha256 string
+}
+
+// 全部附件索引行的 (账号, 哈希)，供对象存储对账：attachments/ 下在库里找不到
+// 对应行的对象是遗留字节，见 ADR-0037。
+func (q *Queries) ListAllAttachments(ctx context.Context) ([]ListAllAttachmentsRow, error) {
+	rows, err := q.db.Query(ctx, listAllAttachments)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllAttachmentsRow{}
+	for rows.Next() {
+		var i ListAllAttachmentsRow
+		if err := rows.Scan(&i.UserID, &i.Sha256); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const sumAttachmentBytes = `-- name: SumAttachmentBytes :one
 SELECT COALESCE(SUM(size), 0)::bigint AS used
 FROM attachment
