@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import '../atomic_file.dart';
 import '../db/drift/tables.dart'
     show AttachmentReferenceKind, attachmentReferenceColumns;
 import '../db/raw_executor.dart';
@@ -252,17 +253,24 @@ class AttachmentCache {
     }
   }
 
+  /// 写入附件缓存：先写完整临时文件再改名，读到的要么是旧文件，要么是新文件。
+  ///
+  /// 临时后缀取 `AtomicFile.temporarySuffix`，与外观偏好、诊断开关这些本机小文件
+  /// 同一种，不再按微秒另造一种；写入失败时删掉半份文件，下一次补建重新生成。
   Future<File> write(String hash, Uint8List bytes) async {
     final file = File(pathFor(hash));
     if (await file.exists() && await file.length() == bytes.length) {
       return file;
     }
     await Directory(directory()).create(recursive: true);
-    final temporary = File(
-      '${file.path}.partial-${DateTime.now().microsecondsSinceEpoch}',
-    );
-    await temporary.writeAsBytes(bytes, flush: true);
-    await temporary.rename(file.path);
+    final temporary = File('${file.path}${AtomicFile.temporarySuffix}');
+    try {
+      await temporary.writeAsBytes(bytes, flush: true);
+      await temporary.rename(file.path);
+    } catch (_) {
+      if (await temporary.exists()) await temporary.delete();
+      rethrow;
+    }
     return file;
   }
 
