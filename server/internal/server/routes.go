@@ -41,7 +41,8 @@ type routes struct {
 	// retentionAdmin 是后台的留存视图，只读；与公开的上报接口分开。
 	retentionAdmin *retentionadmin.Admin
 
-	// cloud 清空账号的云端数据；由 server.New 注入，见 DeleteV1Cloud。
+	// cloud 清空账号的云端数据；build 装配时必定注入，routes 不再为它保留
+	// “未装配”的降级分支。见 DeleteV1Cloud。
 	cloud func(w http.ResponseWriter, r *http.Request)
 
 	schemaVersion int
@@ -96,13 +97,9 @@ func (rt routes) DeleteV1MeApiKeys(w http.ResponseWriter, r *http.Request) {
 	rt.auth.RevokeAllAPIKeys(w, r)
 }
 
-// DeleteV1Cloud 清空账号的备份、提交序列、附件与遗留对象；装配由 server.New
-// 注入，未装配时返回 501 而不是悄悄回 204。
+// DeleteV1Cloud 清空账号的备份、提交序列、附件与遗留对象。清除入口由 build
+// 装配时注入，是必填依赖；没有装配属于装配错误，不再回一个生产中到不了的 501。
 func (rt routes) DeleteV1Cloud(w http.ResponseWriter, r *http.Request) {
-	if rt.cloud == nil {
-		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "cloud purge is not wired")
-		return
-	}
 	if rt.auth.ConfirmPassword(w, r) {
 		rt.cloud(w, r)
 	}
