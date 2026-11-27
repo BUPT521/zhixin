@@ -22,6 +22,7 @@ import 'buddy_timeline.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
 import 'discussion_attachments.dart';
+import 'discussion_card_actions.dart';
 import 'discussion_search.dart';
 import 'discussion_search_controller.dart';
 import 'discussion_stream.dart';
@@ -31,7 +32,6 @@ import 'live_view.dart';
 import 'material_picker.dart';
 import 'navigation.dart';
 import 'study_plan_setup.dart';
-import 'undo_feedback.dart';
 import 'voice_input_button.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_chip.dart';
@@ -129,6 +129,13 @@ class DiscussionChatState extends State<DiscussionChat> {
     onChanged: _onAttachmentsChanged,
   );
 
+  /// 建议、记忆卡片与回执的操作；确认框仍留在页面。
+  late final DiscussionCardActions _cards = DiscussionCardActions(
+    stream: _reply,
+    onChanged: _onCardsChanged,
+    showNotice: (notice) => setState(() => _notice = notice),
+  );
+
   String? _notice;
 
   /// 用户消息已经落库、但这一轮没有保存回答；提示条据此给出重试入口。
@@ -157,6 +164,11 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 图片列表或取图状态变了就让页面重建。
   void _onAttachmentsChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// 卡片操作改了等待状态就让页面重建。
+  void _onCardsChanged() {
     if (mounted) setState(() {});
   }
 
@@ -614,32 +626,9 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 从这条讨论开始作答：以当时最后一条用户消息为原题，作答挂在这条记录上。
   Future<void> _startAnswering() async {
     final id = _conversationId;
-    if (id == null || _reply.answering) return;
-    setState(() {
-      _reply.answering = true;
-      _notice = null;
-    });
-    try {
-      final questionId = await AppScope.of(context).chat.learning
-          .startAnswering(conversationId: id);
-      if (!mounted) return;
-      await openLearning(context, questionId);
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '打开作答',
-          kind: 'discussion_start_answer',
-          kept: '讨论与作答记录没有改动',
-          next: '可以再试一次',
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _reply.answering = false);
-    }
+    if (id == null) return;
+    setState(() => _notice = null);
+    await _cards.startAnswering(context, id);
   }
 
   Future<void> _chooseGoal() async {
@@ -726,6 +715,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     );
   }
 
+  /// 接受一条下一步建议：归属由页面选，写入与说明交给卡片操作。
   Future<void> _accept(
     PendingSuggestion suggestion, {
     bool start = false,
@@ -740,110 +730,43 @@ class DiscussionChatState extends State<DiscussionChat> {
       note: '可选择目标，也可保存为独立事项。',
     );
     if (choice == null || !mounted) return;
-    try {
-      final scope = AppScope.of(context);
-      final result = await scope.chat.discussion.acceptNextStep(
-        conversationId: id,
-        messageId: suggestion.messageId,
-        draft: suggestion.draft,
-        stepId: suggestion.stepId,
-        goalId: choice.goalId,
-        start: start,
-      );
-      if (!mounted) return;
-      showActionToast(
-        context,
-        start ? '事项已开始' : '已保存为学习事项',
-        label: '查看事项',
-        onPressed: () => openPlanDetail(context, result.item.id),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '保存这条学习事项',
-          kind: 'discussion_accept_step',
-          kept: '建议还在讨论里',
-          next: '可以再试一次',
-        ),
-      );
-    }
+    await _cards.acceptSuggestion(
+      context,
+      conversationId: id,
+      suggestion: suggestion,
+      goalId: choice.goalId,
+      start: start,
+    );
   }
 
   Future<void> _dismiss(PendingSuggestion suggestion) async {
     final id = _conversationId;
     if (id == null) return;
-    try {
-      await AppScope.of(context).chat.discussion.dismissNextStep(
-        conversationId: id,
-        messageId: suggestion.messageId,
-        title: suggestion.draft.title,
-        stepId: suggestion.stepId,
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '收起这条建议',
-          kind: 'discussion_dismiss_step',
-          kept: '建议还在讨论里',
-          next: '可以再试一次',
-        ),
-      );
-    }
+    await _cards.dismissSuggestion(
+      context,
+      conversationId: id,
+      suggestion: suggestion,
+    );
   }
 
   Future<void> _undoChange(AppliedChange change) =>
-      undoCommitWithFeedback(context, change.commitId);
+      _cards.undoChange(context, change);
 
   /// 记忆卡片与撤销之后由订阅更新页面，公共流程里的这次重读不再发起。
   Future<void> _acceptMemory(MemoryItemView item) async {
     final id = _conversationId;
-    final messageId = item.messageId;
-    if (id == null || messageId == null) return;
-    await acceptMemoryCard(
-      context: context,
-      accept: () => AppScope.of(context).chat.discussion.acceptMemoryItem(
-        conversationId: id,
-        messageId: messageId,
-        itemId: item.itemId,
-      ),
-      scope: 'discussion',
-      showNotice: (notice) => setState(() => _notice = notice),
-    );
+    if (id == null) return;
+    await _cards.acceptMemory(context, conversationId: id, item: item);
   }
 
   Future<void> _dismissMemory(MemoryItemView item) async {
     final id = _conversationId;
-    final messageId = item.messageId;
-    if (id == null || messageId == null) return;
-    await dismissMemoryCard(
-      context: context,
-      dismiss: () => AppScope.of(context).chat.discussion.dismissMemoryItem(
-        conversationId: id,
-        messageId: messageId,
-        itemId: item.itemId,
-      ),
-      scope: 'discussion',
-      showNotice: (notice) => setState(() => _notice = notice),
-    );
+    if (id == null) return;
+    await _cards.dismissMemory(context, conversationId: id, item: item);
   }
 
   Future<void> _undoMemory(MemoryItemView item) async {
-    final commitId = item.commitId;
-    if (commitId == null) return;
-    await undoMemoryCard(
-      context: context,
-      commitId: commitId,
-      scope: 'discussion',
-      showNotice: (notice) => setState(() => _notice = notice),
-    );
+    await _cards.undoMemory(context, item: item);
   }
 
   /// 只改记录状态，不离开页面；发消息会重新打开。
