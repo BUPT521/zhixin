@@ -101,14 +101,19 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
 
   /// 按一组条件取一页：把服务返回值换成 [PagedResult]，范围名字与命中总数记在
   /// 页面；失败说明在这里生成，保留原始调用栈。
+  ///
+  /// 结果晚到且条件已经换过时不写回范围名字与条数：新的第一页已经显示，旧的
+  /// 命中总数不能盖在它上面。
   SearchPage<Memory> _pageFetcher(MemorySearchQuery query) {
     return (offset) async {
       final loadingMore = _matches.loadingMore;
       try {
         final results = await AppScope.of(context).memory.edit
             .search(query, offset: offset, pageSize: kSearchPageSize);
-        _scopeLabels = results.scopeLabels;
-        _matched = results.matched;
+        if (query == _queryCondition) {
+          _scopeLabels = results.scopeLabels;
+          _matched = results.matched;
+        }
         return PagedResult<Memory>(
           items: results.memories,
           hasMore: results.hasMore,
@@ -116,7 +121,7 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
           total: results.matched,
         );
       } catch (error, stack) {
-        if (mounted) {
+        if (mounted && query == _queryCondition) {
           _notice = describeFailure(
             context,
             error,

@@ -219,7 +219,7 @@ class MaterialListState extends State<MaterialList> {
           nextOffset: results.nextOffset,
         );
       } catch (error, stack) {
-        if (mounted) {
+        if (mounted && query == _appliedQuery) {
           _searchNotice = describeFailure(
             context,
             error,

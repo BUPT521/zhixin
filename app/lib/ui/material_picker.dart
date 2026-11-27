@@ -229,7 +229,7 @@ class _MaterialPickerState extends State<MaterialPicker> {
           nextOffset: results.nextOffset,
         );
       } catch (error, stack) {
-        if (mounted) {
+        if (mounted && query == _appliedQuery) {
           _notice = describeFailure(
             context,
             error,
