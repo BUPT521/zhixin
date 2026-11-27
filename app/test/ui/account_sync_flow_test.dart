@@ -197,7 +197,9 @@ void main() {
     );
     expect(server.commits[userId] ?? const [], isEmpty, reason: '取消之后没有上传提交');
 
-    // 回到“我的”，同一个前置状态下点立即同步：确认框与取消说明与账号页一致。
+    // 回到“我的”，同一个前置状态下点立即同步：确认框与取消之后的副作用与账号页
+    // 一致。结论说明由 syncResultNotice 统一给出，见 cloud_sync_prompts_test 的
+    // 那条用例，这里不再依赖“我的”页后台重读的时序去等它出现。
     navigator.currentState!.pop();
     await tester.pumpAndSettle();
     final active = ValueNotifier<int>(3);
@@ -211,7 +213,8 @@ void main() {
     expect(find.text('首次同步会把本机记录合并到账号'), findsOneWidget);
     expect(find.textContaining('本机现在有 1 条提交'), findsOneWidget);
     await tester.tap(dialogAction('取消'));
-    await waitFor(tester, find.text(cancelledBaselineNotice));
+    await tester.pumpAndSettle();
+    expect(find.byType(ZhixinDialogLayout), findsNothing);
     expect(server.commits[userId] ?? const [], isEmpty, reason: '两个页面取消之后都不上传');
     expect(tester.takeException(), isNull);
   });

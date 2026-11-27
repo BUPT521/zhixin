@@ -1,6 +1,8 @@
 import 'package:forui/forui.dart' as forui;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:zhixin/application/sync_flow.dart';
+import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/ui/cloud_sync_prompts.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/zhixin_dialog.dart';
@@ -141,5 +143,63 @@ void main() {
     await tester.tap(find.widgetWithText(forui.FButton, '按快照重建'));
     await tester.pumpAndSettle();
     expect(snapshotRebuildResult, isTrue);
+  });
+
+  // 一轮同步结束之后的说明只有一处（审查条目 A22）：账号页与“我的”页都取这一句，
+  // 原先一处多写附件数、一处少说“已经一致”。
+  test('同步结束之后的说明按结论给，取消时写出下一步', () {
+    expect(
+      syncResultNotice(
+        const SyncFlowResult(SyncOutcome.cancelledBaselineUpload),
+      ),
+      '已取消首次同步，没有上传本机记录；自动同步已暂停',
+    );
+    expect(
+      syncResultNotice(
+        const SyncFlowResult(SyncOutcome.cancelledRestoreAlignment),
+      ),
+      '已取消同步；恢复后的内容仍在本机，需要时可以再点“立即同步”',
+    );
+    expect(
+      syncResultNotice(
+        const SyncFlowResult(SyncOutcome.cancelledSnapshotRebuild),
+      ),
+      '已取消同步；本机数据保持不变，需要时可以再点“立即同步”',
+    );
+    expect(
+      syncResultNotice(
+        const SyncFlowResult(
+          SyncOutcome.completed,
+          result: SyncResult(),
+          digestMismatch: false,
+        ),
+      ),
+      '同步完成，本机与云端已经一致',
+    );
+    expect(
+      syncResultNotice(
+        const SyncFlowResult(
+          SyncOutcome.completed,
+          result: SyncResult(),
+          digestMismatch: true,
+        ),
+      ),
+      '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式',
+    );
+    expect(
+      syncResultNotice(
+        const SyncFlowResult(
+          SyncOutcome.completed,
+          result: SyncResult(
+            pulledCommits: 2,
+            pushedCommits: 3,
+            uploadedAssets: 1,
+            downloadedAssets: 4,
+          ),
+          digestMismatch: false,
+        ),
+      ),
+      '同步完成：拉取 2 条、推送 3 条提交，上传 1、下载 4 个附件',
+    );
   });
 }
