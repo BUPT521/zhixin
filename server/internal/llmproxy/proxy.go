@@ -642,25 +642,21 @@ func (p *Proxy) responseTimeout(deadline time.Time) time.Duration {
 	return limit
 }
 
-// responsesOutputLimit 检查输出上限；没给时补上 defaultOutputTokens，用量估算
-// 要把它算进预留。上限与客户端的 buddyMaxOutputTokens 相同，一端改动要同时改
-// 另一端，否则客户端请求会被 400 拒绝（ADR-0053）。
-//
-// 放宽的口径（接入密钥的调用）把超出范围的值截到边界、写不成数字时退回默认值，
-// 再把最终值写回请求体：DSH 一类客户端会按模型上下文上限填一个很大的数，而
-// 服务端的 32768 是发出去的答案的上限，拒绝整次请求不如截断之后照常回答。
+// responsesOutputLimit 确定用于预留和转发的输出上限。访问令牌省略时使用 4096，
+// 接入密钥省略或提供无效值时使用上限 32768，整数越界时取最近的边界。
 func responsesOutputLimit(fields map[string]json.RawMessage, lenient bool) (int64, error) {
 	raw, ok := fields["max_output_tokens"]
-	if !ok || (lenient && bytes.Equal(bytes.TrimSpace(raw), []byte("null"))) {
-		fields["max_output_tokens"] = json.RawMessage(strconv.FormatInt(defaultOutputTokens, 10))
-		return defaultOutputTokens, nil
-	}
 	var output int64
-	if err := json.Unmarshal(raw, &output); err != nil {
+	switch {
+	case lenient && (!ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null"))):
+		output = maxOutputTokens
+	case !ok:
+		output = defaultOutputTokens
+	case json.Unmarshal(raw, &output) != nil:
 		if !lenient {
 			return 0, fmt.Errorf("max_output_tokens must be between %d and %d", minOutputTokens, maxOutputTokens)
 		}
-		output = defaultOutputTokens
+		output = maxOutputTokens
 	}
 	if output < minOutputTokens || output > maxOutputTokens {
 		if !lenient {
@@ -677,8 +673,7 @@ func responsesOutputLimit(fields map[string]json.RawMessage, lenient bool) (int6
 }
 
 // 对话输出上限的三个数字，单位是 token。客户端按上下文上限的四分之一计算，
-// 最高取到 maxOutputTokens；服务端按同一组数字校验，并在客户端省略时补上
-// defaultOutputTokens（ADR-0053）。
+// 最高取到 maxOutputTokens，服务端对访问令牌按同一组数字校验（ADR-0055）。
 const (
 	minOutputTokens     = 16
 	maxOutputTokens     = 32768

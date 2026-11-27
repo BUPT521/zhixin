@@ -354,6 +354,30 @@ func TestHandlerResponsesLenientForAPIKeys(t *testing.T) {
 		t.Fatalf("上限应截到 %d，得到 %v", maxOutputTokens, gotBody["max_output_tokens"])
 	}
 
+	for _, tc := range []struct {
+		name      string
+		token     string
+		options   map[string]any
+		wantLimit float64
+	}{
+		{name: "密钥省略可选字段", token: apiKey, wantLimit: 32768},
+		{name: "密钥提供无效上限", token: apiKey, options: map[string]any{"max_output_tokens": "auto"}, wantLimit: 32768},
+		{name: "访问令牌省略可选字段", token: tokens.AccessToken, wantLimit: 4096},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := map[string]any{"model": "deepseek-flash", "input": []any{}}
+			for name, value := range tc.options {
+				request[name] = value
+			}
+			if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tc.token, request, nil); code != http.StatusOK {
+				t.Fatalf("请求应成功，得到 %d", code)
+			}
+			if got := gotBody["max_output_tokens"]; got != tc.wantLimit {
+				t.Fatalf("转发的输出上限为 %v，期望 %v", got, tc.wantLimit)
+			}
+		})
+	}
+
 	alias := map[string]any{
 		"model": "deepseek-flash", "input": "含有\"引号\"的文本\n下一行",
 		"max_tokens": 300, "max_completion_tokens": 400,
@@ -386,7 +410,7 @@ func TestHandlerResponsesLenientForAPIKeys(t *testing.T) {
 	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", apiKey, alias, nil); code != http.StatusOK {
 		t.Fatalf("同时带正式字段和别名应成功，得到 %d", code)
 	}
-	if gotBody["max_output_tokens"] != float64(defaultOutputTokens) ||
+	if gotBody["max_output_tokens"] != float64(32768) ||
 		!reflect.DeepEqual(gotBody["reasoning"], alias["reasoning"]) ||
 		!reflect.DeepEqual(gotBody["text"], alias["text"]) {
 		t.Fatalf("同义字段应以正式字段为准：%+v", gotBody)

@@ -1640,7 +1640,7 @@ type PostV1LlmResponsesJSONBody struct {
 	Input        PostV1LlmResponsesJSONBody_Input `json:"input"`
 	Instructions *string                          `json:"instructions,omitempty"`
 
-	// MaxOutputTokens 省略时服务端补 4096，每次尝试按它与请求字节预留额度
+	// MaxOutputTokens 省略时接入密钥调用默认 32768，访问令牌调用默认 4096。
 	MaxOutputTokens *int   `json:"max_output_tokens,omitempty"`
 	Model           string `json:"model"`
 
