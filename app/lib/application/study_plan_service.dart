@@ -109,6 +109,53 @@ final class _StepsUnusable implements Exception {
   String toString() => reason;
 }
 
+/// 从事项打开学习内容时的去向。
+///
+/// 由 [StudyPlanService.entryFor] 判断之后交给页面，页面只负责按类型导航。
+sealed class PlanItemEntry {
+  const PlanItemEntry();
+}
+
+/// 打开这一题的作答。
+final class PlanItemEntryQuestion extends PlanItemEntry {
+  const PlanItemEntryQuestion(this.conversationId);
+
+  final String conversationId;
+}
+
+/// 打开这条讨论。
+final class PlanItemEntryDiscussion extends PlanItemEntry {
+  const PlanItemEntryDiscussion(this.conversationId);
+
+  final String conversationId;
+}
+
+/// 打开这份材料的某一页范围；来自系统学习步骤时带上计划与步骤。
+final class PlanItemEntryMaterial extends PlanItemEntry {
+  const PlanItemEntryMaterial({
+    required this.materialId,
+    this.pageFrom,
+    this.pageTo,
+    this.stepTitle,
+    this.studyPlanId,
+    this.planItemId,
+  });
+
+  final String materialId;
+  final int? pageFrom;
+  final int? pageTo;
+  final String? stepTitle;
+  final String? studyPlanId;
+  final String? planItemId;
+}
+
+/// 没有可以打开的内容；[message] 就是给用户看的那一句提示。
+final class PlanItemEntryNone extends PlanItemEntry {
+  const PlanItemEntryNone(this.message);
+
+  final String message;
+}
+
 /// 系统学习：按材料范围提出顺序、保存进度，并提供临时讨论入口。
 ///
 /// 模型可用时按批提出学习步骤，并核对每个所选页码恰好被覆盖一次；某批
@@ -201,6 +248,48 @@ class StudyPlanService {
       pageFrom: step.pageFrom,
       pageTo: step.pageTo,
     );
+  }
+
+  /// 从事项打开学习内容时的去向：页面只按返回值导航，不再自己判断。
+  ///
+  /// 系统学习步骤先推进到进行中，再由 [resumePoint] 推出继续位置：已经作答时
+  /// 回到原题，有讨论时打开讨论，否则打开这一步的材料页码。普通事项按绑定的
+  /// 讨论是否已经作答决定打开讨论还是作答；没有可打开的内容时返回一句提示，
+  /// 由页面就地显示。原先这段判断写在 `ui/plan_entry.dart`，导航层因此既要
+  /// 构造路由、又要推进步骤状态（批 8 的收尾）。
+  Future<PlanItemEntry> entryFor(PlanItem item) async {
+    if (item.isStudyStep) {
+      final planId = item.studyPlanId!;
+      await setStepStatus(planId, item.id, PlanItemStatus.doing);
+      final resume = await resumePoint(planId, item.id);
+      switch (resume.kind) {
+        case StudyStepResumeKind.question:
+          return PlanItemEntryQuestion(resume.conversationId!);
+        case StudyStepResumeKind.discussion:
+          return PlanItemEntryDiscussion(resume.conversationId!);
+        case StudyStepResumeKind.material:
+          final materialId = resume.materialId;
+          if (materialId == null) {
+            return const PlanItemEntryNone('这一步还没有关联材料，可以先在计划里补充。');
+          }
+          return PlanItemEntryMaterial(
+            materialId: materialId,
+            pageFrom: resume.pageFrom,
+            pageTo: resume.pageTo,
+            stepTitle: resume.title,
+            studyPlanId: planId,
+            planItemId: item.id,
+          );
+      }
+    }
+    final conversationId = item.conversationId;
+    if (conversationId == null) {
+      return const PlanItemEntryNone('这件事项还没有可以打开的内容，可以先查看事项说明。');
+    }
+    final record = await conversations.byId(conversationId);
+    return (record?.hasAttempts ?? false)
+        ? PlanItemEntryQuestion(conversationId)
+        : PlanItemEntryDiscussion(conversationId);
   }
 
   /// 从这一步的材料页开始讨论，并把新讨论记为这一步的继续位置。
