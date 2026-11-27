@@ -495,19 +495,13 @@ func (s *Service) PutRef(ctx context.Context, userID string, in api.SyncRefWrite
 			write.Note = *in.Note
 		}
 	}
-	if _, err := s.store.PutRef(ctx, userID, write); err != nil {
-		return Ref{}, err
-	}
-	refs, err := s.store.Refs(ctx, userID)
+	// 存储返回写入之后的那一行：不复活时它仍是已存的墓碑，写入失败时按错误返回，
+	// 这里不再重读整份命名版本去找这一行。
+	ref, _, err := s.store.PutRef(ctx, userID, write)
 	if err != nil {
 		return Ref{}, err
 	}
-	for _, ref := range refs {
-		if ref.Name == name {
-			return ref, nil
-		}
-	}
-	return Ref{}, ErrInvalid
+	return ref, nil
 }
 
 // NormalizeRefName 把命名版本的名字做 NFC 规范化并校验：去掉首尾空白之后规范化，

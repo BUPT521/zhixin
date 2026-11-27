@@ -574,29 +574,29 @@ func (s *Store) Refs(ctx context.Context, userID string) ([]syncsvc.Ref, error) 
 	return out, nil
 }
 
-// PutRef 写入或删除一个命名版本。写入时间不晚于已存删除时间时不复活，返回 false；
-// 新增一个未删除的名字会超过上限（syncsvc.MaxRefsPerAccount）时返回
-// syncsvc.ErrRefLimit。
-func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (bool, error) {
+// PutRef 写入或删除一个命名版本，返回写入之后存储里的那一行与这次调用有没有改动
+// 它。写入时间不晚于已存删除时间时不复活，返回 false 与原来的墓碑；新增一个未删除
+// 的名字会超过上限（syncsvc.MaxRefsPerAccount）时返回 syncsvc.ErrRefLimit。
+func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (syncsvc.Ref, bool, error) {
 	updated, err := pgTime(ref.UpdatedAt)
 	if err != nil {
-		return false, err
+		return syncsvc.Ref{}, false, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return syncsvc.Ref{}, false, err
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	if _, err := q.LockUser(ctx, userID); err != nil {
-		return false, err
+		return syncsvc.Ref{}, false, err
 	}
 	if ref.DeletedAt.IsZero() {
 		sourceTime, err := pgTime(ref.SourceTime())
 		if err != nil {
-			return false, err
+			return syncsvc.Ref{}, false, err
 		}
-		changed, err := q.PutSyncRefWithinLimit(ctx, db.PutSyncRefWithinLimitParams{
+		row, err := q.PutSyncRefWithinLimit(ctx, db.PutSyncRefWithinLimitParams{
 			UserID:          userID,
 			Name:            ref.Name,
 			CommitUid:       ref.CommitUID,
@@ -605,37 +605,66 @@ func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (boo
 			SourceUpdatedAt: sourceTime,
 			MaxAlive:        syncsvc.MaxRefsPerAccount,
 		})
-		if err != nil {
-			return false, err
-		}
-		if changed > 0 {
-			return true, tx.Commit(ctx)
-		}
-		// 0 行有两种原因：名字已经是墓碑且这次写入不晚于删除时间（不复活），或者
-		// 未删除的名字已经到上限。前者这一行存在，后者不存在。
-		state, err := q.SyncRef(ctx, db.SyncRefParams{UserID: userID, Name: ref.Name})
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false, syncsvc.ErrRefLimit
+			// 0 行有两种原因：名字已经是墓碑且这次写入不晚于删除时间（不复活），或者
+			// 未删除的名字已经到上限。前者这一行存在，后者不存在。
+			state, err := q.SyncRef(ctx, db.SyncRefParams{UserID: userID, Name: ref.Name})
+			if errors.Is(err, pgx.ErrNoRows) {
+				return syncsvc.Ref{}, false, syncsvc.ErrRefLimit
+			}
+			if err != nil {
+				return syncsvc.Ref{}, false, err
+			}
+			if state.DeletedAt.Valid && !ref.SourceTime().After(state.DeletedAt.Time) {
+				return refFromRow(state.Name, state.CommitUid, state.Note, state.UpdatedAt.Time, state.DeletedAt), false, nil
+			}
+			return syncsvc.Ref{}, false, syncsvc.ErrRefLimit
 		}
 		if err != nil {
-			return false, err
+			return syncsvc.Ref{}, false, err
 		}
-		if state.DeletedAt.Valid && !ref.SourceTime().After(state.DeletedAt.Time) {
-			return false, nil
+		if err := tx.Commit(ctx); err != nil {
+			return syncsvc.Ref{}, false, err
 		}
-		return false, syncsvc.ErrRefLimit
+		return refFromRow(row.Name, row.CommitUid, row.Note, row.UpdatedAt.Time, row.DeletedAt), true, nil
 	}
-	changed, err := q.DeleteSyncRef(ctx, db.DeleteSyncRefParams{
+	row, err := q.DeleteSyncRef(ctx, db.DeleteSyncRefParams{
 		UserID:    userID,
 		Name:      ref.Name,
 		CommitUid: ref.CommitUID,
 		Note:      ref.Note,
 		UpdatedAt: updated,
 	})
-	if err != nil {
-		return false, err
+	if errors.Is(err, pgx.ErrNoRows) {
+		// 名字已经是墓碑：这次删除不改动它，读回原来的墓碑。
+		state, err := q.SyncRef(ctx, db.SyncRefParams{UserID: userID, Name: ref.Name})
+		if err != nil {
+			return syncsvc.Ref{}, false, err
+		}
+		return refFromRow(state.Name, state.CommitUid, state.Note, state.UpdatedAt.Time, state.DeletedAt), false, nil
 	}
-	return changed > 0, tx.Commit(ctx)
+	if err != nil {
+		return syncsvc.Ref{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return syncsvc.Ref{}, false, err
+	}
+	return refFromRow(row.Name, row.CommitUid, row.Note, row.UpdatedAt.Time, row.DeletedAt), true, nil
+}
+
+// refFromRow 把库里的一行命名版本转成 syncsvc 的类型；deleted_at 为空表示名字仍然
+// 有效。
+func refFromRow(name, commitUID, note string, updatedAt time.Time, deletedAt pgtype.Timestamptz) syncsvc.Ref {
+	ref := syncsvc.Ref{
+		Name:      name,
+		CommitUID: commitUID,
+		Note:      note,
+		UpdatedAt: updatedAt,
+	}
+	if deletedAt.Valid {
+		ref.DeletedAt = deletedAt.Time
+	}
+	return ref
 }
 
 // After 返回 seq 大于 after 的提交，按顺序最多 limit 条。

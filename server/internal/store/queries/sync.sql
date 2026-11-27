@@ -273,8 +273,9 @@ FROM sync_ref
 WHERE user_id = sqlc.arg(user_id)
 ORDER BY name;
 
--- 删除一个名字，重试时保留原来的墓碑时间。
--- name: DeleteSyncRef :execrows
+-- 删除一个名字，返回写入之后那一行；名字已经是墓碑时 WHERE 不成立、返回 0 行，
+-- 调用方读回原来的墓碑。
+-- name: DeleteSyncRef :one
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 VALUES (
   sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(commit_uid), sqlc.arg(note),
@@ -282,12 +283,14 @@ VALUES (
 )
 ON CONFLICT (user_id, name) DO UPDATE
 SET deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
-WHERE sync_ref.deleted_at IS NULL;
+WHERE sync_ref.deleted_at IS NULL
+RETURNING name, commit_uid, note, updated_at, deleted_at;
 
 -- 写入一个命名版本并核对每账号的上限：新名字（原来没有或只在墓碑上）会新增一个
 -- 未删除的名字，未删除的条数已经到上限时受影响行数为 0，调用方按 ErrRefLimit
--- 处理。调用方先锁定账号行，同一个账号的并发写入按顺序核对条数。
--- name: PutSyncRefWithinLimit :execrows
+-- 处理。调用方先锁定账号行，同一个账号的并发写入按顺序核对条数。返回写入之后
+-- 那一行；没有写入时返回 0 行，调用方读回这一行判断是没复活还是到了上限。
+-- name: PutSyncRefWithinLimit :one
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 SELECT sqlc.arg(user_id), sqlc.arg(name), sqlc.arg(commit_uid), sqlc.arg(note),
   sqlc.arg(updated_at), NULL
@@ -304,9 +307,11 @@ SET commit_uid = EXCLUDED.commit_uid,
     note = EXCLUDED.note,
     updated_at = EXCLUDED.updated_at,
     deleted_at = NULL
-WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < sqlc.arg(source_updated_at)::timestamptz;
+WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < sqlc.arg(source_updated_at)::timestamptz
+RETURNING name, commit_uid, note, updated_at, deleted_at;
 
--- 写入之后核对一行：0 行说明这个名字已经不在，或者这次写入没有生效。
+-- 写入没有生效时读回这一行：它存在说明名字是墓碑、这次写入没有复活它，不存在
+-- 说明未删除的名字已经到上限。
 -- name: SyncRef :one
 SELECT name, commit_uid, note, updated_at, deleted_at
 FROM sync_ref

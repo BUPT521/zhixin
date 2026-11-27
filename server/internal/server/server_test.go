@@ -730,8 +730,8 @@ func (failingSyncStore) Refs(context.Context, string) ([]syncsvc.Ref, error) {
 	return nil, errors.New("database is down")
 }
 
-func (failingSyncStore) PutRef(context.Context, string, syncsvc.Ref) (bool, error) {
-	return false, errors.New("database is down")
+func (failingSyncStore) PutRef(context.Context, string, syncsvc.Ref) (syncsvc.Ref, bool, error) {
+	return syncsvc.Ref{}, false, errors.New("database is down")
 }
 
 func TestInternalErrorsAreProblems(t *testing.T) {

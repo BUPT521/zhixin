@@ -226,11 +226,12 @@ type Store interface {
 	ActiveMinSyncedSeq(ctx context.Context, userID string, since time.Time) (int64, bool, error)
 	// Refs lists every named ref of the account, tombstones included.
 	Refs(ctx context.Context, userID string) ([]Ref, error)
-	// PutRef stores one named ref or its tombstone. A write older than the
-	// stored deletion time does not revive the name; it returns false then.
-	// ErrRefLimit is returned when a new name would exceed the per-account
-	// limit.
-	PutRef(ctx context.Context, userID string, ref Ref) (bool, error)
+	// PutRef stores one named ref or its tombstone and returns the row that is
+	// stored afterwards together with whether this call wrote it. A write older
+	// than the stored deletion time does not revive the name; it returns the
+	// existing tombstone and false. ErrRefLimit is returned when a new name
+	// would exceed the per-account limit.
+	PutRef(ctx context.Context, userID string, ref Ref) (Ref, bool, error)
 }
 
 // AppendResult 是一次推送的结果：调用之后的 head、与请求逐条对应的序号，以及
@@ -728,8 +729,9 @@ func (m *MemoryStore) Refs(_ context.Context, userID string) ([]Ref, error) {
 }
 
 // PutRef 写入一个命名版本：后写覆盖先写，写入时间不晚于已存删除时间时不复活；
-// 新增一个未删除的名字会超过上限时返回 ErrRefLimit。
-func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (bool, error) {
+// 返回写入之后存储里的那一行，以及这次调用有没有改动它。新增一个未删除的名字
+// 会超过上限时返回 ErrRefLimit。
+func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (Ref, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
@@ -742,7 +744,7 @@ func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (bool, e
 		revives = false
 	}
 	if !revives {
-		return false, nil
+		return current, false, nil
 	}
 	// 写入一个名字会新增一个未删除的名字：原来的行不存在或已经是墓碑时都要看上限。
 	if ref.DeletedAt.IsZero() && (!exists || !current.DeletedAt.IsZero()) {
@@ -753,11 +755,11 @@ func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (bool, e
 			}
 		}
 		if alive >= MaxRefsPerAccount {
-			return false, ErrRefLimit
+			return Ref{}, false, ErrRefLimit
 		}
 	}
 	l.refs[ref.Name] = ref
-	return true, nil
+	return ref, true, nil
 }
 
 // SplitCapabilities 把逗号分隔的能力声明解析成小写名字：去首尾空白、丢掉空项、

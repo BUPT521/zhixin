@@ -246,7 +246,7 @@ func (q *Queries) DeleteSyncDevices(ctx context.Context, userID string) error {
 	return err
 }
 
-const deleteSyncRef = `-- name: DeleteSyncRef :execrows
+const deleteSyncRef = `-- name: DeleteSyncRef :one
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 VALUES (
   $1, $2, $3, $4,
@@ -255,6 +255,7 @@ VALUES (
 ON CONFLICT (user_id, name) DO UPDATE
 SET deleted_at = EXCLUDED.deleted_at, updated_at = EXCLUDED.updated_at
 WHERE sync_ref.deleted_at IS NULL
+RETURNING name, commit_uid, note, updated_at, deleted_at
 `
 
 type DeleteSyncRefParams struct {
@@ -265,19 +266,33 @@ type DeleteSyncRefParams struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
-// 删除一个名字，重试时保留原来的墓碑时间。
-func (q *Queries) DeleteSyncRef(ctx context.Context, arg DeleteSyncRefParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteSyncRef,
+type DeleteSyncRefRow struct {
+	Name      string
+	CommitUid string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
+}
+
+// 删除一个名字，返回写入之后那一行；名字已经是墓碑时 WHERE 不成立、返回 0 行，
+// 调用方读回原来的墓碑。
+func (q *Queries) DeleteSyncRef(ctx context.Context, arg DeleteSyncRefParams) (DeleteSyncRefRow, error) {
+	row := q.db.QueryRow(ctx, deleteSyncRef,
 		arg.UserID,
 		arg.Name,
 		arg.CommitUid,
 		arg.Note,
 		arg.UpdatedAt,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i DeleteSyncRefRow
+	err := row.Scan(
+		&i.Name,
+		&i.CommitUid,
+		&i.Note,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const deleteSyncRefs = `-- name: DeleteSyncRefs :exec
@@ -488,7 +503,7 @@ func (q *Queries) MarkAttachmentOrphaned(ctx context.Context, arg MarkAttachment
 	return err
 }
 
-const putSyncRefWithinLimit = `-- name: PutSyncRefWithinLimit :execrows
+const putSyncRefWithinLimit = `-- name: PutSyncRefWithinLimit :one
 INSERT INTO sync_ref (user_id, name, commit_uid, note, updated_at, deleted_at)
 SELECT $1, $2, $3, $4,
   $5, NULL
@@ -506,6 +521,7 @@ SET commit_uid = EXCLUDED.commit_uid,
     updated_at = EXCLUDED.updated_at,
     deleted_at = NULL
 WHERE sync_ref.deleted_at IS NULL OR sync_ref.deleted_at < $7::timestamptz
+RETURNING name, commit_uid, note, updated_at, deleted_at
 `
 
 type PutSyncRefWithinLimitParams struct {
@@ -518,11 +534,20 @@ type PutSyncRefWithinLimitParams struct {
 	SourceUpdatedAt pgtype.Timestamptz
 }
 
+type PutSyncRefWithinLimitRow struct {
+	Name      string
+	CommitUid string
+	Note      string
+	UpdatedAt pgtype.Timestamptz
+	DeletedAt pgtype.Timestamptz
+}
+
 // 写入一个命名版本并核对每账号的上限：新名字（原来没有或只在墓碑上）会新增一个
 // 未删除的名字，未删除的条数已经到上限时受影响行数为 0，调用方按 ErrRefLimit
-// 处理。调用方先锁定账号行，同一个账号的并发写入按顺序核对条数。
-func (q *Queries) PutSyncRefWithinLimit(ctx context.Context, arg PutSyncRefWithinLimitParams) (int64, error) {
-	result, err := q.db.Exec(ctx, putSyncRefWithinLimit,
+// 处理。调用方先锁定账号行，同一个账号的并发写入按顺序核对条数。返回写入之后
+// 那一行；没有写入时返回 0 行，调用方读回这一行判断是没复活还是到了上限。
+func (q *Queries) PutSyncRefWithinLimit(ctx context.Context, arg PutSyncRefWithinLimitParams) (PutSyncRefWithinLimitRow, error) {
+	row := q.db.QueryRow(ctx, putSyncRefWithinLimit,
 		arg.UserID,
 		arg.Name,
 		arg.CommitUid,
@@ -531,10 +556,15 @@ func (q *Queries) PutSyncRefWithinLimit(ctx context.Context, arg PutSyncRefWithi
 		arg.MaxAlive,
 		arg.SourceUpdatedAt,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	var i PutSyncRefWithinLimitRow
+	err := row.Scan(
+		&i.Name,
+		&i.CommitUid,
+		&i.Note,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }
 
 const renameSyncDevice = `-- name: RenameSyncDevice :one
@@ -798,7 +828,8 @@ type SyncRefRow struct {
 	DeletedAt pgtype.Timestamptz
 }
 
-// 写入之后核对一行：0 行说明这个名字已经不在，或者这次写入没有生效。
+// 写入没有生效时读回这一行：它存在说明名字是墓碑、这次写入没有复活它，不存在
+// 说明未删除的名字已经到上限。
 func (q *Queries) SyncRef(ctx context.Context, arg SyncRefParams) (SyncRefRow, error) {
 	row := q.db.QueryRow(ctx, syncRef, arg.UserID, arg.Name)
 	var i SyncRefRow
