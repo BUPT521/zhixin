@@ -15,7 +15,7 @@ import '../application/prefetch_service.dart';
 import '../application/sync_service.dart';
 import '../data/backup/data_version_service.dart';
 import '../domain/models/restore_point.dart';
-import '../data/revisions/revision_models.dart';
+import '../domain/models/revision_models.dart';
 import '../data/revisions/revision_service.dart'
     show RevisionDetails, RevisionService;
 import '../domain/models/result.dart';

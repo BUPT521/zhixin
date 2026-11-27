@@ -8,7 +8,7 @@ import '../db/raw_executor.dart';
 import '../revisions/asset_store.dart';
 import '../revisions/revision_cursor.dart';
 import '../revisions/revision_engine.dart';
-import '../revisions/revision_models.dart';
+import '../../domain/models/revision_models.dart';
 import '../revisions/revision_package.dart';
 import '../revisions/revision_service.dart';
 import 'data_package_service.dart';

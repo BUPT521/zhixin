@@ -9,7 +9,7 @@ import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/asset_store.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../domain/rules/notices.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_service.dart';

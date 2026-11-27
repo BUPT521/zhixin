@@ -16,7 +16,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 
 import 'revision_engine.dart' show versionedTableNames;
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 
 /// 摘要的模：2^256，等于 SHA-256 的输出空间。
 final BigInt revisionDigestModulus = BigInt.one << 256;

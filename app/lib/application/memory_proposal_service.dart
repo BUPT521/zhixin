@@ -2,7 +2,7 @@ import '../data/db/write_transactions.dart';
 import '../data/repository/attempt_repository.dart';
 import '../data/repository/conversation_repository.dart';
 import '../data/repository/memory_repository.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../domain/models/time_values.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';

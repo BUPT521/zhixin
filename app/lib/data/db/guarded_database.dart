@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:drift/drift.dart' show DatabaseConnectionUser;
 
 import '../revisions/revision_engine.dart';
-import '../revisions/revision_models.dart';
+import '../../domain/models/revision_models.dart';
 import 'database_gate.dart';
 import 'drift/app_database.dart';
 import 'live_queries.dart';

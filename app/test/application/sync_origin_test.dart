@@ -4,7 +4,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/sql.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 
 import '../support/fake_server.dart';
 import '../support/sync_rig.dart';

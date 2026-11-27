@@ -1,10 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'revision_actions.dart';
-
-import '../../domain/rules/coded_enum.dart';
-import '../../domain/rules/time_format.dart';
+import '../rules/coded_enum.dart';
+import '../rules/revision_actions.dart';
+import '../rules/time_format.dart';
 
 /// 提交类型（01 `revision_commit.kind`）。
 ///

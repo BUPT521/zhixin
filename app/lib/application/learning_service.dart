@@ -3,7 +3,7 @@ import '../ai/llm_client.dart';
 import '../ai/buddy_prompts.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_service.dart';
 import '../data/repository/assessment_repository.dart';

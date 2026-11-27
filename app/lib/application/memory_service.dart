@@ -1,5 +1,5 @@
 import '../data/db/write_transactions.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../data/repository/material_repository.dart';
 import '../data/repository/memory_repository.dart';
 import '../data/repository/task_repository.dart';

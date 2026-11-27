@@ -12,7 +12,7 @@ import 'package:zhixin/data/db/database_gate.dart';
 import 'package:zhixin/data/db/guarded_database.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
 import 'package:zhixin/domain/models/backup_error.dart';
 import 'package:zhixin/domain/rules/package_budget.dart';

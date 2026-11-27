@@ -13,7 +13,7 @@ import 'package:zhixin/domain/models/server_models.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 import 'package:zhixin/domain/rules/uuid_v7.dart';
 
 import '../support/fake_server.dart';

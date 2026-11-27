@@ -14,7 +14,7 @@ import '../backup/restore_validation.dart';
 import 'asset_store.dart';
 import 'revision_engine.dart';
 import '../db/raw_executor.dart';
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 
 /// 当前数据包与版本库备份。
 ///

@@ -66,7 +66,7 @@ import 'data/repository/task_repository.dart';
 import 'data/revisions/asset_store.dart';
 import 'data/revisions/revision_cursor.dart';
 import 'data/revisions/revision_engine.dart';
-import 'data/revisions/revision_models.dart';
+import 'domain/models/revision_models.dart';
 import 'data/revisions/revision_package.dart';
 import 'data/revisions/revision_service.dart';
 import 'data/revisions/semantic_change.dart';

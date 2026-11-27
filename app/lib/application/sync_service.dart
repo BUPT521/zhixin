@@ -13,7 +13,7 @@ import '../data/revisions/asset_store.dart';
 import '../data/revisions/revision_cursor.dart';
 import '../data/revisions/revision_digest.dart';
 import '../data/revisions/revision_engine.dart';
-import '../data/revisions/revision_models.dart';
+import '../domain/models/revision_models.dart';
 import '../data/revisions/revision_service.dart';
 import '../data/revisions/revision_shadow.dart';
 import '../domain/rules/schema_version.dart';

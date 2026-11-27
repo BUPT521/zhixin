@@ -6,7 +6,7 @@ import '../ai/llm_config_store.dart';
 import '../data/db/write_transactions.dart';
 import '../data/backup/data_version_service.dart';
 import '../data/repository/settings_repository.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../data/revisions/revision_engine.dart';
 import '../domain/models/result.dart';
 import '../domain/models/write_result.dart';

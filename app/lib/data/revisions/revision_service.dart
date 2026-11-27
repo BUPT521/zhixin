@@ -3,11 +3,11 @@ import '../../domain/rules/time_policy.dart';
 import '../db/guarded_database.dart';
 import '../db/sql.dart';
 import 'asset_store.dart';
-import 'revision_actions.dart';
+import '../../domain/rules/revision_actions.dart';
 import 'revision_digest.dart';
 import 'revision_engine.dart';
 import '../db/raw_executor.dart';
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 import 'revision_undo.dart';
 
 /// 把同步冲突里的本机值写回时留的提交说明；只给人看，不参与类型判断。

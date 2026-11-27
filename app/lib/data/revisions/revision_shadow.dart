@@ -1,6 +1,6 @@
 import '../db/raw_executor.dart';
 import '../db/sql.dart';
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 
 /// 已被远端提交取代的本机格子（01 `sync_shadow`）。
 ///
