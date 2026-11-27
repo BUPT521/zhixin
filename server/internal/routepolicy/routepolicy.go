@@ -8,6 +8,8 @@
 // mux 的兜底 404，不在这里做判断。
 package routepolicy
 
+import "slices"
+
 // publicOperations 显式列出 openapi.yaml 里声明 security: [] 的操作，写法与
 // 生成代码注册的模式一致。除这些之外，只要 r.Pattern 非空就要求 Bearer；新增
 // 公开接口必须同时改这里与契约，否则会被默认拒绝，或者被契约测试发现两边漂移。
@@ -104,7 +106,7 @@ func PublicOperations() []string {
 }
 
 // IsPublic 报告这条已匹配的路由是否公开。
-func IsPublic(pattern string) bool { return contains(publicOperations, pattern) }
+func IsPublic(pattern string) bool { return slices.Contains(publicOperations, pattern) }
 
 // RequiresAuth 报告已匹配的路由是否要求 Bearer。没有匹配到路由时 r.Pattern 为空，
 // 这时不该在这里拒绝，否则 mux 的 404 会变成 401，客户端也拿不到 problem 体。
@@ -114,7 +116,7 @@ func RequiresAuth(pattern string) bool { return pattern != "" && !IsPublic(patte
 func IsUpload(pattern string) bool { return cloudWrites[pattern].Upload }
 
 // AllowsKey 报告这条已匹配的路由是否接受模型代理密钥。
-func AllowsKey(pattern string) bool { return contains(keyOperations, pattern) }
+func AllowsKey(pattern string) bool { return slices.Contains(keyOperations, pattern) }
 
 // KeyOperations 返回密钥可以访问的操作副本，供契约测试核对。
 func KeyOperations() []string {
@@ -126,13 +128,4 @@ func KeyOperations() []string {
 func CacheSeconds(pattern string) (int, bool) {
 	seconds, ok := cacheableOperations[pattern]
 	return seconds, ok
-}
-
-func contains(list []string, pattern string) bool {
-	for _, item := range list {
-		if item == pattern {
-			return true
-		}
-	}
-	return false
 }

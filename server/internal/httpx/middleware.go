@@ -3,7 +3,6 @@ package httpx
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -28,9 +27,8 @@ func RequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get("X-Request-Id")
 		if !validRequestID.MatchString(id) {
-			var b [12]byte
-			_, _ = rand.Read(b[:])
-			id = hex.EncodeToString(b[:])
+			// crypto/rand.Text 生成 26 个 base32 字符，满足上面的形状校验。
+			id = rand.Text()
 		}
 		w.Header().Set("X-Request-Id", id)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey, id)))
