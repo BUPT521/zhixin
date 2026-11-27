@@ -169,7 +169,7 @@ func run(log *slog.Logger) error {
 	// 收款配置，配了数据库就启用（ADR-0086）。
 	go llmproxy.SettlementSweepLoop(ctx, settlementFailures, log)
 
-	handler, _ := server.Build(ctx, cfg, stores, log)
+	handler := server.Build(ctx, cfg, stores, log)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,

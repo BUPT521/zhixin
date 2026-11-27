@@ -143,15 +143,13 @@ func DeleteAccountData(deleters ...func(ctx context.Context, userID string) erro
 	}
 }
 
-// New builds the complete handler. ctx 只用于每日清理循环：会话与验证码的过期行、
-// 反馈保留期都在启动时清一次，之后每天一次，进程退出时随 ctx 一起停止。
-func New(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) http.Handler {
-	handler, _ := Build(ctx, cfg, st, log)
-	return handler
-}
-
-// Build 组装服务并返回模型路由器，供进程定期刷新路由。
-func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) (http.Handler, *llmproxy.Router) {
+// Build 组装服务，返回完整的处理器。ctx 用于随进程退出的周期任务：会话与
+// 验证码的过期行、反馈保留期、备份对象对账都在启动时先跑一次，之后按各自周期
+// 重跑，进程退出时随 ctx 一起停止。
+//
+// 模型路由快照只在启动时读一次，之后由管理后台保存配置时整体换新（ADR-0029）；
+// 直接改库或多实例部署的修改要经后台保存一次或重启本进程才会生效。
+func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) http.Handler {
 	mux := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
@@ -431,7 +429,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		httpx.SecurityHeaders,
 		httpx.Recover(log),
 		httpx.BodyIdleTimeout(cfg.BodyIdleTimeout),
-	), router
+	)
 }
 
 // cachePublic 给明确可缓存的公开响应覆盖默认的 no-store，目前只有发布清单。
