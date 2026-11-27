@@ -13,7 +13,8 @@ import 'package:zhixin/application/account_actions.dart';
 import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
-import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
+import 'package:zhixin/data/cloud/device_preferences_store.dart';
+import 'package:zhixin/data/cloud/sync_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
@@ -36,7 +37,8 @@ void main() {
     dir = await Directory.systemTemp.createTemp('zhixin_account_actions');
     account = AccountService(
       store: AccountStore(MemorySecretStore()),
-      preferences: CloudPreferencesStore(filesDir: dir.path),
+      devicePreferences: DevicePreferencesStore(filesDir: dir.path),
+      syncPreferences: SyncPreferencesStore(filesDir: dir.path),
       clientFactory: (baseUrl) =>
           ServerClient(baseUrl: baseUrl, httpClient: server.client),
     );
@@ -48,7 +50,7 @@ void main() {
     addTearDown(rig.close);
     final sync = SyncService(
       account: account,
-      preferences: account.preferences,
+      syncPreferences: account.syncPreferences,
       revisions: rig.revisions,
       engine: rig.engine,
       database: rig.db,

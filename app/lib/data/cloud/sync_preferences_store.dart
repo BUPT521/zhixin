@@ -61,71 +61,28 @@ class SyncState {
   };
 }
 
-/// 编译时确定的默认服务地址：正式包指向项目组的第一套实例，本地联调用
-/// `--dart-define=ZHIXIN_SERVER_URL=http://127.0.0.1:8080` 覆盖。
+/// 账号同步偏好：自动同步开关、上次登录身份、同步状态与记忆统计的冲刷时刻。
 ///
-/// 账号可选，登录默认连接项目组提供的实例。开发者模式可以改用自建知新实例。
-const String defaultServerBaseUrl = String.fromEnvironment(
-  'ZHIXIN_SERVER_URL',
-  defaultValue: 'https://zhixin.chensiyuan.work',
-);
+/// 这几项跟着本机空间走：换账号空间之后读的是另一份，文件放在空间目录里，
+/// 与设备级的服务地址偏好 [DevicePreferencesStore] 用两个不同的文件名。写成
+/// 先写临时文件再改名，界面切换自动同步与同步收尾写状态可能同时发生，两个
+/// 动作各自在这份文件上读改写，改的口径见 [AtomicJsonFile]。
+class SyncPreferencesStore {
+  SyncPreferencesStore({required this.filesDir});
 
-/// 云同步相关的本机偏好：服务地址、是否自动同步，以及当前账号的同步状态。
-///
-/// 这里只保存这台设备自己的配置与账号标识。同步位置属于库内数据，存在
-/// `revision_cursor` 表里，随整库备份与恢复一起走；换机时按当前数据重新对齐，
-/// 而不是沿用别的设备的位置（ADR-0039）。文件写在应用私有目录，卸载应用时
-/// 一起删除。
-///
-/// 写按文件排队、先写临时文件再改名，口径见 [AtomicJsonFile]：界面切换自动同步与
-/// 同步收尾写状态可能同时发生，两个动作各自在这份文件上读改写。
-class CloudPreferencesStore {
-  CloudPreferencesStore({required this.filesDir, String? spaceFilesDir})
-    : spaceFilesDir = spaceFilesDir ?? filesDir;
-
-  static const String fileName = 'cloud.json';
+  static const String fileName = 'sync.json';
 
   final String filesDir;
-  final String spaceFilesDir;
 
   String get path => p.join(filesDir, fileName);
 
   AtomicJsonFile get _file => AtomicJsonFile(path);
 
-  AtomicJsonFile get _spaceFile =>
-      AtomicJsonFile(p.join(spaceFilesDir, fileName));
-
-  Future<Map<String, Object?>> _read() => _spaceFile.read();
+  Future<Map<String, Object?>> _read() => _file.read();
 
   /// 读最新的内容、改一个键再整体写回，这一段在这份文件的队列里独占执行。
   Future<void> _mutate(void Function(Map<String, Object?> raw) change) =>
-      _spaceFile.update(change);
-
-  /// 本机保存的地址；没有保存过时为空，调用方据此区分默认地址与用户改过的地址。
-  Future<String> storedServerBaseUrl() async {
-    final raw = await _file.read();
-    final value = raw['server_base_url'];
-    return value is String ? value.trim() : '';
-  }
-
-  Future<bool> usesDefaultServerBaseUrl() async =>
-      (await storedServerBaseUrl()).isEmpty;
-
-  Future<String> serverBaseUrl() async {
-    final stored = await storedServerBaseUrl();
-    return stored.isEmpty ? defaultServerBaseUrl : stored;
-  }
-
-  Future<void> setServerBaseUrl(String value) => _file.update((raw) {
-    raw['server_base_url'] = value.trim();
-  });
-
-  Future<bool> developerMode() async =>
-      (await _file.read())['developer_mode'] == true;
-
-  Future<void> setDeveloperMode(bool enabled) => _file.update((raw) {
-    raw['developer_mode'] = enabled;
-  });
+      _file.update(change);
 
   Future<bool> autoSync() async {
     final raw = await _read();

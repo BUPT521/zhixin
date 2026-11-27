@@ -3,7 +3,8 @@ import 'dart:async';
 import '../ai/llm_config.dart';
 import '../data/cloud/account_store.dart';
 import '../domain/models/account_models.dart';
-import '../data/cloud/cloud_preferences_store.dart';
+import '../data/cloud/device_preferences_store.dart';
+import '../data/cloud/sync_preferences_store.dart';
 import '../data/cloud/server_client.dart';
 import '../domain/models/server_models.dart';
 import '../domain/models/model_api_key.dart';
@@ -86,13 +87,15 @@ class AccountSnapshot {
 
 /// 账号与登录：注册、登录、刷新令牌、退出、删除账号与请求服务端清除数据。
 ///
-/// 令牌只进 Android Keystore，服务地址与各空间的同步偏好由
-/// [CloudPreferencesStore] 保存。所有需要登录的请求经 [call] 发出去，
+/// 令牌只进 Android Keystore，服务地址由 [DevicePreferencesStore] 保存，
+/// 自动同步与同步状态由 [SyncPreferencesStore] 按空间保存。所有需要登录的
+/// 请求经 [call] 发出去，
 /// 访问令牌过期时先刷新再重试一次；刷新失败说明登录已经失效，界面要求重登。
 class AccountService {
   AccountService({
     required this.store,
-    required this.preferences,
+    required this.devicePreferences,
+    required this.syncPreferences,
     DateTime Function()? now,
     String? deviceName,
     this.clientFactory,
@@ -108,7 +111,8 @@ class AccountService {
   String get deviceName => _deviceName;
 
   final AccountStore store;
-  final CloudPreferencesStore preferences;
+  final DevicePreferencesStore devicePreferences;
+  final SyncPreferencesStore syncPreferences;
   final DateTime Function() _now;
   final String _deviceName;
 
@@ -172,9 +176,9 @@ class AccountService {
   Future<AccountSnapshot> snapshot() async {
     final epoch = _epoch;
     final session = await _readSession();
-    final baseUrl = await preferences.serverBaseUrl();
-    final autoSync = await preferences.autoSync();
-    final usesDefault = await preferences.usesDefaultServerBaseUrl();
+    final baseUrl = await devicePreferences.serverBaseUrl();
+    final autoSync = await syncPreferences.autoSync();
+    final usesDefault = await devicePreferences.usesDefaultServerBaseUrl();
     final profile = session == null ? null : await _readProfile(session);
     if (session != null && session.isExpired) {
       await _expireSession(epoch);
@@ -194,12 +198,12 @@ class AccountService {
     );
   }
 
-  Future<String> serverBaseUrl() => preferences.serverBaseUrl();
+  Future<String> serverBaseUrl() => devicePreferences.serverBaseUrl();
 
-  Future<bool> developerMode() => preferences.developerMode();
+  Future<bool> developerMode() => devicePreferences.developerMode();
 
   Future<void> setDeveloperMode(bool enabled) =>
-      preferences.setDeveloperMode(enabled);
+      devicePreferences.setDeveloperMode(enabled);
 
   /// 先用无凭据请求确认目标实例就绪且支持当前 schema，再切换服务实例。
   ///
@@ -251,11 +255,11 @@ class AccountService {
   Future<void> setServerBaseUrl(String value) async {
     final normalized = ServerClient.normalizeBaseUrl(value);
     final previousOrigin = ServerClient.originOf(
-      await preferences.serverBaseUrl(),
+      await devicePreferences.serverBaseUrl(),
     );
     final nextOrigin = ServerClient.originOf(normalized);
     _origin = nextOrigin;
-    await preferences.setServerBaseUrl(normalized);
+    await devicePreferences.setServerBaseUrl(normalized);
     _client?.dispose();
     _client = null;
     if (previousOrigin == nextOrigin) return;
@@ -266,13 +270,13 @@ class AccountService {
       await signedOut(false);
     } else {
       await _clearSyncState();
-      await preferences.setAutoSync(false);
+      await syncPreferences.setAutoSync(false);
     }
   }
 
-  Future<bool> autoSync() => preferences.autoSync();
+  Future<bool> autoSync() => syncPreferences.autoSync();
 
-  Future<void> setAutoSync(bool value) => preferences.setAutoSync(value);
+  Future<void> setAutoSync(bool value) => syncPreferences.setAutoSync(value);
 
   /// 保存自动同步开关，返回保存之后的整份快照。
   ///
@@ -281,7 +285,7 @@ class AccountService {
   /// 暂时无法读取”，额度购买入口也随之消失（A1）。
   Future<AccountSnapshot> withAutoSync(bool value) async {
     final current = await snapshot();
-    await preferences.setAutoSync(value);
+    await syncPreferences.setAutoSync(value);
     return current.copyWith(autoSync: value);
   }
 
@@ -405,7 +409,7 @@ class AccountService {
         session: session,
         profile: profile,
         autoSync: await autoSync(),
-        usesDefaultServer: await preferences.usesDefaultServerBaseUrl(),
+        usesDefaultServer: await devicePreferences.usesDefaultServerBaseUrl(),
       );
     } catch (_) {
       // 资料是一次额外的核对，失败不影响本机已登录状态。
@@ -675,7 +679,7 @@ class AccountService {
   /// 位置与 scope 保留在库里，由同步服务决定重新登录同一账号时是否继续用；
   /// 这里只负责通知，账号操作本身不依赖回调是否成功。
   Future<void> _clearSyncState() async {
-    await preferences.clearSyncState();
+    await syncPreferences.clearSyncState();
     final callback = onSyncStateCleared;
     if (callback == null) return;
     try {
@@ -727,16 +731,16 @@ class AccountService {
       await signedIn(session, profile);
       return result;
     }
-    final state = await preferences.syncState();
+    final state = await syncPreferences.syncState();
     final identity = '${session.serverOrigin}|${session.userId}';
-    final lastIdentity = await preferences.lastIdentity();
-    await preferences.setLastIdentity(identity);
+    final lastIdentity = await syncPreferences.lastIdentity();
+    await syncPreferences.setLastIdentity(identity);
     final switched = lastIdentity.isNotEmpty && lastIdentity != identity;
     if (switched) {
       // 换了一个账号（或实例）：旧账号的同步位置不能用，自动同步先暂停，
       // 等用户在账号页确认之后再恢复。
       await _clearSyncState();
-      await preferences.setAutoSync(false);
+      await syncPreferences.setAutoSync(false);
     } else if (state != null &&
         (state.userId != session.userId ||
             state.serverOrigin != session.serverOrigin)) {
@@ -747,7 +751,7 @@ class AccountService {
       session: session,
       profile: profile,
       autoSync: await autoSync(),
-      usesDefaultServer: await preferences.usesDefaultServerBaseUrl(),
+      usesDefaultServer: await devicePreferences.usesDefaultServerBaseUrl(),
     );
   }
 

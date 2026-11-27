@@ -12,6 +12,17 @@ import '../domain/rules/attachments.dart';
 class AppPaths {
   const AppPaths(this.filesDir, {required this.cacheDir});
 
+  /// 应用私有目录下的条目名：空间目录、空间指针与各派生目录。
+  ///
+  /// 0.2.0 的单体布局清理按这几个名字认条目，名字只在这里定义一处，
+  /// platform/legacy_layout.dart 不另抄一份。
+  static const String spacesDirName = 'spaces';
+  static const String activeSpaceFileName = 'active_space';
+  static const String spaceLabelFileName = 'space_label';
+  static const String vectorIndexDirName = 'vector_index';
+  static const String restorePointsDirName = 'restore_points';
+  static const String dataVersionsDirName = 'data_versions';
+
   final String filesDir;
 
   /// 引擎日志等可随时清理的缓存目录。
@@ -26,7 +37,7 @@ class AppPaths {
   String get dbPath => p.join(filesDir, zhixinDbFileName);
 
   /// 语义索引按模型分目录保存；丢失后可以从业务库重建。
-  String get vectorIndexPath => p.join(filesDir, 'vector_index');
+  String get vectorIndexPath => p.join(filesDir, vectorIndexDirName);
 
   /// zvec 引擎的警告日志；不放进数据包，也不随业务数据导出。
   String get vectorLogPath => p.join(cacheDir, 'zvec_logs');
@@ -53,8 +64,8 @@ class AppSpaces {
   static final _accountId = RegExp(r'^[a-f0-9]{32}$');
   final AppPaths device;
 
-  String get _root => p.join(device.filesDir, 'spaces');
-  String get _pointer => p.join(device.filesDir, 'active_space');
+  String get _root => p.join(device.filesDir, AppPaths.spacesDirName);
+  String get _pointer => p.join(device.filesDir, AppPaths.activeSpaceFileName);
 
   AppPaths pathsFor(String id) {
     if (id != local && !_accountId.hasMatch(id)) {
@@ -84,7 +95,8 @@ class AppSpaces {
     }
     await dir.create(recursive: true);
     if (label != null && label.isNotEmpty) {
-      await AtomicFile(p.join(dir.path, 'space_label')).writeText(label);
+      await AtomicFile(p.join(dir.path, AppPaths.spaceLabelFileName))
+          .writeText(label);
     }
     await AtomicFile(_pointer).writeText(id);
   }
@@ -103,7 +115,7 @@ class AppSpaces {
       if (entry is! Directory || (id != local && !_accountId.hasMatch(id))) {
         continue;
       }
-      final labelFile = File(p.join(entry.path, 'space_label'));
+      final labelFile = File(p.join(entry.path, AppPaths.spaceLabelFileName));
       final label = await labelFile.exists()
           ? await labelFile.readAsString()
           : id == local

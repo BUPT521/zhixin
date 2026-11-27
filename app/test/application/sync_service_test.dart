@@ -7,7 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
-import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
+import 'package:zhixin/data/cloud/device_preferences_store.dart';
+import 'package:zhixin/data/cloud/sync_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/domain/models/server_models.dart';
 import 'package:zhixin/data/db/sql.dart';
@@ -52,14 +53,15 @@ Future<_Device> _openDevice(
 }) async {
   final rig = await openTestRig(clock: _fixedClock);
   final dir = await Directory.systemTemp.createTemp('zhixin_sync_test');
-  final preferences = CloudPreferencesStore(filesDir: dir.path);
+  final syncPreferences = SyncPreferencesStore(filesDir: dir.path);
   final account = AccountService(
     store: AccountStore(
       MemorySecretStore(
         deviceId == null ? null : {AccountStore.deviceIdKey: deviceId},
       ),
     ),
-    preferences: preferences,
+    devicePreferences: DevicePreferencesStore(filesDir: dir.path),
+    syncPreferences: syncPreferences,
     now: _fixedClock,
     clientFactory: (baseUrl) =>
         ServerClient(baseUrl: baseUrl, httpClient: server.client),
@@ -72,7 +74,7 @@ Future<_Device> _openDevice(
   }
   final sync = SyncService(
     account: account,
-    preferences: preferences,
+    syncPreferences: syncPreferences,
     revisions: rig.revisions,
     engine: rig.engine,
     database: rig.db,
@@ -373,7 +375,7 @@ void main() {
     );
     expect(snapshot.signedIn, isTrue);
     expect(snapshot.autoSync, isFalse);
-    expect(await a.account.preferences.syncState(), isNull);
+    expect(await a.account.syncPreferences.syncState(), isNull);
     final status = await a.sync.status();
     // 游标不再带账号与实例的 scope：本机空间标识只用于名册与诊断，同步位置
     // 只看库里还在不在（ADR-0056 第 9 条）。换实例之后的这一轮因此仍从原位置
@@ -453,7 +455,7 @@ void main() {
     );
     // 第一个附件超限之后不再尝试后面的附件，也没有写回同步游标。
     expect(server.blobUploadAttempts, 1);
-    expect(await a.account.preferences.syncState(), isNull);
+    expect(await a.account.syncPreferences.syncState(), isNull);
   });
 
   test('上传途中切换实例，进行中的同步结果被丢弃', () async {
@@ -476,7 +478,7 @@ void main() {
     gate.complete();
 
     await expectLater(pending, throwsA(isA<SyncIdentityChanged>()));
-    expect(await a.account.preferences.syncState(), isNull);
+    expect(await a.account.syncPreferences.syncState(), isNull);
   });
 
   test('推送填提交的 uid：参数再长也不影响推送，重复推送按 uid 去重', () async {
@@ -555,7 +557,7 @@ void main() {
     expect((await a.sync.status()).serverHead, server.headOf(userId));
 
     // 同步位置不再写进偏好文件，只留账号与实例的标识。
-    final file = File(CloudPreferencesStore(filesDir: a.dir.path).path);
+    final file = File(SyncPreferencesStore(filesDir: a.dir.path).path);
     final raw = await file.readAsString();
     expect(raw, isNot(contains('pushed_through')));
     expect(raw, isNot(contains('remote_local_ids')));

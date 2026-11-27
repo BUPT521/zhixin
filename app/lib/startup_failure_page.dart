@@ -5,7 +5,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import 'application/feedback_service.dart';
-import 'data/cloud/cloud_preferences_store.dart' show defaultServerBaseUrl;
+import 'data/cloud/device_preferences_store.dart' show defaultServerBaseUrl;
 import 'domain/models/server_models.dart' show ServerProblem;
 import 'data/diagnostics/crash_log.dart';
 import 'platform/app_info.dart';
