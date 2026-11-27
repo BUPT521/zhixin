@@ -12,26 +12,6 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
 )
 
-func TestChargeableTokensSubtractsTheFreeAllowance(t *testing.T) {
-	for _, test := range []struct {
-		name              string
-		used, limit, want int64
-	}{
-		{"没有用量", 0, 200000, 0},
-		{"免费额度够用", 150000, 200000, 0},
-		{"刚好用完免费额度", 200000, 200000, 0},
-		{"超出免费额度", 250000, 200000, 50000},
-		{"没有配置每日额度", 250000, 0, 250000},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := chargeableTokens(test.used, test.limit); got != test.want {
-				t.Fatalf("chargeableTokens(%d, %d) = %d，应为 %d",
-					test.used, test.limit, got, test.want)
-			}
-		})
-	}
-}
-
 // fakeRecorder 实现 nowpay.Recorder：记下余额刷新请求与核销申请，其余不做别的事。
 type fakeRecorder struct {
 	perPoint  int64
@@ -87,7 +67,11 @@ func TestPostgresReserveAllowsPointsBeyondTheFreeAllowance(t *testing.T) {
 	recorder := &fakeRecorder{perPoint: 1000}
 	enablePaidQuota(t, st)
 	st.SetNowPay(recorder)
-	st.SetQuotaLimits(100, 100, 0)
+	st.SetQuotaLimits(100, 200, 0)
+	embeddingLimit := int64(100)
+	if err := st.SetQuotaOverride(ctx, "u1", nil, &embeddingLimit, ""); err != nil {
+		t.Fatalf("设置嵌入额度失败: %v", err)
+	}
 
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil || got != 100 {
 		t.Fatalf("免费额度内的预留应为 100，得到 %d %v", got, err)
@@ -109,12 +93,31 @@ func TestPostgresReserveAllowsPointsBeyondTheFreeAllowance(t *testing.T) {
 	if len(recorder.refreshed) != 1 {
 		t.Fatalf("副本新鲜时不应再排查询: %+v", recorder.refreshed)
 	}
-	// 嵌入不能用积分支付：免费额度用完之后仍然拒绝。
-	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindEmbedding, "", 100); err != nil || got != 100 {
-		t.Fatalf("嵌入免费额度内的预留应为 100，得到 %d %v", got, err)
+	// 聊天已预留 3 分。嵌入还可使用自己的 100 个免费 token 和余额里的 2 分。
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindEmbedding, "", 2100); err != nil || got != 2100 {
+		t.Fatalf("嵌入应当使用免费额度和剩余积分，得到 %d %v", got, err)
 	}
-	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindEmbedding, "", 10); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
-		t.Fatalf("嵌入不应按积分放行，得到 %v", err)
+	for _, kind := range []llmproxy.Kind{llmproxy.KindChat, llmproxy.KindEmbedding} {
+		if _, err := st.Reserve(ctx, "u1", day, kind, "", 1); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+			t.Fatalf("%s 不应重复预留同一份余额，得到 %v", kind, err)
+		}
+	}
+	points, err := st.Points(ctx, "u1", day)
+	if err != nil || !points.RemainingKnown || points.Remaining != 0 {
+		t.Fatalf("余额展示应计入两种用途的在途预留，得到 %+v %v", points, err)
+	}
+	// 先结算嵌入，聊天仍在途。聊天随后结算时，核销目标应包含两种用途的超额量。
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindEmbedding, "", 2100, 600, llmproxy.Usage{}, llmproxy.SettleAttempt{}); err != nil {
+		t.Fatalf("结算嵌入失败: %v", err)
+	}
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 3100, 500, llmproxy.Usage{}, llmproxy.SettleAttempt{}); err != nil {
+		t.Fatalf("结算聊天失败: %v", err)
+	}
+	if len(recorder.charged) != 2 || recorder.charged[0] != 500 || recorder.charged[1] != 900 {
+		t.Fatalf("核销目标应为 500、900，得到 %v", recorder.charged)
+	}
+	if used, err := st.InstanceUsed(ctx, day); err != nil || used != 200 {
+		t.Fatalf("实例账本只应计入两种用途的免费额度，得到 %d %v", used, err)
 	}
 }
 

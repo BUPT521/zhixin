@@ -55,6 +55,49 @@ func (q *Queries) InstanceTokens(ctx context.Context, day pgtype.Date) (int64, e
 	return column_1, err
 }
 
+const pointUsage = `-- name: PointUsage :one
+WITH usage_by_kind AS (
+  SELECT kind, SUM(tokens + CASE WHEN $1::boolean THEN reserved_tokens ELSE 0 END) AS used
+  FROM llm_usage
+  WHERE llm_usage.user_id = $2::text AND llm_usage.day = $3::date
+  GROUP BY kind
+),
+usage_with_limits AS (
+  SELECT usage.used, CASE usage.kind
+    WHEN 'chat' THEN COALESCE(quota.daily_tokens, $4::bigint)
+    WHEN 'embedding' THEN COALESCE(quota.embedding_daily_tokens, $5::bigint)
+  END AS free_limit
+  FROM usage_by_kind AS usage
+  LEFT JOIN llm_quota AS quota ON quota.user_id = $2::text
+)
+SELECT COALESCE(SUM(GREATEST(used - free_limit, 0)), 0)::bigint
+FROM usage_with_limits
+WHERE free_limit > 0
+`
+
+type PointUsageParams struct {
+	IncludeReserved bool
+	UserID          string
+	Day             pgtype.Date
+	ChatLimit       int64
+	EmbeddingLimit  int64
+}
+
+// 先按用途扣除各自的免费额度，再合计需要由同一积分余额承担的用量。
+// 预留和余额展示计入在途用量，核销只计入已结算用量。
+func (q *Queries) PointUsage(ctx context.Context, arg PointUsageParams) (int64, error) {
+	row := q.db.QueryRow(ctx, pointUsage,
+		arg.IncludeReserved,
+		arg.UserID,
+		arg.Day,
+		arg.ChatLimit,
+		arg.EmbeddingLimit,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const settleTokens = `-- name: SettleTokens :exec
 INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, input_tokens, cached_tokens, attempts, failures)
 VALUES (

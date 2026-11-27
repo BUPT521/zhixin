@@ -847,7 +847,14 @@ void main() {
         extra: extra,
       ).userMessage;
 
-      expect(message({'kind': 'embedding'}), '今天的嵌入额度已经用完，次日恢复');
+      expect(
+        message({'kind': 'embedding', 'reason': 'points'}),
+        '积分余额不足，可以在账号页购买积分之后继续，也可以等次日恢复',
+      );
+      expect(
+        message({'kind': 'embedding', 'reason': 'instance'}),
+        '实例今天的模型预算已经用完，请稍后再试',
+      );
       expect(message({'kind': 'chat', 'reason': 'instance'}), contains('稍后再试'));
       expect(
         message({'kind': 'chat', 'reason': 'instance'}),

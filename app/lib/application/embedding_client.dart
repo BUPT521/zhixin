@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
+import '../data/cloud/server_client.dart' show ServerProblem;
 import '../data/vector/embedding_codec.dart';
 import '../domain/rules/embedding.dart';
 
@@ -331,15 +332,24 @@ class RemoteEmbeddingClient extends EmbeddingClient {
   static EmbeddingUnavailable _failure(http.Response response) {
     final status = response.statusCode;
     String? code;
+    Map<String, Object?> extra = const {};
     try {
       final body = jsonDecode(utf8.decode(response.bodyBytes));
-      if (body is Map && body['code'] is String) code = body['code'] as String;
+      if (body is Map) {
+        if (body['code'] is String) code = body['code'] as String;
+        final details = body['extra'];
+        if (details is Map) extra = details.cast<String, Object?>();
+      }
     } catch (_) {
       // 错误体不是 JSON 时只按状态码判断。
     }
     if (code == 'quota_exceeded') {
-      // 嵌入按原始 token 记额度，不能用购买的积分支付，因此只说明次日恢复。
-      return const EmbeddingSourceUnavailable('今天的嵌入额度已经用完，次日恢复');
+      final problem = ServerProblem(
+        code: 'quota_exceeded',
+        status: status,
+        extra: extra,
+      );
+      return EmbeddingSourceUnavailable(problem.userMessage);
     }
     if (code == 'contact_unverified') {
       // 托管额度要求先确认一种登录方式；这条说明比“凭据被拒”更接近用户要做的事。

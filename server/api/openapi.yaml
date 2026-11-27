@@ -796,7 +796,7 @@ paths:
   /v1/me/model-quota-purchases:
     get:
       tags: [payment]
-      summary: 即刻收商品收费能力、聊天积分余额与折算比例
+      summary: 即刻收商品收费能力、模型积分余额与折算比例
       description: |
         需要登录令牌。服务端并行查询商品收费能力（alipay.aipay.nowpaydirect.charge.query）
         与账号积分余额（alipay.aipay.nowpaydirect.quota.query）；商品能力在进程内缓存 60 秒。
@@ -1015,8 +1015,9 @@ paths:
         由 `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` 决定。服务端按路由的 `max_batch` 把一次
         请求拆成几批并发发给同一个来源，再按原顺序合并，`index` 从 0 连续编号；一批
         失败时整次请求换下一个来源重做，同一次请求的向量因此总是来自同一个来源。
-        用量记入账号当天的嵌入额度，与聊天额度分开计；提供方没有返回 `usage` 时按
-        输入字符数估算。代理自身的拒绝与聊天接口相同，另有 `invalid_request`（400，
+        嵌入输入 token 按 1:1 折成计费 token，先使用嵌入每日免费额度，超出部分与聊天
+        共用积分余额。来源没有返回 `usage` 时按输入字节数估算。代理自身的拒绝与聊天
+        接口相同，另有 `invalid_request`（400，
         `input` 为空、超过条数上限或含有非字符串，或者 `dimensions` 与模型配置的维度
         不一致）。请求头带 `X-Zhixin-Embedding-Cache: 1` 时，服务端在嵌入成功之后
         按输入的 SHA-256 把这些向量写入这个账号的缓存，重复写入不覆盖已有行；只有
@@ -2335,21 +2336,21 @@ components:
         tokens_per_point:
           type: integer
           format: int64
-          description: 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
+          description: 一个积分覆盖的计费 token 数；聊天和嵌入使用同一折算比例，见 ADR-0084
         charged_points:
           type: integer
           format: int64
           nullable: true
           description: |
-            当天已经核销成功的积分；没有开通收款时为 null。开通收款之后即使余额副本
+            聊天与嵌入当天合计核销成功的积分；没有开通收款时为 null。开通收款之后即使余额副本
             还没有建好或账号还没有副本，这一项也照常返回，见 ADR-0071。
         remaining_points:
           type: integer
           format: int64
           nullable: true
           description: |
-            余额中尚未占用的整积分。服务端先按流水调整余额副本，再扣除当天已结算用量和在途
-            预留中仍需由余额覆盖的部分。额度放行会计入不足一分的剩余计费 token。没有开通收款
+            余额中尚未占用的整积分。服务端先按流水调整余额副本，再扣除聊天与嵌入当天已结算
+            用量和在途预留中仍需由余额覆盖的部分。额度放行会计入不足一分的剩余计费 token。没有开通收款
             或还没有余额副本时为 null，见 ADR-0073。
     Me:
       type: object

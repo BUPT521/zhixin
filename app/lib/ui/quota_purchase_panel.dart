@@ -505,7 +505,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
       if (daily != null && daily > 0) {
         legend =
             '1 积分 = ${tokenAmount(ratio)} 计费 token；'
-            '今天的免费额度是 ${tokenAmount(daily)} 计费 token，'
+            '每日免费聊天额度是 ${tokenAmount(daily)} 计费 token，'
             '约 ${groupDigits(quotaPoints(daily, ratio))} 积分。';
       }
     }
@@ -567,7 +567,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
               Padding(
                 padding: EdgeInsets.only(top: theme.space.xs),
                 child: Text(
-                  '积分跨日保留；每轮结束先扣当天免费额度，再扣积分。',
+                  '聊天和嵌入先用各自的免费额度，再扣积分。积分跨日保留。',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),

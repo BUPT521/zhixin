@@ -500,7 +500,7 @@ class _AccountCard extends StatelessWidget {
                   ),
                   SizedBox(width: theme.space.md),
                   Expanded(
-                    child: _Figure(label: '今日模型额度', value: _quotaText()),
+                    child: _Figure(label: '今日聊天额度', value: _quotaText()),
                   ),
                 ],
               ),

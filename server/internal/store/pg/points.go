@@ -66,25 +66,30 @@ func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points
 	if !ledger.balanceKnown {
 		return points, nil
 	}
-	points.Remaining, points.RemainingKnown = ledger.balancePoints, true
-	points.SyncedAt = ledger.syncedAt
-	limit, limited, err := s.accountLimit(ctx, q, userID, llmproxy.KindChat)
+	used, err := s.pointUsage(ctx, q, userID, date, true)
 	if err != nil {
 		return llmproxy.Points{}, err
 	}
-	if limited {
-		used, err := usedTokens(ctx, q, userID, date, llmproxy.KindChat)
-		if err != nil {
-			return llmproxy.Points{}, err
-		}
-		points.Remaining, _ = ledger.availability(chargeableTokens(used, limit), s.nowpay.TokensPerPoint())
-	}
+	points.Remaining, _ = ledger.availability(used, s.nowpay.TokensPerPoint())
+	points.RemainingKnown = true
+	points.SyncedAt = ledger.syncedAt
 	return points, nil
+}
+
+func (s *Store) pointUsage(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, includeReserved bool) (int64, error) {
+	used, err := q.PointUsage(ctx, db.PointUsageParams{
+		UserID: userID, Day: date, IncludeReserved: includeReserved,
+		ChatLimit: s.dailyTokens, EmbeddingLimit: s.embeddingDailyTokens,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pg: 读取积分承担的当日用量失败: %w", err)
+	}
+	return used, nil
 }
 
 // paidTokens 返回免费额度之外还能预留的计费 token、是否还有积分可用，以及是否
 // 已安排一次余额刷新。余额过期时，这次预留仍按当前副本判断。
-func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, used, limit int64) (tokens int64, hasPoints, syncing bool, err error) {
+func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, date pgtype.Date) (tokens int64, hasPoints, syncing bool, err error) {
 	if !s.balanceReady.Load() {
 		return 0, false, false, nil
 	}
@@ -98,7 +103,11 @@ func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, da
 	if !ledger.balanceKnown {
 		return 0, false, syncing, nil
 	}
-	_, tokens = ledger.availability(chargeableTokens(used, limit), s.nowpay.TokensPerPoint())
+	used, err := s.pointUsage(ctx, q, userID, date, true)
+	if err != nil {
+		return 0, false, false, err
+	}
+	_, tokens = ledger.availability(used, s.nowpay.TokensPerPoint())
 	return tokens, ledger.balancePoints > 0 || tokens > 0, syncing, nil
 }
 

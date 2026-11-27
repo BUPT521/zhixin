@@ -1325,10 +1325,7 @@ class _AccountPageState extends State<AccountPage> {
         ),
       ),
       ..._devicesSection(context),
-      SectionHeading(
-        title: '模型额度',
-        subtitle: '知新服务按账号统计用量，聊天按积分显示，嵌入按 token 显示，两者各有每日免费额度。',
-      ),
+      SectionHeading(title: '模型额度', subtitle: '聊天与嵌入各有每日免费额度，超出部分共用积分余额。'),
       forui.FCard(
         child: Padding(
           padding: EdgeInsets.all(theme.space.lg),
@@ -1336,14 +1333,13 @@ class _AccountPageState extends State<AccountPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(_chatQuotaText(), style: theme.text.bodyMedium),
-              // 嵌入额度按原始 token 显示，不用积分单位；旧版服务端两项都读作 0，
-              // 这时不显示这一行。
               if ((_quota?.embeddingDailyTokens ?? 0) > 0 ||
                   (_quota?.embeddingUsedTokens ?? 0) > 0)
                 Text(
                   embeddingQuotaText(
                     usedTokens: _quota?.embeddingUsedTokens ?? 0,
                     dailyTokens: _quota?.embeddingDailyTokens,
+                    tokensPerPoint: _quota?.tokensPerPoint,
                   ),
                   style: theme.text.bodyMedium,
                 ),

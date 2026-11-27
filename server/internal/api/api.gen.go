@@ -1195,7 +1195,7 @@ type IdentityKind string
 
 // LLMQuota defines model for LLMQuota.
 type LLMQuota struct {
-	// ChargedPoints 当天已经核销成功的积分；没有开通收款时为 null。开通收款之后即使余额副本
+	// ChargedPoints 聊天与嵌入当天合计核销成功的积分；没有开通收款时为 null。开通收款之后即使余额副本
 	// 还没有建好或账号还没有副本，这一项也照常返回，见 ADR-0071。
 	ChargedPoints *int64 `json:"charged_points,omitempty"`
 
@@ -1209,12 +1209,12 @@ type LLMQuota struct {
 	// EmbeddingUsedTokens 嵌入当天已结算的计费 token
 	EmbeddingUsedTokens int64 `json:"embedding_used_tokens"`
 
-	// RemainingPoints 余额中尚未占用的整积分。服务端先按流水调整余额副本，再扣除当天已结算用量和在途
-	// 预留中仍需由余额覆盖的部分。额度放行会计入不足一分的剩余计费 token。没有开通收款
+	// RemainingPoints 余额中尚未占用的整积分。服务端先按流水调整余额副本，再扣除聊天与嵌入当天已结算
+	// 用量和在途预留中仍需由余额覆盖的部分。额度放行会计入不足一分的剩余计费 token。没有开通收款
 	// 或还没有余额副本时为 null，见 ADR-0073。
 	RemainingPoints *int64 `json:"remaining_points,omitempty"`
 
-	// TokensPerPoint 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068
+	// TokensPerPoint 一个积分覆盖的计费 token 数；聊天和嵌入使用同一折算比例，见 ADR-0084
 	TokensPerPoint int64 `json:"tokens_per_point"`
 
 	// UsedTokens 聊天当天已结算的计费 token，不含在途预留
@@ -2215,7 +2215,7 @@ type ServerInterface interface {
 	// PostV1MeIdentitiesIdVerificationConfirm 用验证码确认某一种登录方式
 	// (POST /v1/me/identities/{id}/verification/confirm)
 	PostV1MeIdentitiesIdVerificationConfirm(w http.ResponseWriter, r *http.Request, id string)
-	// GetV1MeModelQuotaPurchases 即刻收商品收费能力、聊天积分余额与折算比例
+	// GetV1MeModelQuotaPurchases 即刻收商品收费能力、模型积分余额与折算比例
 	// (GET /v1/me/model-quota-purchases)
 	GetV1MeModelQuotaPurchases(w http.ResponseWriter, r *http.Request)
 	// PostV1MeModelQuotaPurchases 获取即刻收托管购买页的购买链接

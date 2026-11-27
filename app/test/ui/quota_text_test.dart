@@ -3,6 +3,17 @@ import 'package:zhixin/ui/quota_text.dart';
 
 /// 嵌入额度的相对显示：给出百分比与“已用 / 每日上限 token”，不出现积分单位。
 void main() {
+  test('嵌入用量和免费额度按同一积分比例显示', () {
+    expect(
+      embeddingQuotaText(
+        usedTokens: 12345,
+        dailyTokens: 200001,
+        tokensPerPoint: 10000,
+      ),
+      '嵌入今日已用 2 积分 · 每日免费额度 20 积分',
+    );
+  });
+
   test('有上限时显示已用占比与已用、上限 token', () {
     expect(
       embeddingQuotaText(usedTokens: 12345, dailyTokens: 200000),

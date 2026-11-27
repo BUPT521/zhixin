@@ -49,7 +49,7 @@ func (s *Store) CheckNowPaySchema(ctx context.Context) error {
 	}
 	s.balanceReady.Store(balance)
 	if !balance {
-		s.log.Error("nowpay_balance is missing: chat stays limited to the free allowance until the table is created and the service restarts",
+		s.log.Error("nowpay_balance is missing: model requests stay limited to the free allowance until the table is created and the service restarts",
 			"table", "nowpay_balance")
 	}
 	return nil
@@ -409,33 +409,15 @@ func text(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: value != ""}
 }
 
-// chargeNowPay 算出当天累计应当由即刻收积分承担的计费 token 数，交给核销执行器；
-// 执行器再减去当天已申请的积分，只补差额（ADR-0067）。
-//
-// 先用当天免费额度，超出部分才折成积分。没有配置每日额度时免费额度不限，不产生
-// 核销。累计量只算已经结算的用量：在途预留还没有产生实际费用，算进去会让并发
-// 请求多扣积分（ADR-0071）。
+// chargeNowPay 汇总聊天与嵌入当天已结算的超额用量，核销执行器按当天累计用量补扣
+// 尚未申请的积分（ADR-0067、ADR-0071）。
 func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtype.Date) {
-	limit, limited, err := s.accountLimit(ctx, s.q, userID, llmproxy.KindChat)
+	used, err := s.pointUsage(ctx, s.q, userID, date, false)
 	if err != nil {
-		s.log.Error("read the daily quota for nowpay", "user_id", userID, "error", err)
+		s.log.Error("read the point usage for nowpay", "user_id", userID, "error", err)
 		return
 	}
-	if !limited {
-		return
+	if used > 0 {
+		s.nowpay.Record(ctx, userID, day, used)
 	}
-	settled, err := settledTokens(ctx, s.q, userID, date, llmproxy.KindChat)
-	if err != nil {
-		s.log.Error("read the settled tokens for nowpay", "user_id", userID, "error", err)
-		return
-	}
-	if chargeable := chargeableTokens(settled, limit); chargeable > 0 {
-		s.nowpay.Record(ctx, userID, day, chargeable)
-	}
-}
-
-// chargeableTokens 返回应当由即刻收积分承担的计费 token 数：先扣当天免费额度，
-// 剩下的才折成积分（ADR-0067）。
-func chargeableTokens(used, limit int64) int64 {
-	return max(0, used-limit)
 }

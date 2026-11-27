@@ -74,15 +74,8 @@ class ServerProblem implements Exception {
     return '尝试过于频繁，请 ${waitText(seconds)}后再试';
   }
 
-  /// 额度用完按用途与原因分别说明：聊天的免费额度与积分用完之后可以购买积分继续，
-  /// 实例预算用完只能稍后重试，嵌入按原始 token 计、不能用积分支付，只说明次日恢复。
-  ///
-  /// 原因由服务端在 `extra.reason` 里给出，缺失时按聊天额度用完的一般口径说明；
-  /// 余额副本正在同步时说明稍后重试即可，不引导购买（ADR-0073）。
+  /// 聊天与嵌入共用积分余额，按 `extra.reason` 给出提示（ADR-0073、ADR-0084）。
   String get _quotaExceededMessage {
-    if (extra['kind'] == 'embedding') {
-      return '今天的嵌入额度已经用完，次日恢复';
-    }
     return switch (extra['reason']) {
       'instance' => '实例今天的模型预算已经用完，请稍后再试',
       'syncing' => '积分余额正在同步，请稍后重试',

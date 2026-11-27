@@ -55,3 +55,24 @@ DO UPDATE SET
   cached_tokens = GREATEST(llm_usage.cached_tokens + sqlc.arg(cached_tokens)::bigint, 0),
   attempts = GREATEST(llm_usage.attempts + sqlc.arg(attempts)::bigint, 0),
   failures = GREATEST(llm_usage.failures + sqlc.arg(failures)::bigint, 0);
+
+-- 先按用途扣除各自的免费额度，再合计需要由同一积分余额承担的用量。
+-- 预留和余额展示计入在途用量，核销只计入已结算用量。
+-- name: PointUsage :one
+WITH usage_by_kind AS (
+  SELECT kind, SUM(tokens + CASE WHEN sqlc.arg(include_reserved)::boolean THEN reserved_tokens ELSE 0 END) AS used
+  FROM llm_usage
+  WHERE llm_usage.user_id = sqlc.arg(user_id)::text AND llm_usage.day = sqlc.arg(day)::date
+  GROUP BY kind
+),
+usage_with_limits AS (
+  SELECT usage.used, CASE usage.kind
+    WHEN 'chat' THEN COALESCE(quota.daily_tokens, sqlc.arg(chat_limit)::bigint)
+    WHEN 'embedding' THEN COALESCE(quota.embedding_daily_tokens, sqlc.arg(embedding_limit)::bigint)
+  END AS free_limit
+  FROM usage_by_kind AS usage
+  LEFT JOIN llm_quota AS quota ON quota.user_id = sqlc.arg(user_id)::text
+)
+SELECT COALESCE(SUM(GREATEST(used - free_limit, 0)), 0)::bigint
+FROM usage_with_limits
+WHERE free_limit > 0;

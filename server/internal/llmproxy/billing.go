@@ -31,9 +31,9 @@ type Usage struct {
 
 func (u Usage) Total() int64 { return u.Input + u.Output }
 
-// Billed 把原始用量折算成计费 token 数。嵌入没有缓存语义，聊天在来源没有报告
-// 输入拆分时也无法判断命中，这两种情况都按原始 token 一比一记：宁可少给折扣，
-// 也不把“不知道”当成“全是输出”多扣四倍。
+// Billed 将原始用量折算成计费 token。嵌入输入按 1:1 折算，以百炼
+// text-embedding-v4 的实时输入价与萤火档的积分单价为基准（ADR-0084）。
+// 聊天来源缺少用量拆分时也按原始 token 计，避免将无法区分的输入算成输出。
 func (u Usage) Billed(kind Kind) int64 {
 	if kind == KindEmbedding || u.Input <= 0 {
 		return u.Total()

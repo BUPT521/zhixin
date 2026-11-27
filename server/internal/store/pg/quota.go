@@ -24,16 +24,15 @@ func (s *Store) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyT
 // lock 排成队，因为实例预算是当天所有账号的合计，行锁管不住并发插入的新行；账
 // 号额度与实例预算因此在同一个临界区里检查并扣减，不会各自按旧值通过。
 //
-// 账号额度分两段：当天免费额度先算，聊天在免费额度之外再加上即刻收余额折成的
-// token（ADR-0069），嵌入只有免费额度。余额取本地副本，这一段不调用即刻收。
+// 聊天与嵌入先使用各自的每日免费额度，超出部分共用即刻收积分余额。
+// 额度预留读取本地余额副本。
 // 预留要么拿到 want，要么返回带原因的错误，不按剩余量截断（ADR-0071）。
 func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, want int64) (int64, error) {
 	if want <= 0 {
 		return 0, &llmproxy.QuotaExceededError{Reason: llmproxy.QuotaReasonAccount}
 	}
-	// 每轮对话开工前先把上一轮没有确认结果的核销补查一次：补查只排进队列，不在这
-	// 条请求路径上调用即刻收，失败也不影响这一轮（ADR-0067）。
-	if s.nowpay != nil && kind == llmproxy.KindChat {
+	// 请求开始前为尚未确认的核销安排异步补查（ADR-0067）。
+	if s.nowpay != nil {
 		s.nowpay.Resume(ctx, userID)
 	}
 	date, err := pgDate(day)
@@ -67,8 +66,8 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if paidNeeded := want - freeRemaining; limited && paidNeeded > 0 {
 		var paid int64
 		var hasPoints, syncing bool
-		if kind == llmproxy.KindChat && s.nowpay != nil {
-			paid, hasPoints, syncing, err = s.paidTokens(ctx, q, userID, date, used, limit)
+		if s.nowpay != nil {
+			paid, hasPoints, syncing, err = s.paidTokens(ctx, q, userID, date)
 			if err != nil {
 				return 0, err
 			}
@@ -290,9 +289,8 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pg: 提交额度结算失败: %w", err)
 	}
-	// 结算提交之后才算这笔用量：回答已经发给用户，核销失败不回滚，留在流水里由下
-	// 一轮请求前补查（ADR-0067）。
-	if s.nowpay != nil && kind == llmproxy.KindChat {
+	// 结算提交之后再核销积分。未确认的核销由下一次模型请求安排补查（ADR-0067）。
+	if s.nowpay != nil {
 		s.chargeNowPay(ctx, userID, day, date)
 	}
 	return nil
