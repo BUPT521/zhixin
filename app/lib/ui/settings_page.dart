@@ -423,10 +423,8 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _setDeveloperMode(bool enabled) async {
     if (_busy) return;
-    setState(() {
-      _busy = true;
-      _notices.clear(SettingsArea.developer);
-    });
+    setState(() => _busy = true);
+    _notices.clear(SettingsArea.developer);
     try {
       final scope = AppScope.of(context);
       await scope.accountServices.account.setDeveloperMode(enabled);
