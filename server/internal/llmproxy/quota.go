@@ -357,11 +357,14 @@ func (m *MemoryQuota) accountLimitLocked(userID string) (int64, bool) {
 }
 
 // SetDailyLimit 调整一个账号的每日额度，供本地联调与测试使用；生产上改
-// llm_quota 表。
+// llm_quota 表。它只写额度值，不走管理后台的保存流程，所以在这里补上
+// quotaUpdated：QuotaOverride 用 UpdatedAt 的零值表示没有这一行，有额度覆盖却
+// 没有保存时间会让后台把这一行当成不存在。
 func (m *MemoryQuota) SetDailyLimit(userID string, tokens int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.limits[userID] = tokens
+	m.quotaUpdated[userID] = time.Now().UTC()
 }
 
 func (m *MemoryQuota) DailyLimit(_ context.Context, userID string) (int64, bool, error) {

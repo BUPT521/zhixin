@@ -1188,11 +1188,10 @@ func quotaReasonOf(err error) QuotaReason {
 // total_tokens，两种都认，取值以实际出现的字段为准。
 type usageEnvelope struct {
 	Usage *struct {
-		InputTokens      int64 `json:"input_tokens"`
-		OutputTokens     int64 `json:"output_tokens"`
-		PromptTokens     int64 `json:"prompt_tokens"`
-		TotalTokens      int64 `json:"total_tokens"`
-		CompletionTokens int64 `json:"completion_tokens"`
+		InputTokens  int64 `json:"input_tokens"`
+		OutputTokens int64 `json:"output_tokens"`
+		PromptTokens int64 `json:"prompt_tokens"`
+		TotalTokens  int64 `json:"total_tokens"`
 		// InputTokensDetails 是 Responses 在命中上下文缓存时给出的明细，命中量
 		// 读 cached_tokens；没有这个对象表示来源不支持或这次没有命中数据。
 		// 命中量用指针，用来区分“来源报了 0”（这次确实没有命中）与“来源没有
