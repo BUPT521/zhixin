@@ -26,7 +26,7 @@ func TestAdminRetentionShowsAnonymousAndAccountActivity(t *testing.T) {
 		{"hash-a", day(0)},
 		{"hash-b", day(0)},
 	} {
-		if err := h.stores.Retention.MarkInstallActive(ctx, row.hash, row.day, "0.3.0", "android"); err != nil {
+		if err := h.stores.Retention.MarkInstallActive(ctx, row.hash, row.day); err != nil {
 			t.Fatalf("mark install: %v", err)
 		}
 	}

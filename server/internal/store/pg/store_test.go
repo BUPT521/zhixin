@@ -1305,15 +1305,15 @@ func TestPostgresRetention(t *testing.T) {
 		if err := st.MarkUserActive(ctx, "u1", "2026-11-18"); err != nil {
 			t.Fatalf("mark user active %d: %v", i+1, err)
 		}
-		if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-18", "0.2.0", "android"); err != nil {
+		if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-18"); err != nil {
 			t.Fatalf("mark install active %d: %v", i+1, err)
 		}
 	}
-	if err := st.MarkInstallActive(ctx, "hash-old", "2026-01-01", "", ""); err != nil {
+	if err := st.MarkInstallActive(ctx, "hash-old", "2026-01-01"); err != nil {
 		t.Fatalf("seed old install: %v", err)
 	}
 	// 同一个安装一周后再活跃一次，用来核对队列留存的日期比较。
-	if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-25", "0.2.0", "android"); err != nil {
+	if err := st.MarkInstallActive(ctx, "hash-1", "2026-11-25"); err != nil {
 		t.Fatalf("seed returning install: %v", err)
 	}
 

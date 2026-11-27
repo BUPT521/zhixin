@@ -55,9 +55,7 @@ func TestReportStoresOneRowPerInstallPerDay(t *testing.T) {
 	c := newTestServer(t, store, nil)
 
 	body := map[string]any{
-		"install_id":  "0f8fad5b-d9cb-469f-a165-70867728950e",
-		"app_version": "0.2.0-dev+3",
-		"platform":    "android",
+		"install_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
 	}
 	for i := 0; i < 2; i++ {
 		if code, resp := report(t, c, body); code != http.StatusNoContent {
@@ -90,12 +88,10 @@ func TestReportRejectsInvalidInput(t *testing.T) {
 		name string
 		body map[string]any
 	}{
-		{"缺安装标识", map[string]any{"platform": "android"}},
+		{"缺安装标识", map[string]any{}},
 		{"安装标识太短", map[string]any{"install_id": "short"}},
 		{"安装标识太长", map[string]any{"install_id": strings.Repeat("a", 129)}},
 		{"安装标识夹带空格", map[string]any{"install_id": "0f8fad5b d9cb 469f a165 70867728950e"}},
-		{"版本太长", map[string]any{"install_id": "0f8fad5b-d9cb-469f-a165-70867728950e", "app_version": strings.Repeat("v", 65)}},
-		{"平台太长", map[string]any{"install_id": "0f8fad5b-d9cb-469f-a165-70867728950e", "platform": strings.Repeat("p", 33)}},
 		{"未知字段", map[string]any{"install_id": "0f8fad5b-d9cb-469f-a165-70867728950e", "date": "2026-11-18"}},
 	}
 	for _, tc := range cases {
@@ -153,7 +149,7 @@ func newTestServerWithHandler(t *testing.T, store Store) (*testutil.Client, *Han
 // failingStore 模拟数据库写入失败，用来核对处理器把存储故障报成 500。
 type failingStore struct{}
 
-func (failingStore) MarkInstallActive(context.Context, string, string, string, string) error {
+func (failingStore) MarkInstallActive(context.Context, string, string) error {
 	return errors.New("db down")
 }
 func (failingStore) MarkUserActive(context.Context, string, string) error {

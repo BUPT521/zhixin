@@ -946,9 +946,7 @@ func TestTrustedProxySplitsBucketsByForwardedFor(t *testing.T) {
 func TestTelemetryIsPublicAndIdempotent(t *testing.T) {
 	h := newHarness(t, nil)
 	body := map[string]any{
-		"install_id":  "0f8fad5b-d9cb-469f-a165-70867728950e",
-		"app_version": "0.2.0-dev+3",
-		"platform":    "android",
+		"install_id": "0f8fad5b-d9cb-469f-a165-70867728950e",
 	}
 	for i := 0; i < 2; i++ {
 		if code := h.json("POST", "/v1/telemetry/active", "", body, nil); code != http.StatusNoContent {

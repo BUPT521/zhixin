@@ -82,8 +82,6 @@ type Feedback struct {
 type InstallActive struct {
 	InstallHash string
 	Day         pgtype.Date
-	AppVersion  string
-	Platform    string
 	CreatedAt   pgtype.Timestamptz
 }
 

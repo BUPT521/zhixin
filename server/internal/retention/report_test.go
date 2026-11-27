@@ -29,7 +29,7 @@ func TestReporterFillsDaysAndGroupsCohorts(t *testing.T) {
 		{"install-c", "2026-10-31"}, // 早于区间，退出队列，但 11-02 仍算每日活跃
 		{"install-c", "2026-11-02"},
 	} {
-		if err := store.MarkInstallActive(ctx, row.hash, row.day, "0.3.0", "android"); err != nil {
+		if err := store.MarkInstallActive(ctx, row.hash, row.day); err != nil {
 			t.Fatalf("mark install %s %s: %v", row.hash, row.day, err)
 		}
 	}
@@ -95,7 +95,7 @@ func TestReporterUsesServerDayBoundary(t *testing.T) {
 		t.Skipf("缺少时区数据: %v", err)
 	}
 	store := NewMemoryStore()
-	if err := store.MarkInstallActive(context.Background(), "install-a", "2026-12-01", "", ""); err != nil {
+	if err := store.MarkInstallActive(context.Background(), "install-a", "2026-12-01"); err != nil {
 		t.Fatalf("mark install: %v", err)
 	}
 	reporter := newTestReporter(store, loc, time.Date(2026, 11, 30, 16, 30, 0, 0, time.UTC))

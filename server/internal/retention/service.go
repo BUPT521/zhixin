@@ -16,9 +16,7 @@ import (
 
 // Ping 是处理器从请求里取出、还没校验的一条匿名上报。
 type Ping struct {
-	InstallID  string
-	AppVersion string
-	Platform   string
+	InstallID string
 }
 
 // Service 校验匿名上报、算安装标识的哈希并写入存储；同一个账号的活跃按天
@@ -54,15 +52,7 @@ func (s *Service) RecordInstall(ctx context.Context, ping Ping) error {
 	if err != nil {
 		return err
 	}
-	version, err := cleanField(ping.AppVersion, maxVersionRunes)
-	if err != nil {
-		return err
-	}
-	platform, err := cleanField(ping.Platform, maxPlatformRunes)
-	if err != nil {
-		return err
-	}
-	return s.store.MarkInstallActive(ctx, hash, s.today(), version, platform)
+	return s.store.MarkInstallActive(ctx, hash, s.today())
 }
 
 // RecordUserActive 满足 auth.ActivityRecorder 的接口：同一天同一个账号只在第一次
@@ -111,16 +101,6 @@ func (s *Service) hashInstall(raw string) (string, error) {
 	mac := hmac.New(sha256.New, s.secret)
 	_, _ = mac.Write([]byte(id))
 	return hex.EncodeToString(mac.Sum(nil)), nil
-}
-
-// cleanField 去掉附带字段两端的空白，超长或不合法的 UTF-8 一律拒绝：静默截断
-// 会让上报内容与客户端以为的不一样。
-func cleanField(raw string, max int) (string, error) {
-	value := strings.TrimSpace(raw)
-	if !utf8.ValidString(value) || utf8.RuneCountInString(value) > max {
-		return "", ErrInvalid
-	}
-	return value, nil
 }
 
 // Prune 按配置时区算出保留期的起点，删除更早的匿名活跃。单独导出是为了让

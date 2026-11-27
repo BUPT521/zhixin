@@ -23,52 +23,40 @@ const (
 	// 文本或空串当成标识发上来。
 	minInstallRunes = 16
 	maxInstallRunes = 128
-	// maxVersionRunes 与 maxPlatformRunes 是附带字段的上限，与反馈接口一致。
-	maxVersionRunes  = 64
-	maxPlatformRunes = 32
 )
 
-// ErrInvalid 表示上报的安装标识或附带字段不合法。
+// ErrInvalid 表示上报的安装标识不合法。
 var ErrInvalid = errors.New("retention: invalid ping")
 
 // Store 保存活跃数据。生产实现写 PostgreSQL；内存实现用于本地开发与测试。
 type Store interface {
 	// MarkInstallActive 保存一次匿名活跃。同一个安装标识在同一天重复上报只留
 	// 一行，交给存储的幂等写入处理。
-	MarkInstallActive(ctx context.Context, hash, day, appVersion, platform string) error
+	MarkInstallActive(ctx context.Context, hash, day string) error
 	// MarkUserActive 保存一次登录账号的活跃，同样按天幂等。
 	MarkUserActive(ctx context.Context, userID, day string) error
 	// PruneInstallsBefore 删除日期早于 before 的匿名活跃行，before 为 YYYY-MM-DD。
 	PruneInstallsBefore(ctx context.Context, before string) error
 }
 
-type memoryInstall struct {
-	appVersion string
-	platform   string
-}
-
 // MemoryStore 把活跃数据留在进程内存里，用于本地开发与测试。
 type MemoryStore struct {
 	mu       sync.Mutex
-	installs map[[2]string]memoryInstall // [哈希, 日期]
-	users    map[[2]string]struct{}      // [账号, 日期]
+	installs map[[2]string]struct{} // [哈希, 日期]
+	users    map[[2]string]struct{} // [账号, 日期]
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		installs: map[[2]string]memoryInstall{},
+		installs: map[[2]string]struct{}{},
 		users:    map[[2]string]struct{}{},
 	}
 }
 
-func (m *MemoryStore) MarkInstallActive(_ context.Context, hash, day, appVersion, platform string) error {
+func (m *MemoryStore) MarkInstallActive(_ context.Context, hash, day string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	key := [2]string{hash, day}
-	if _, ok := m.installs[key]; ok {
-		return nil
-	}
-	m.installs[key] = memoryInstall{appVersion: appVersion, platform: platform}
+	m.installs[[2]string{hash, day}] = struct{}{}
 	return nil
 }
 

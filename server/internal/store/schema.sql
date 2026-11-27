@@ -332,8 +332,6 @@ CREATE TABLE user_active (
 CREATE TABLE install_active (
   install_hash  TEXT NOT NULL,
   day           DATE NOT NULL,
-  app_version   TEXT NOT NULL DEFAULT '',
-  platform      TEXT NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (install_hash, day)
 );

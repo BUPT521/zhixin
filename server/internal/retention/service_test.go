@@ -55,7 +55,7 @@ func TestHashInstallRejectsUnsafeCharacters(t *testing.T) {
 func TestRecordInstallUsesServerDay(t *testing.T) {
 	store := NewMemoryStore()
 	svc := newTestService(store, "a")
-	ping := Ping{InstallID: "0f8fad5b-d9cb-469f-a165-70867728950e", AppVersion: "0.2.0", Platform: "android"}
+	ping := Ping{InstallID: "0f8fad5b-d9cb-469f-a165-70867728950e"}
 	if err := svc.RecordInstall(context.Background(), ping); err != nil {
 		t.Fatalf("record: %v", err)
 	}
@@ -79,13 +79,13 @@ func TestPruneRemovesOnlyRowsOutsideKeepWindow(t *testing.T) {
 	store := NewMemoryStore()
 	svc := newTestService(store, "a")
 	ctx := context.Background()
-	if err := store.MarkInstallActive(ctx, "old", "2026-05-01", "", ""); err != nil {
+	if err := store.MarkInstallActive(ctx, "old", "2026-05-01"); err != nil {
 		t.Fatalf("seed old: %v", err)
 	}
-	if err := store.MarkInstallActive(ctx, "fresh", "2026-11-18", "", ""); err != nil {
+	if err := store.MarkInstallActive(ctx, "fresh", "2026-11-18"); err != nil {
 		t.Fatalf("seed fresh: %v", err)
 	}
-	if err := store.MarkInstallActive(ctx, "edge", "2026-05-22", "", ""); err != nil {
+	if err := store.MarkInstallActive(ctx, "edge", "2026-05-22"); err != nil {
 		t.Fatalf("seed edge: %v", err)
 	}
 
