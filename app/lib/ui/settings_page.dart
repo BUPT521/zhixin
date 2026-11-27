@@ -341,12 +341,7 @@ class _SettingsPageState extends State<SettingsPage> {
   Widget? _resultFor(_Area area) {
     final result = _results[area];
     if (result == null) return null;
-    final theme = context.zhixin;
-    if (result.failed) return InlineNotice(message: result.message);
-    return Padding(
-      padding: EdgeInsets.only(top: theme.space.sm),
-      child: Text(result.message, style: theme.text.bodySmall),
-    );
+    return ResultNotice(message: result.message, failed: result.failed);
   }
 
   /// 保存模型配置：只存模型名、上下文上限与图片开关，先确认已经登录。
@@ -812,7 +807,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     setState(() => _themeMode = value);
                   },
                 ),
-                const _CardDivider(),
+                const CardDivider(),
                 AccentPicker(
                   selected: AppScope.of(context).themeAccent.value,
                   onSelected: (accent) async {
@@ -922,7 +917,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     }
                   },
                 ),
-                const _CardDivider(),
+                const CardDivider(),
                 forui.FSwitch(
                   label: const Text('匿名使用统计'),
                   description: const Text(
@@ -984,23 +979,6 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
         ?_resultFor(_Area.danger),
       ],
-    );
-  }
-}
-
-/// 同一张卡片里两组设置之间的分隔线：左右与卡片内容对齐，上下留一档间距。
-class _CardDivider extends StatelessWidget {
-  const _CardDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.zhixin;
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: theme.space.md),
-      child: SizedBox(
-        height: 1,
-        child: ColoredBox(color: theme.colors.outlineVariant),
-      ),
     );
   }
 }

@@ -310,7 +310,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                   label: const Text('我已阅读并同意《用户须知》与《隐私政策》'),
                   onChange: (value) => _controller.termsChecked = value,
                 ),
-                const _StepDivider(),
+                const CardDivider(),
                 forui.FSwitch(
                   label: const Text('匿名使用统计'),
                   description: const Text(
@@ -409,7 +409,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                     ZhixinSegment(value: ThemeMode.dark, label: '深色'),
                   ],
                 ),
-                const _StepDivider(),
+                const CardDivider(),
                 AccentPicker(
                   selected: scope.themeAccent.value,
                   onSelected: (accent) =>
@@ -434,23 +434,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
           child: const Text('跳过'),
         ),
       ],
-    );
-  }
-}
-
-/// 同一张卡片里两组设置之间的分隔线。
-class _StepDivider extends StatelessWidget {
-  const _StepDivider();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.zhixin;
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: theme.space.md),
-      child: SizedBox(
-        height: 1,
-        child: ColoredBox(color: theme.colors.outlineVariant),
-      ),
     );
   }
 }
