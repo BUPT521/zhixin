@@ -23,9 +23,10 @@ type Handler struct {
 	maxBytes int64
 }
 
-// NewHandler wires the handler.
+// NewHandler wires the handler. maxBytes is the JSON body limit of the write
+// endpoints; it is capped by MaxRequestBytes.
 func NewHandler(svc *Service, log *slog.Logger, maxBytes int64) *Handler {
-	return &Handler{svc: svc, log: log, maxBytes: min(maxBytes, MaxPushBytes)}
+	return &Handler{svc: svc, log: log, maxBytes: min(maxBytes, MaxRequestBytes)}
 }
 
 // syncHead 把服务端状态写成契约的 SyncHead。GET /v1/sync/head、

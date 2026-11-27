@@ -283,9 +283,10 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		SetDeviceActive(cfg.SyncDeviceActive).
 		SetLogger(log).
 		SetSnapshotBytes(cfg.MaxAttachmentBytes)
-	// 提交推送的请求体上限就是整批推送上限，不再用 16*MaxJSONBytes 另写一个表达式：
-	// 后者默认恰好等于 16 MiB，调整 MaxJSONBytes 之后两层会给出不同结论（S27）。
-	syncHandler := syncsvc.NewHandler(syncSvc, log, syncsvc.MaxPushBytes)
+	// 同步写接口的请求体上限用按语义命名的常量，不再用 16*MaxJSONBytes 另写一个
+	// 表达式：后者默认恰好等于 16 MiB，调整 MaxJSONBytes 之后请求体上限与推送上限
+	// 会给出不同结论（S27）。
+	syncHandler := syncsvc.NewHandler(syncSvc, log, syncsvc.MaxRequestBytes)
 
 	// 备份的元数据与字节分两步写，中断会留下没有元数据的对象：按周期对账一次，
 	// 删掉库里查不到、且写于一小时之前的遗留字节（ADR-0037）。attachments/ 与

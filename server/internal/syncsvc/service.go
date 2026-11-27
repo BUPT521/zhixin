@@ -99,11 +99,11 @@ func NewService(store Store, schemaVersion int) *Service {
 // ZHIXIN_SYNC_PULL_MAX_BYTES。非正值使用默认上限。
 //
 // 下限是单条提交上限 MaxCommitBytes：一页预算至少要容纳一条提交，否则已经存入的
-// 提交永远拉不下来，Pull 只会返回 ErrPullTooLarge。上限仍是整批推送上限
-// MaxPushBytes。
+// 提交永远拉不下来，Pull 只会返回 ErrPullTooLarge。上限是拉取页预算上限
+// MaxPullBytes。
 func (s *Service) SetMaxPullBytes(n int64) *Service {
 	if n > 0 {
-		s.maxPullBytes = min(max(n, int64(MaxCommitBytes)), int64(MaxPushBytes))
+		s.maxPullBytes = min(max(n, int64(MaxCommitBytes)), int64(MaxPullBytes))
 	}
 	return s
 }

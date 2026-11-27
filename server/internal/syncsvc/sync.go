@@ -68,8 +68,15 @@ var (
 )
 
 const (
-	MaxPushBytes     = 16 << 20
-	MaxCommitBytes   = 2 << 20
+	// MaxPushBytes 是整批推送的累计字节上限，单条提交另受 MaxCommitBytes 约束。
+	MaxPushBytes = 16 << 20
+	// MaxCommitBytes 是单条提交序列化之后的字节上限，也是拉取页预算的下限：
+	// 一页预算至少容纳一条提交（S12）。
+	MaxCommitBytes = 2 << 20
+	// MaxPullBytes 是拉取页预算的配置上限，页预算默认取 DefaultPullBytes。
+	MaxPullBytes = 16 << 20
+	// MaxRequestBytes 是同步写接口单次 JSON 请求体的上限。
+	MaxRequestBytes  = 16 << 20
 	MaxAccountBytes  = 256 << 20
 	DefaultPullBytes = 4 << 20
 	// DefaultSnapshotBytes 是单个快照附件的默认上限，装配时用单个附件的上限覆盖：
