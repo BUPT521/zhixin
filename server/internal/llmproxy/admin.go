@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
+	sharedderef "github.com/BUPT521/zhixin/server/internal/deref"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
 )
@@ -686,12 +687,9 @@ func probeFailure(trace []api.AdminProbeAttempt, empty string) string {
 	return deref(trace[len(trace)-1].Error, "没有来源返回可用的响应")
 }
 
-func deref[T any](p *T, def T) T {
-	if p == nil {
-		return def
-	}
-	return *p
-}
+// deref 是包内的转发入口，实现由 internal/deref 提供。同包的 keyusage.go 与
+// usage.go 仍按这个名字调用，两处改用共用实现之后可以删掉这一层。
+func deref[T any](value *T, fallback T) T { return sharedderef.Value(value, fallback) }
 
 // stringPointer 取一个字符串的副本，返回的指针与调用处的变量无关。
 func stringPointer(s string) *string { return &s }

@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
+	"github.com/BUPT521/zhixin/server/internal/deref"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
@@ -64,7 +65,7 @@ func (a *Admin) List(w http.ResponseWriter, r *http.Request, params api.GetAdmin
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "offset: 0 to 100000")
 		return
 	}
-	query := strings.TrimSpace(deref(params.Query, ""))
+	query := strings.TrimSpace(deref.Value(params.Query, ""))
 	if utf8.RuneCountInString(query) > maxQuery {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "query is too long")
 		return
@@ -125,11 +126,4 @@ func (a *Admin) Delete(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func deref[T any](value *T, fallback T) T {
-	if value == nil {
-		return fallback
-	}
-	return *value
 }

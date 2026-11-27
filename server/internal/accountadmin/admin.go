@@ -19,6 +19,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/deref"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 )
@@ -97,7 +98,7 @@ func (a *Admin) List(w http.ResponseWriter, r *http.Request, params api.GetAdmin
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "offset: 0 to 100000")
 		return
 	}
-	query := strings.TrimSpace(deref(params.Query, ""))
+	query := strings.TrimSpace(deref.Value(params.Query, ""))
 	if utf8.RuneCountInString(query) > maxQuery {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "query is too long")
 		return
@@ -192,7 +193,7 @@ func (a *Admin) PutQuota(w http.ResponseWriter, r *http.Request, id string) {
 	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
 		return
 	}
-	note := strings.TrimSpace(deref(in.Note, ""))
+	note := strings.TrimSpace(deref.Value(in.Note, ""))
 	if utf8.RuneCountInString(note) > maxNote {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "note is too long")
 		return
@@ -389,11 +390,4 @@ func identityKind(kind string) api.IdentityKind {
 	default:
 		return api.IdentityKind(kind)
 	}
-}
-
-func deref[T any](value *T, fallback T) T {
-	if value == nil {
-		return fallback
-	}
-	return *value
 }
