@@ -4,31 +4,8 @@ import 'dart:typed_data';
 
 import 'package:path/path.dart' as p;
 
+import '../../domain/models/restore_point.dart';
 import '../../domain/rules/time_policy.dart';
-
-/// 一份恢复点：整库恢复之前自动保存的当前状态。
-///
-/// [path] 指向一份版本库备份 zip，与恢复入口使用同一种包；[head]、[commitCount]
-/// 与 [namedCount] 是保存时的规模，即使没有说明文件也能从文件名与修改时间认出来。
-class RestorePoint {
-  const RestorePoint({
-    required this.path,
-    required this.createdAt,
-    required this.head,
-    required this.commitCount,
-    required this.namedCount,
-    required this.reason,
-    required this.size,
-  });
-
-  final String path;
-  final DateTime createdAt;
-  final int? head;
-  final int commitCount;
-  final int namedCount;
-  final String reason;
-  final int size;
-}
 
 /// 恢复点存在应用私有目录 `restore_points/`，每份是一个版本库备份 zip 和一份
 /// 同名的 json 说明。恢复数据包或恢复点之前先把当前状态写成一份，恢复成功后

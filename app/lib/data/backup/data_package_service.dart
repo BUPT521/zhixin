@@ -11,7 +11,7 @@ import '../../domain/rules/package_budget.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
 import 'backup_manifest.dart';
-import 'restore_inspection.dart';
+import '../../domain/models/restore_inspection.dart';
 import 'restore_journal.dart';
 import 'restore_validation.dart';
 

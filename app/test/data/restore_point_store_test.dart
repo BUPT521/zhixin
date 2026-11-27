@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/backup/restore_point_store.dart';
+import 'package:zhixin/domain/models/restore_point.dart';
 
 void main() {
   late Directory dir;

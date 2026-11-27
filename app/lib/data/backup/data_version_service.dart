@@ -12,7 +12,8 @@ import '../revisions/revision_models.dart';
 import '../revisions/revision_package.dart';
 import '../revisions/revision_service.dart';
 import 'data_package_service.dart';
-import 'restore_inspection.dart';
+import '../../domain/models/restore_inspection.dart';
+import '../../domain/models/restore_point.dart';
 import 'restore_point_store.dart';
 
 /// 数据版本页一屏读到的内容：提交历史、撤销判断、存储占用与恢复点列表。

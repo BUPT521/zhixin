@@ -9,7 +9,7 @@ import 'package:path/path.dart' as p;
 import '../../domain/rules/package_budget.dart';
 import '../../domain/rules/time_policy.dart';
 import '../backup/backup_manifest.dart';
-import '../backup/restore_inspection.dart';
+import '../../domain/models/restore_inspection.dart';
 import '../backup/restore_validation.dart';
 import 'asset_store.dart';
 import 'revision_engine.dart';

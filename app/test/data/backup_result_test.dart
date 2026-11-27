@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/data_version_service.dart';
-import 'package:zhixin/data/backup/restore_inspection.dart';
+import 'package:zhixin/domain/models/restore_inspection.dart';
 import 'package:zhixin/data/backup/restore_point_store.dart';
 import 'package:zhixin/data/db/app_database.dart';
 import 'package:zhixin/domain/rules/schema_version.dart';

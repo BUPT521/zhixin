@@ -8,7 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
-import '../data/backup/restore_inspection.dart';
+import '../domain/models/restore_inspection.dart';
 import '../domain/models/result.dart';
 import '../domain/rules/package_budget.dart';
 import 'failure_feedback.dart';

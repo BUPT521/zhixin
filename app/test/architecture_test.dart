@@ -201,7 +201,6 @@ const _uiDataAllowlist = <String>{
   'feedback_page.dart',
   'integrity_check.dart',
   'mine_page.dart',
-  'restore_flow.dart',
   'settings_page.dart',
   'update_notice.dart',
 };
