@@ -628,6 +628,7 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
     post:
       tags: [sync]
       summary: 推送本机提交
@@ -678,6 +679,7 @@ paths:
         "409": { $ref: "#/components/responses/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Problem" }
 
   /v1/blobs/{sha256}:
     parameters:
@@ -728,6 +730,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "503": { $ref: "#/components/responses/Problem" }
 
   /v1/backups:
     delete:
@@ -776,6 +779,7 @@ paths:
         "409": { $ref: "#/components/responses/Problem" }
         "413": { $ref: "#/components/responses/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
+        "503": { $ref: "#/components/responses/Problem" }
   /v1/backups/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: string } }

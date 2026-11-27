@@ -39,10 +39,10 @@ type unwrapWriter struct{ http.ResponseWriter }
 
 func (u unwrapWriter) Unwrap() http.ResponseWriter { return u.ResponseWriter }
 
-func TestBodyIdleTimeoutSetsAndClearsDeadline(t *testing.T) {
+func TestBodyReadTimeoutSetsAndClearsDeadline(t *testing.T) {
 	rec := &deadlineRecorder{ResponseRecorder: *httptest.NewRecorder()}
 	body := io.NopCloser(io.LimitReader(neverEnding('x'), 5))
-	handler := BodyIdleTimeout(time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := BodyReadTimeout(time.Minute, 30*time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.ReadAll(r.Body); err != nil {
 			t.Errorf("读请求体：%v", err)
 		}
@@ -64,12 +64,12 @@ func TestBodyIdleTimeoutSetsAndClearsDeadline(t *testing.T) {
 	}
 }
 
-// TestBodyIdleTimeoutArmsDrainGuardWhenBodyUnread 核对处理器没读请求体就返回时
+// TestBodyReadTimeoutArmsDrainGuardWhenBodyUnread 核对处理器没读请求体就返回时
 // （鉴权失败、参数绑定失败就是这样）不会留下无限等待的收尾读：中间件给
 // net/http 清理剩余请求体的那次读留一个期限。
-func TestBodyIdleTimeoutArmsDrainGuardWhenBodyUnread(t *testing.T) {
+func TestBodyReadTimeoutArmsDrainGuardWhenBodyUnread(t *testing.T) {
 	rec := &deadlineRecorder{ResponseRecorder: *httptest.NewRecorder()}
-	handler := BodyIdleTimeout(time.Minute)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	handler := BodyReadTimeout(time.Minute, 30*time.Minute)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		// 处理器不读请求体。
 	}))
 	body := io.NopCloser(io.LimitReader(neverEnding('x'), 5))
@@ -81,11 +81,11 @@ func TestBodyIdleTimeoutArmsDrainGuardWhenBodyUnread(t *testing.T) {
 	}
 }
 
-// TestBodyIdleTimeoutDoesNotRearmAfterTimeout 核对该超时之后不再刷新期限：保留
+// TestBodyReadTimeoutDoesNotRearmAfterTimeout 核对该超时之后不再刷新期限：保留
 // 已经过期的期限，让后续读（包括 net/http 的收尾读）立即失败。
-func TestBodyIdleTimeoutDoesNotRearmAfterTimeout(t *testing.T) {
+func TestBodyReadTimeoutDoesNotRearmAfterTimeout(t *testing.T) {
 	rec := &deadlineRecorder{ResponseRecorder: *httptest.NewRecorder()}
-	handler := BodyIdleTimeout(time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := BodyReadTimeout(time.Minute, 30*time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := r.Body.Read(make([]byte, 4)); err == nil {
 			t.Error("应当返回请求体读错误")
 		}
@@ -101,10 +101,10 @@ func TestBodyIdleTimeoutDoesNotRearmAfterTimeout(t *testing.T) {
 	}
 }
 
-func TestBodyIdleTimeoutSkipsRequestsWithoutBody(t *testing.T) {
+func TestBodyReadTimeoutSkipsRequestsWithoutBody(t *testing.T) {
 	for _, body := range []io.ReadCloser{nil, http.NoBody} {
 		rec := &deadlineRecorder{}
-		handler := BodyIdleTimeout(time.Minute)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		handler := BodyReadTimeout(time.Minute, 30*time.Minute)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.Body = body
 		handler.ServeHTTP(rec, req)
@@ -114,11 +114,11 @@ func TestBodyIdleTimeoutSkipsRequestsWithoutBody(t *testing.T) {
 	}
 }
 
-// TestBodyIdleTimeoutLeavesResponseWritesAlone 核对读完请求体之后清除期限，
+// TestBodyReadTimeoutLeavesResponseWritesAlone 核对读完请求体之后清除期限，
 // 后续写响应与刷新（模型流式响应走这条路径）不受影响。
-func TestBodyIdleTimeoutLeavesResponseWritesAlone(t *testing.T) {
+func TestBodyReadTimeoutLeavesResponseWritesAlone(t *testing.T) {
 	rec := &deadlineRecorder{ResponseRecorder: *httptest.NewRecorder()}
-	handler := BodyIdleTimeout(50 * time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := BodyReadTimeout(50*time.Millisecond, 30*time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			t.Errorf("读请求体：%v", err)
 		}
@@ -141,10 +141,10 @@ func TestBodyIdleTimeoutLeavesResponseWritesAlone(t *testing.T) {
 	}
 }
 
-// TestBodyIdleTimeoutStopsSlowBody 用真实连接发一个只写了半个请求体的请求：
+// TestBodyReadTimeoutStopsSlowBody 用真实连接发一个只写了半个请求体的请求：
 // 读期限到期后读取返回错误，处理器据此回 408，而不是一直占着连接。
-func TestBodyIdleTimeoutStopsSlowBody(t *testing.T) {
-	handler := BodyIdleTimeout(150 * time.Millisecond)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestBodyReadTimeoutStopsSlowBody(t *testing.T) {
+	handler := BodyReadTimeout(150*time.Millisecond, 30*time.Minute)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			w.WriteHeader(http.StatusRequestTimeout)
 			return
@@ -192,3 +192,29 @@ type timeoutBody struct{}
 func (timeoutBody) Read([]byte) (int, error) { return 0, context.DeadlineExceeded }
 
 func (timeoutBody) Close() error { return nil }
+
+func TestBodyReadTimeoutKeepsFixedTotalDeadline(t *testing.T) {
+	rec := &deadlineRecorder{ResponseRecorder: *httptest.NewRecorder()}
+	const total = 5 * time.Minute
+	handler := BodyReadTimeout(time.Hour, total)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		for range 2 {
+			if _, err := r.Body.Read(make([]byte, 1)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}))
+	before := time.Now()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/", neverEnding('x')))
+	after := time.Now()
+
+	// Both reads and the final drain guard use the same total deadline.
+	deadlines := rec.recorded()
+	if len(deadlines) != 3 || deadlines[0].Before(before.Add(total)) || deadlines[0].After(after.Add(total)) {
+		t.Fatalf("wanted three deadlines within the configured total time, got %v", deadlines)
+	}
+	for _, deadline := range deadlines[1:] {
+		if !deadline.Equal(deadlines[0]) {
+			t.Fatalf("total deadline moved: %v", deadlines)
+		}
+	}
+}

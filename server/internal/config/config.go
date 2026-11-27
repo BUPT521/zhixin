@@ -10,6 +10,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/mail"
 	"net/netip"
@@ -47,10 +48,16 @@ type Config struct {
 	// BodyIdleTimeout 是读取请求体时两次读到数据之间允许的最长等待。读完、关闭
 	// 或出错时清除，避免影响后续的 SSE 响应。
 	BodyIdleTimeout time.Duration
+	// BodyTotalTimeout limits the time to receive the complete request body.
+	BodyTotalTimeout time.Duration
 	// MaxBackupBytes caps a single uploaded backup snapshot.
 	MaxBackupBytes int64
 	// MaxAttachmentBytes caps one uploaded attachment object.
 	MaxAttachmentBytes int64
+	// UploadTempBudgetBytes caps the space reserved by concurrent backup and attachment uploads.
+	UploadTempBudgetBytes int64
+	// SyncMaxConcurrent caps sync commit pulls and pushes together per instance.
+	SyncMaxConcurrent int64
 	// MaxAccountAttachmentBytes 是一个账号全部附件的总量上限；超过时上传返回
 	// 413 storage_full，并带上已用量与上限。
 	MaxAccountAttachmentBytes int64
@@ -368,9 +375,11 @@ func Load(getenv func(string) string) (Config, error) {
 		RefreshTTL:                dur("ZHIXIN_REFRESH_TTL", "720h"),
 		MaxJSONBytes:              num("ZHIXIN_MAX_JSON_BYTES", "1048576"),
 		BodyIdleTimeout:           dur("ZHIXIN_BODY_IDLE_TIMEOUT", "60s"),
+		BodyTotalTimeout:          dur("ZHIXIN_BODY_TOTAL_TIMEOUT", "30m"),
 		MaxBackupBytes:            num("ZHIXIN_MAX_BACKUP_BYTES", "268435456"),
 		MaxAttachmentBytes:        num("ZHIXIN_MAX_ATTACHMENT_BYTES", "33554432"),
 		MaxAccountAttachmentBytes: num("ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES", "2147483648"),
+		SyncMaxConcurrent:         num("ZHIXIN_SYNC_MAX_CONCURRENT", "4"),
 		SyncPullMaxBytes:          num("ZHIXIN_SYNC_PULL_MAX_BYTES", "4194304"),
 		SyncCompactKeep:           dur("ZHIXIN_SYNC_COMPACT_KEEP", "168h"),
 		SyncCompact:               get("ZHIXIN_SYNC_COMPACT", "0") == "1",
@@ -466,6 +475,19 @@ func Load(getenv func(string) string) (Config, error) {
 		AdminToken:         get("ZHIXIN_ADMIN_TOKEN", ""),
 		AdminRatePerSecond: fnum("ZHIXIN_ADMIN_RATE", "0.05"),
 		AdminBurst:         int(num("ZHIXIN_ADMIN_BURST", "5")),
+	}
+	const uploadBudgetKey = "ZHIXIN_UPLOAD_TEMP_BUDGET_BYTES"
+	const defaultUploadConcurrency = 4
+	maxUploadBytes := max(cfg.MaxBackupBytes, cfg.MaxAttachmentBytes)
+	if get(uploadBudgetKey, "") != "" {
+		cfg.UploadTempBudgetBytes = num(uploadBudgetKey, "")
+		if cfg.UploadTempBudgetBytes > 0 && cfg.UploadTempBudgetBytes < maxUploadBytes {
+			errs = append(errs, fmt.Errorf("%s: must cover the larger of ZHIXIN_MAX_BACKUP_BYTES and ZHIXIN_MAX_ATTACHMENT_BYTES (%d bytes)", uploadBudgetKey, maxUploadBytes))
+		}
+	} else if maxUploadBytes > math.MaxInt64/defaultUploadConcurrency {
+		errs = append(errs, fmt.Errorf("%s: set explicitly because the default upload budget exceeds int64", uploadBudgetKey))
+	} else {
+		cfg.UploadTempBudgetBytes = maxUploadBytes * defaultUploadConcurrency
 	}
 	if cfg.AdminToken != "" && len(cfg.AdminToken) < 32 {
 		errs = append(errs, errors.New("ZHIXIN_ADMIN_TOKEN: use at least 32 characters, e.g. `openssl rand -base64 32`"))
