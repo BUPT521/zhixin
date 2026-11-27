@@ -158,6 +158,17 @@ type LlmRouteUsage struct {
 	FailoverCachedReports int64
 }
 
+type LlmSettlementFailure struct {
+	ID             string
+	UserID         string
+	Day            pgtype.Date
+	Kind           string
+	ApiKeyID       string
+	ReservedTokens int64
+	BilledTokens   int64
+	CreatedAt      pgtype.Timestamptz
+}
+
 type LlmUsage struct {
 	UserID                  string
 	Day                     pgtype.Date

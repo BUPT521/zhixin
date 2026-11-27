@@ -235,6 +235,26 @@ CREATE TABLE llm_instance_usage (
   tokens  BIGINT NOT NULL DEFAULT 0
 );
 
+-- 结算失败、等待补退的预留（ADR-0086）。结算在事务里失败时写一行，之后补退预留与
+-- 删除这一行在同一个事务里完成。reserved_tokens 只有结算会减，结算失败之后如果没有
+-- 这份记录，那笔预留再也没有人退，当天的额度就一直被白占，而 `GET /v1/llm/quota`
+-- 只显示已结算用量，用户看到的是“没用多少却一直 429”。下一次请求按账号补退，全局
+-- 补查按创建时间兜底；账号删除时随外键级联，账号不在了也不需要把这笔额度退给谁。
+CREATE TABLE llm_settlement_failure (
+  id              TEXT PRIMARY KEY DEFAULT replace(gen_random_uuid()::text, '-', ''),
+  user_id         TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day             DATE NOT NULL,                -- ZHIXIN_TIMEZONE 下的自然日
+  kind            TEXT NOT NULL CHECK (kind IN ('chat', 'embedding')),
+  api_key_id      TEXT NOT NULL DEFAULT '',
+  reserved_tokens BIGINT NOT NULL CHECK (reserved_tokens > 0),
+  billed_tokens   BIGINT NOT NULL DEFAULT 0,    -- 这次没有记进已结算用量的计费 token
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 行在补退成功时立即删除，这张表正常时是空的，两个索引都不留长期成本：
+-- 下一次请求先按账号补退，再判断额度；全局补查按创建时间取最早的一批。
+CREATE INDEX llm_settlement_failure_user_idx ON llm_settlement_failure (user_id, created_at);
+CREATE INDEX llm_settlement_failure_created_idx ON llm_settlement_failure (created_at);
+
 -- 每条模型路由的每日汇总，与账号额度各自记录。
 --
 -- input_tokens 与 cached_tokens 是合计；first_* 与 failover_* 是同一组数字按

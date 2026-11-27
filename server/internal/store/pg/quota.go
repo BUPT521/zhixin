@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -28,6 +29,12 @@ func (s *Store) SetQuotaLimits(dailyTokens, instanceDailyTokens int64) {
 func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, want int64) (int64, error) {
 	if want <= 0 {
 		return 0, &llmproxy.QuotaExceededError{Reason: llmproxy.QuotaReasonAccount}
+	}
+	// 上一次结算失败留下的预留先补退，再判断额度：不退的话这笔预留一直占着当天
+	// 的额度，用户只看到 429 却看不到用量（ADR-0086）。补退失败只记日志，不影响
+	// 这一次预留，全局补查与下一次请求还会再试。
+	if _, err := s.retrySettlements(ctx, userID); err != nil {
+		s.log.Warn("retry the failed settlement", "user_id", userID, "error", err)
 	}
 	// 先安排补查尚未确认的核销，不在请求路径上调用即刻收。
 	if s.nowpay != nil {
@@ -112,8 +119,10 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	return want, nil
 }
 
-// CheckQuotaSchema 在启动时核对两类额度的预留与计费列，缺列时由自动部署回滚到
-// 上一份可执行文件。已有实例按运维手册的增量语句加列。
+// CheckQuotaSchema 在启动时核对两类额度的预留与计费列，以及结算失败的补偿表；缺
+// 列或缺表时由自动部署回滚到上一份可执行文件。已有实例按运维手册的增量语句补齐。
+// 补偿表必须在服务启动之前建好：每次预留都会先补退一次，缺表虽然不影响放行，却会
+// 让每一次请求都记一条错误日志。
 func (s *Store) CheckQuotaSchema(ctx context.Context) error {
 	var installed bool
 	err := s.pool.QueryRow(ctx, `SELECT count(*) = 3
@@ -125,6 +134,14 @@ func (s *Store) CheckQuotaSchema(ctx context.Context) error {
 	}
 	if !installed {
 		return errors.New("pg: llm_usage 缺少额度预留或嵌入计费列，按运维手册 4.11 加列之后再启动")
+	}
+	var settlementTable bool
+	err = s.pool.QueryRow(ctx, `SELECT to_regclass('llm_settlement_failure') IS NOT NULL`).Scan(&settlementTable)
+	if err != nil {
+		return fmt.Errorf("pg: 检查结算失败表失败: %w", err)
+	}
+	if !settlementTable {
+		return errors.New("pg: 缺少 llm_settlement_failure 表，按运维手册 4.11 建表之后再启动")
 	}
 	return nil
 }
@@ -223,6 +240,27 @@ func pgInt8(value *int64) pgtype.Int8 {
 	return pgtype.Int8{Int64: *value, Valid: true}
 }
 
+// settlementRetryBatch 是一个账号在一次预留之前最多补退的记录条数：同一个账号同时
+// 失败的结算不会很多，处理完这一批还会剩下的由全局补查接手。
+const settlementRetryBatch = 4
+
+// settleParams 是一次结算需要的全部参数。Settle 与补退共用同一份，避免两处各写
+// 一遍字段清单。
+type settleParams struct {
+	userID   string
+	day      pgtype.Date
+	kind     llmproxy.Kind
+	keyID    string
+	reserved int64
+	actual   int64
+	usage    llmproxy.Usage
+	attempt  llmproxy.SettleAttempt
+}
+
+// settleDay 返回这次结算的自然日，advisory lock 与日志都用它；Date 由 pgDate 解析
+// 或由数据库读出，两种来源都按同一天表示。
+func (p settleParams) settleDay() string { return p.day.Time.Format("2006-01-02") }
+
 // Settle 把这次预留转成实际用量：reserved 从在途预留里扣掉，actual 记进已结算
 // 用量；两者都为 0 且没有拆分时什么也不写。账号用量与实例账本在同一个事务里改，
 // 任何一步失败都整体回滚，两边的数字不会各写一半。reserved 与 actual 是计费
@@ -232,6 +270,10 @@ func pgInt8(value *int64) pgtype.Int8 {
 // attempt 记这次尝试与它是否失败，与 token 两列一起写进同一行：失败按 0 结算时
 // token 与预留都回到 0，后台只能靠这两个计数看见失败的调用（ADR-0083）。它们不
 // 参与额度判定、预留与核销，判定用的仍是 UsedTokens 的两列。
+//
+// 事务失败时这笔预留还在，而 reserved_tokens 只有结算会减，所以不能只把错误交回
+// 调用方：立刻记一条待补偿记录并补退一次，记录也没写成时由每日清掉过去几天的在途
+// 预留兜底（ADR-0086）。
 func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Kind, keyID string, reserved, actual int64, usage llmproxy.Usage, attempt llmproxy.SettleAttempt) error {
 	if reserved == 0 && actual == 0 && usage.Total() == 0 && attempt.Attempts == 0 {
 		return nil
@@ -240,6 +282,20 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	if err != nil {
 		return err
 	}
+	p := settleParams{
+		userID: userID, day: date, kind: kind, keyID: keyID,
+		reserved: reserved, actual: actual, usage: usage, attempt: attempt,
+	}
+	if err := s.settleTx(ctx, p, ""); err != nil {
+		s.recordSettlementFailure(ctx, p)
+		return err
+	}
+	return nil
+}
+
+// settleTx 在一个事务里完成一次结算。deleteID 不为空表示这是补退一条待补偿记录：
+// 先删记录再退预留，删不到说明别的进程已经补退过，整个事务回滚，不重复退。
+func (s *Store) settleTx(ctx context.Context, p settleParams, deleteID string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pg: 开始额度结算事务失败: %w", err)
@@ -248,35 +304,44 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	// 实例账本的免费段按“当前用量减这次预留”反推，读与写必须在同一个临界区：
 	// 不取锁时另一个请求的预留或结算会插在读取与写入之间，实例账与 llm_usage 的
 	// 差额会随并发放大。锁与 Reserve 用的同一把，按天串行（ADR-0070、ADR-0073）。
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "llm_usage:"+day); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, "llm_usage:"+p.settleDay()); err != nil {
 		return fmt.Errorf("pg: 锁定当日额度失败: %w", err)
 	}
 	q := db.New(tx)
-	instanceDelta := actual - reserved
-	if limit, limited, err := s.accountLimit(ctx, q, userID); err != nil {
+	if deleteID != "" {
+		removed, err := q.DeleteSettlementFailure(ctx, deleteID)
+		if err != nil {
+			return fmt.Errorf("pg: 删除待补偿结算记录失败: %w", err)
+		}
+		if removed == 0 {
+			return nil
+		}
+	}
+	instanceDelta := p.actual - p.reserved
+	if limit, limited, err := s.accountLimit(ctx, q, p.userID); err != nil {
 		return err
 	} else if limited {
 		// 结算前的账号用量含这次预留，减掉它才是这次请求开始时的用量。
-		if used, err := usedTokens(ctx, q, userID, date); err != nil {
+		if used, err := usedTokens(ctx, q, p.userID, p.day); err != nil {
 			return err
 		} else {
-			free := max(0, limit-max(0, used-reserved))
-			instanceDelta = min(actual, free) - min(reserved, free)
+			free := max(0, limit-max(0, used-p.reserved))
+			instanceDelta = min(p.actual, free) - min(p.reserved, free)
 		}
 	}
 	rawEmbedding := int64(0)
-	if kind == llmproxy.KindEmbedding && actual > 0 {
-		rawEmbedding = usage.Total()
+	if p.kind == llmproxy.KindEmbedding && p.actual > 0 {
+		rawEmbedding = p.usage.Total()
 	}
 	if err := q.SettleTokens(ctx, db.SettleTokensParams{
 		RawEmbeddingTokens: rawEmbedding,
-		UserID:             userID, Day: date, Kind: string(kind), ApiKeyID: keyID,
-		Reserved: reserved, Actual: actual, InputTokens: usage.Input, CachedTokens: usage.Cached,
-		Attempts: attempt.Attempts, Failures: attempt.Failures,
+		UserID:             p.userID, Day: p.day, Kind: string(p.kind), ApiKeyID: p.keyID,
+		Reserved: p.reserved, Actual: p.actual, InputTokens: p.usage.Input, CachedTokens: p.usage.Cached,
+		Attempts: p.attempt.Attempts, Failures: p.attempt.Failures,
 	}); err != nil {
 		return fmt.Errorf("pg: 结算额度失败: %w", err)
 	}
-	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: date, Delta: instanceDelta}); err != nil {
+	if err := q.AddInstanceTokens(ctx, db.AddInstanceTokensParams{Day: p.day, Delta: instanceDelta}); err != nil {
 		return fmt.Errorf("pg: 结算实例额度失败: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -284,9 +349,108 @@ func (s *Store) Settle(ctx context.Context, userID, day string, kind llmproxy.Ki
 	}
 	// 结算提交之后才申请核销。未确认的核销保留在流水里，下次请求前补查。
 	if s.nowpay != nil {
-		s.chargeNowPay(ctx, userID, day, date)
+		s.chargeNowPay(ctx, p.userID, p.settleDay(), p.day)
 	}
 	return nil
+}
+
+// recordSettlementFailure 在结算事务失败之后记一条待补偿记录并马上补退一次：结算
+// 超时一类的一次性故障在这一步就能收掉，不必等到下一次请求。记录写不进去时这笔
+// 预留会留到当天结束，由每日清掉过去几天的在途预留兜底（ADR-0086）。
+//
+// 这里用脱离请求的上下文与自己的时限：结算失败常常正是因为请求的截止时间到了，
+// 记录不能跟着一起失败。
+func (s *Store) recordSettlementFailure(ctx context.Context, p settleParams) {
+	if p.reserved <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.q.AddSettlementFailure(ctx, db.AddSettlementFailureParams{
+		UserID: p.userID, Day: p.day, Kind: string(p.kind), ApiKeyID: p.keyID,
+		ReservedTokens: p.reserved, BilledTokens: p.actual,
+	}); err != nil {
+		s.log.Error("record the failed settlement",
+			"user_id", p.userID, "day", p.settleDay(), "kind", string(p.kind),
+			"reserved_tokens", p.reserved, "billed_tokens", p.actual, "error", err)
+		return
+	}
+	released, err := s.retrySettlements(ctx, p.userID)
+	if err != nil {
+		s.log.Warn("retry the failed settlement", "user_id", p.userID, "error", err)
+		return
+	}
+	if released > 0 {
+		s.log.Warn("released a reservation whose settlement failed",
+			"user_id", p.userID, "day", p.settleDay(), "kind", string(p.kind),
+			"reserved_tokens", p.reserved, "billed_tokens", p.actual)
+	}
+}
+
+// retrySettlements 补退一个账号还没有退掉的预留，返回处理掉的条数。它在每次预留
+// 之前调用：上一次结算失败留下的预留如果还在，额度判定会先被它挡掉，用户看到的是
+// “没用多少却一直 429”（ADR-0086）。
+func (s *Store) retrySettlements(ctx context.Context, userID string) (int, error) {
+	rows, err := s.q.SettlementFailuresByUser(ctx, db.SettlementFailuresByUserParams{
+		UserID: userID, MaxRows: settlementRetryBatch,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pg: 读取待补偿结算失败: %w", err)
+	}
+	return s.releaseSettlements(ctx, rows)
+}
+
+// SweepSettlementFailures 补退全局创建早于 before 的一批预留，供每十分钟一次的
+// 补查兜底：账号不再发请求、或者进程退出之后没有人在请求路径上补退时，由它收尾。
+func (s *Store) SweepSettlementFailures(ctx context.Context, before time.Time, maxRows int) (int, error) {
+	if maxRows < 1 {
+		return 0, nil
+	}
+	at, err := pgTime(before)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := s.q.SettlementFailuresDue(ctx, db.SettlementFailuresDueParams{
+		Before: at, MaxRows: int32(maxRows),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("pg: 读取待补偿结算失败: %w", err)
+	}
+	return s.releaseSettlements(ctx, rows)
+}
+
+// releaseSettlements 逐条补退：退预留与删除记录在同一个事务里完成，一条失败就停下，
+// 把错误交给调用方记日志，剩下的下一次再处理。
+func (s *Store) releaseSettlements(ctx context.Context, rows []db.LlmSettlementFailure) (int, error) {
+	done := 0
+	for _, row := range rows {
+		// 只退预留，不补记已经发生的用量：结算事务是否提交成功在报错时无法判断，
+		// 重记一次可能变成重复扣减，少记一次只是这一次的用量没有算进去（ADR-0086）。
+		p := settleParams{
+			userID: row.UserID, day: row.Day, kind: llmproxy.Kind(row.Kind), keyID: row.ApiKeyID,
+			reserved: row.ReservedTokens,
+		}
+		if err := s.settleTx(ctx, p, row.ID); err != nil {
+			return done, err
+		}
+		done++
+	}
+	return done, nil
+}
+
+// ClearReservationsBefore 清掉 before 之前那些已经不可能再结算的在途预留，返回清掉
+// 的行数。一次请求活不过两天，这些预留既没有结算也没有补退记录（进程在结算之前
+// 退出，或者失败记录也写不进去），留着只会让当天之后的账一直挂着一份占用量。
+func (s *Store) ClearReservationsBefore(ctx context.Context, before time.Time) (int64, error) {
+	date, err := pgDate(before.Format("2006-01-02"))
+	if err != nil {
+		return 0, err
+	}
+	cleared, err := s.q.ClearReservationsBefore(ctx, date)
+	if err != nil {
+		return 0, fmt.Errorf("pg: 清理过期的在途预留失败: %w", err)
+	}
+	return cleared, nil
 }
 
 // InstanceUsed 返回实例当天的总用量，供实例预算与展示使用。读数来自
