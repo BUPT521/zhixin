@@ -24,6 +24,7 @@ import 'buddy_timeline.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
 import 'discussion_search.dart';
+import 'discussion_stream.dart';
 import 'failure_feedback.dart';
 import 'goal_picker.dart';
 import 'live_view.dart';
@@ -101,15 +102,8 @@ class DiscussionChatState extends State<DiscussionChat> {
   List<ChatMessage> _searchSavedOlder = const [];
   double _searchSavedOffset = 0;
 
-  /// 只让正在生成的气泡跟着正文重建，不带着整页消息一起重建。
-  final ValueNotifier<String> _streamingText = ValueNotifier<String>('');
-
-  /// 还没交给界面的最新正文：网络分片再密，一帧最多更新一次。
-  String? _pendingStreamText;
-  bool _streamFlushScheduled = false;
-
-  /// 本次发送的取消信号；生成中按停止时用它中止请求。
-  LlmCancelToken? _cancelToken;
+  /// 流式回答的正文缓冲、生成标志与这一次的取消信号。
+  final DiscussionStream _reply = DiscussionStream();
 
   String? _conversationId;
 
@@ -134,16 +128,10 @@ class DiscussionChatState extends State<DiscussionChat> {
   List<XFile> _picked = const [];
   String? _notice;
 
-  /// 生成中的回答出现之后用于判断订阅是否已经读回这条回答。
-  String? _answeringAfterMessageId;
-
   /// 用户消息已经落库、但这一轮没有保存回答；提示条据此给出重试入口。
   bool _retryableNotice = false;
-  bool _streaming = false;
   bool _followScheduled = false;
-  bool _sending = false;
   bool _loadingOlder = false;
-  bool _answering = false;
   bool _started = false;
 
   /// 时间线只向页面取当前消息、卡片与操作，排列与失败说明由共用组件负责。
@@ -152,16 +140,13 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 模型是否可用（已经登录）：决定本地规则回答下方给登录入口还是重新回答入口。
   bool _configured = false;
 
-  /// 正在用模型重答上一条问题；与首次发送共用输入框的停止按钮。
-  bool _retrying = false;
-
   /// 取图与框选是一段异步流程，期间再点一次会同时开两个相机。
   bool _picking = false;
 
   @override
   void initState() {
     super.initState();
-    _streamingText.addListener(_onStreamingTextChanged);
+    _reply.text.addListener(_onStreamingTextChanged);
     _scroll.addListener(_onScroll);
     _searchInput.addListener(_onSearchTextChanged);
   }
@@ -188,10 +173,10 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   @override
   void dispose() {
-    _streamingText.removeListener(_onStreamingTextChanged);
+    _reply.text.removeListener(_onStreamingTextChanged);
     _scroll.removeListener(_onScroll);
     _searchInput.removeListener(_onSearchTextChanged);
-    _streamingText.dispose();
+    _reply.dispose();
     _input.dispose();
     _scroll.dispose();
     _searchInput.dispose();
@@ -433,17 +418,15 @@ class DiscussionChatState extends State<DiscussionChat> {
     ];
     // 回答已经保存而发送流程还没有返回时，用保存的消息替换生成中的气泡，
     // 避免同一段回答同时以两种形式出现。
-    final answeringAfter = _answeringAfterMessageId;
-    if (_streaming &&
+    final answeringAfter = _reply.answeringAfterMessageId;
+    if (_reply.streaming &&
         answeringAfter != null &&
         view.messages.any(
           (message) =>
               message.id.compareTo(answeringAfter) > 0 &&
               message.role == MessageRole.assistant,
         )) {
-      _streaming = false;
-      _streamingText.value = '';
-      _pendingStreamText = null;
+      _reply.receivedAnswer();
     }
     final latestId = view.messages.lastOrNull?.id;
     if (firstResult || (latestId != previousLastId && _isNearBottom)) {
@@ -550,11 +533,16 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 流式正文变化时只排一次贴底，不跟着每个网络分片重复排队。
   void _onStreamingTextChanged() {
-    if (!mounted || !_streaming || !_isNearBottom || _followScheduled) return;
+    if (!mounted || !_reply.streaming || !_isNearBottom || _followScheduled) {
+      return;
+    }
     _followScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _followScheduled = false;
-      if (!mounted || !_streaming || !_scroll.hasClients || !_isNearBottom) {
+      if (!mounted ||
+          !_reply.streaming ||
+          !_scroll.hasClients ||
+          !_isNearBottom) {
         return;
       }
       _scroll.jumpTo(0);
@@ -564,11 +552,9 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 用户消息已经落库：先放进页面，订阅回填之后按编号去重。
   void _showUserMessage(ChatMessage message) {
     if (!mounted || _messages.any((item) => item.id == message.id)) return;
-    _streamingText.value = '';
-    _pendingStreamText = null;
     setState(() {
+      _reply.resume();
       _draftMessages = [..._draftMessages, message];
-      _streaming = true;
     });
     // 发送后直接贴到底部，第一段正文出现时不用等滚动动画。
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -577,44 +563,17 @@ class DiscussionChatState extends State<DiscussionChat> {
     });
   }
 
-  /// 流式正文按帧合并：一帧里来多少分片，正文都只重排一次。
-  ///
-  /// 长回答每次更新都要重新解析并排版整段 Markdown，分片越密越贵；合并之后
-  /// 正文每帧最多换一次，肉眼分辨不出，长回答末尾的贴底滚动也不再发涩。
-  /// 没有别的绘制要跑时先给自己排一帧，正文不会因为等不到帧卡住。
-  void _showPartial(String text) {
-    if (!mounted || !_streaming) return;
-    _pendingStreamText = text;
-    if (_streamFlushScheduled) return;
-    _streamFlushScheduled = true;
-    WidgetsBinding.instance.scheduleFrameCallback((_) {
-      _streamFlushScheduled = false;
-      _flushStreamText();
-    });
-    WidgetsBinding.instance.scheduleFrame();
-  }
-
-  /// 把攒下的最新正文交给界面；生成已经结束时丢掉，不覆盖收尾后的状态。
-  void _flushStreamText() {
-    final pending = _pendingStreamText;
-    _pendingStreamText = null;
-    if (!mounted || !_streaming || pending == null) return;
-    _streamingText.value = pending;
-  }
-
   /// 一次回答写回后的收尾：把这次的两条消息交给页面，并说明回答的状态。
   ///
   /// 记忆卡片、建议与回执不在收尾时另读一遍，订阅在写入之后会把这些一并
   /// 重读并回填（ADR-0014）；这里只处理发送流程自己的按钮与提示。
   void _settleReply(List<ChatMessage> messages, String? notice) {
     final followReply = _isNearBottom;
-    _streamingText.value = '';
-    _pendingStreamText = null;
+    _reply.settle();
     setState(() {
       _draftMessages = messages;
       _notice = notice;
       _retryableNotice = false;
-      _streaming = false;
     });
     if (followReply) _jumpToEnd();
   }
@@ -630,18 +589,12 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 重答与首次发送原先各写一遍这两步，改其中一处时另一处仍按旧写法复位；
   /// 现在只在 [retrying] 上区分要复位哪个按钮。
   LlmCancelToken _beginReply({required bool retrying}) {
-    final cancel = LlmCancelToken();
-    _cancelToken = cancel;
-    _answeringAfterMessageId = _messages.lastOrNull?.id ?? '';
-    _streamingText.value = '';
-    _pendingStreamText = null;
+    late final LlmCancelToken cancel;
     setState(() {
-      if (retrying) {
-        _retrying = true;
-      } else {
-        _sending = true;
-      }
-      _streaming = true;
+      cancel = _reply.begin(
+        retrying: retrying,
+        afterMessageId: _messages.lastOrNull?.id ?? '',
+      );
       _notice = null;
       _retryableNotice = false;
     });
@@ -658,6 +611,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     bool retryable = true,
   }) {
     if (!mounted) return;
+    _reply.fail();
     setState(() {
       if (fallbackConversationId != null && _conversationId == null) {
         _conversationId = fallbackConversationId;
@@ -665,10 +619,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       }
       _notice = reason;
       _retryableNotice = retryable;
-      _streaming = false;
     });
-    _streamingText.value = '';
-    _pendingStreamText = null;
   }
 
   /// 一次回答结束后复位生成状态；取消信号与生成活动只清理这一次的。
@@ -678,19 +629,13 @@ class DiscussionChatState extends State<DiscussionChat> {
     String? activityId,
   }) {
     if (activityId != null) DiscussionActivity.end(activityId);
-    if (identical(_cancelToken, cancel)) _cancelToken = null;
+    _reply.end(cancel, retrying: retrying);
     if (!mounted) return;
-    setState(() {
-      if (retrying) {
-        _retrying = false;
-      } else {
-        _sending = false;
-      }
-    });
+    setState(() {});
   }
 
   Future<void> _send() async {
-    if (_sending) return;
+    if (_reply.sending) return;
     final text = _input.text.trim();
     final submittedDraft = _input.text;
     if (text.isEmpty && _picked.isEmpty) return;
@@ -719,7 +664,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         imagePaths: paths,
         broughtIdentities: brought,
         onUserMessage: handleUserMessage,
-        onPartial: _showPartial,
+        onPartial: _reply.showPartial,
         cancelToken: cancel,
       );
       sent = true;
@@ -766,7 +711,7 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 停止本次生成；服务会把已经显示的部分保存为回答。
   void _stop() {
-    _cancelToken?.cancel();
+    _reply.stop();
   }
 
   Future<List<String>> _persistPicked(AppScopeState scope) async {
@@ -811,9 +756,9 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 从这条讨论开始作答：以当时最后一条用户消息为原题，作答挂在这条记录上。
   Future<void> _startAnswering() async {
     final id = _conversationId;
-    if (id == null || _answering) return;
+    if (id == null || _reply.answering) return;
     setState(() {
-      _answering = true;
+      _reply.answering = true;
       _notice = null;
     });
     try {
@@ -835,7 +780,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         ),
       );
     } finally {
-      if (mounted) setState(() => _answering = false);
+      if (mounted) setState(() => _reply.answering = false);
     }
   }
 
@@ -1113,7 +1058,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 用模型重答最后一个问题：不重复写用户消息，新回答追加在后面。
   Future<void> _retry() async {
     final id = _conversationId;
-    if (id == null || _sending || _retrying) return;
+    if (id == null || _reply.sending || _reply.retrying) return;
     // 未登录时不必发请求：先给登录入口，回来之后再由按钮重新执行这一步。
     if (!_configured) {
       await _openModelAccount();
@@ -1125,7 +1070,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       final result = await AppScope.of(context).chat.discussion.reply(
         conversationId: id,
         repeatLast: true,
-        onPartial: _showPartial,
+        onPartial: _reply.showPartial,
         cancelToken: cancel,
       );
       if (!mounted) return;
@@ -1223,7 +1168,7 @@ class DiscussionChatState extends State<DiscussionChat> {
             onSignIn: _openModelAccount,
             onOpenSettings: needsConfig ? _openModelSettings : null,
             onPurchasePoints: purchasePoints,
-            enabled: !(_sending || _retrying),
+            enabled: !(_reply.sending || _reply.retrying),
           ),
         ],
       ),
@@ -1304,8 +1249,10 @@ class DiscussionChatState extends State<DiscussionChat> {
               variant: forui.FButtonVariant.secondary,
               size: forui.FButtonSizeVariant.sm,
               mainAxisSize: MainAxisSize.min,
-              onPress: _sending || _answering ? null : _startAnswering,
-              prefix: _answering
+              onPress: _reply.sending || _reply.answering
+                  ? null
+                  : _startAnswering,
+              prefix: _reply.answering
                   ? const forui.FCircularProgress(
                       size: forui.FCircularProgressSizeVariant.sm,
                     )
@@ -1324,11 +1271,11 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (record.hasMaterial)
       ZhixinMenuItem(
         label: '系统学习',
-        enabled: !_sending,
+        enabled: !_reply.sending,
         onSelected: _startStudyPlan,
       ),
     if (record.open)
-      ZhixinMenuItem(label: '结束讨论', enabled: !_sending, onSelected: _end),
+      ZhixinMenuItem(label: '结束讨论', enabled: !_reply.sending, onSelected: _end),
   ];
 
   /// 状态行只放目标、材料、查找、结束状态与低频菜单；一行放不下时换行。
@@ -1344,12 +1291,12 @@ class DiscussionChatState extends State<DiscussionChat> {
       ZhixinChip(
         icon: FLucideIcons.flag,
         label: goal?.title ?? '选择目标',
-        onPressed: _sending ? null : _chooseGoal,
+        onPressed: _reply.sending ? null : _chooseGoal,
       ),
       ZhixinChip(
         icon: FLucideIcons.bookOpen,
         label: material ? record.materialLabel : '选择材料',
-        onPressed: _sending ? null : _chooseMaterial,
+        onPressed: _reply.sending ? null : _chooseMaterial,
       ),
       if (_messages.isNotEmpty)
         ZhixinChip(
@@ -1537,7 +1484,9 @@ class DiscussionChatState extends State<DiscussionChat> {
                 ZhixinIconButton(
                   tooltip: '添加图片',
                   variant: forui.FButtonVariant.secondary,
-                  onPressed: _sending || _picking ? null : _chooseAttachment,
+                  onPressed: _reply.sending || _picking
+                      ? null
+                      : _chooseAttachment,
                   icon: FLucideIcons.imagePlus,
                 ),
                 SizedBox(width: theme.space.sm),
@@ -1563,12 +1512,14 @@ class DiscussionChatState extends State<DiscussionChat> {
                 ),
                 SizedBox(width: theme.space.sm),
                 ZhixinIconButton(
-                  tooltip: _sending ? '停止生成' : '发送',
+                  tooltip: _reply.sending ? '停止生成' : '发送',
                   variant: forui.FButtonVariant.primary,
                   size: forui.FButtonSizeVariant.lg,
-                  iconSize: _sending ? 18 : 22,
-                  onPressed: _sending ? _stop : _send,
-                  icon: _sending ? FLucideIcons.square : FLucideIcons.arrowUp,
+                  iconSize: _reply.sending ? 18 : 22,
+                  onPressed: _reply.sending ? _stop : _send,
+                  icon: _reply.sending
+                      ? FLucideIcons.square
+                      : FLucideIcons.arrowUp,
                 ),
               ],
             ),
@@ -1594,7 +1545,7 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
           message: state._messages[index],
           footer: state._localFooter(index),
         ),
-      if (state._streaming) BuddyStreamingEntry(state._streamingText),
+      if (state._reply.streaming) BuddyStreamingEntry(state._reply.text),
       for (final item in state._memoryItems) BuddyMemoryEntry(item),
       for (final suggestion in state._pending) BuddySuggestionEntry(suggestion),
       if (state._changes.isNotEmpty) BuddyChangesEntry(state._changes),
@@ -1603,7 +1554,7 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
           message: state._notice!,
           actions: [
             // 读取失败时就地给重试入口，不再另弹一条同样的 toast。
-            if (state._readFailed && !state._streaming)
+            if (state._readFailed && !state._reply.streaming)
               forui.FButton(
                 variant: forui.FButtonVariant.ghost,
                 size: forui.FButtonSizeVariant.sm,
@@ -1612,11 +1563,11 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
                 prefix: const Icon(FLucideIcons.refreshCw),
                 child: const Text('重试'),
               ),
-            if (state._retryableNotice && !state._streaming)
+            if (state._retryableNotice && !state._reply.streaming)
               forui.FButton(
                 variant: forui.FButtonVariant.ghost,
                 mainAxisSize: MainAxisSize.min,
-                onPress: state._retrying ? null : state._retry,
+                onPress: state._reply.retrying ? null : state._retry,
                 prefix: const Icon(FLucideIcons.refreshCw),
                 child: const Text('重试这次回答'),
               ),
