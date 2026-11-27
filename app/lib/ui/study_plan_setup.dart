@@ -107,7 +107,13 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
   ({int from, int to})? _proposedRange;
   bool _loading = false;
   bool _reading = true;
+
+  /// 一次性结果说明：一次读取或生成之后的消息，以及它是不是失败。
+  ///
+  /// 页面只保存消息与这一个标记，错误框与一行小字由 [ResultNotice] 决定；页码
+  /// 范围填错是给用户看的更正提示，不算操作失败。
   String? _notice;
+  bool _noticeFailed = false;
   bool _started = false;
 
   /// 页码与片段在文件名与提示里的说法不同，统一从这里取。
@@ -133,6 +139,7 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
     setState(() {
       _reading = true;
       _notice = null;
+      _noticeFailed = false;
     });
     try {
       final scope = AppScope.of(context);
@@ -159,6 +166,7 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
           _firstPage = null;
           _lastPage = null;
           _notice = '这份材料还没有页码和原文；补充原文后可以建立学习顺序。';
+          _noticeFailed = false;
         });
         return;
       }
@@ -187,6 +195,7 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
           kept: '计划还没有开始建立',
           next: '可以点「重试」再读一次',
         );
+        _noticeFailed = true;
       });
     }
   }
@@ -211,16 +220,18 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
     final from = int.tryParse(_from.text.trim()) ?? 0;
     final to = int.tryParse(_to.text.trim()) ?? 0;
     if (from < firstPage || to > lastPage || to < from) {
-      setState(
-        () => _notice =
+      setState(() {
+        _notice =
             '页码范围无效：$_unit 应在 $firstPage–$lastPage 之间，'
-            '且结束$_unit不早于起始$_unit。',
-      );
+            '且结束$_unit不早于起始$_unit。';
+        _noticeFailed = false;
+      });
       return;
     }
     setState(() {
       _loading = true;
       _notice = null;
+      _noticeFailed = false;
       _proposal = null;
       _proposedRange = null;
     });
@@ -252,6 +263,7 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
           kept: '计划与已有步骤没有改动',
           next: '可以再试一次',
         );
+        _noticeFailed = true;
       });
     }
   }
@@ -335,7 +347,7 @@ class _PlanSetupDialogState extends State<_PlanSetupDialog> {
             if (_notice != null)
               Padding(
                 padding: EdgeInsets.only(top: theme.space.sm),
-                child: InlineNotice(message: _notice!),
+                child: ResultNotice(message: _notice!, failed: _noticeFailed),
               ),
             if (_loading)
               Padding(
