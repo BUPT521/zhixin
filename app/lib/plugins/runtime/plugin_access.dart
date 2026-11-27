@@ -80,6 +80,38 @@ abstract interface class PluginModelCallBackend {
   Future<String> complete({required String prompt});
 }
 
+/// 四个门面共用的权限守卫。
+///
+/// 先看清单有没有声明这项权限，再看这次调用的细分项（域名、数据范围、写入
+/// 类型）在不在声明里，最后取已经接入的后端；三处失败各给一个固定类型，不
+/// 静默降级。四个门面原先各写一遍这段判断，改一处时另外三处仍按旧规则放行。
+T pluginAccessGuard<T extends Object>(
+  PluginManifest manifest,
+  PluginPermission permission,
+  T? backend, {
+  bool allowed = true,
+  String detail = '',
+}) {
+  if (!manifest.permissions.allows(permission)) {
+    throw PluginPermissionDenied(pluginId: manifest.id, permission: permission);
+  }
+  if (!allowed) {
+    throw PluginPermissionDenied(
+      pluginId: manifest.id,
+      permission: permission,
+      detail: detail,
+    );
+  }
+  final value = backend;
+  if (value == null) {
+    throw PluginCapabilityUnavailable(
+      pluginId: manifest.id,
+      permission: permission,
+    );
+  }
+  return value;
+}
+
 /// 网络访问门面：先核对清单声明的域名，再交给应用层实现。
 final class PluginNetworkAccess {
   const PluginNetworkAccess({required this.manifest, this.backend});
@@ -88,36 +120,21 @@ final class PluginNetworkAccess {
   final PluginNetworkBackend? backend;
 
   Future<Object?> fetch(String url) async {
-    final permission = PluginPermission.network;
-    final declared = manifest.permissions;
-    if (!declared.allows(permission)) {
-      throw PluginPermissionDenied(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
     final uri = Uri.tryParse(url.trim());
     if (uri == null || uri.host.isEmpty) {
       throw PluginArgumentError('地址无法解析：$url');
     }
     final host = uri.host.toLowerCase();
-    final allowed = declared.networkDomains.any(
-      (domain) => host == domain || host.endsWith('.$domain'),
+    final declared = manifest.permissions;
+    final backend = pluginAccessGuard(
+      manifest,
+      PluginPermission.network,
+      this.backend,
+      allowed: declared.networkDomains.any(
+        (domain) => host == domain || host.endsWith('.$domain'),
+      ),
+      detail: '域名 $host',
     );
-    if (!allowed) {
-      throw PluginPermissionDenied(
-        pluginId: manifest.id,
-        permission: permission,
-        detail: '域名 $host',
-      );
-    }
-    final backend = this.backend;
-    if (backend == null) {
-      throw PluginCapabilityUnavailable(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
     return backend.fetch(uri);
   }
 }
@@ -133,28 +150,13 @@ final class PluginDataReadAccess {
     required String scope,
     Map<String, Object?> query = const {},
   }) async {
-    final permission = PluginPermission.readData;
-    final declared = manifest.permissions;
-    if (!declared.allows(permission)) {
-      throw PluginPermissionDenied(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
-    if (!declared.readDataScopes.contains(scope)) {
-      throw PluginPermissionDenied(
-        pluginId: manifest.id,
-        permission: permission,
-        detail: '数据范围 $scope',
-      );
-    }
-    final backend = this.backend;
-    if (backend == null) {
-      throw PluginCapabilityUnavailable(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
+    final backend = pluginAccessGuard(
+      manifest,
+      PluginPermission.readData,
+      this.backend,
+      allowed: manifest.permissions.readDataScopes.contains(scope),
+      detail: '数据范围 $scope',
+    );
     return backend.read(scope: scope, query: query);
   }
 }
@@ -170,28 +172,13 @@ final class PluginDraftSubmitAccess {
     required String writeType,
     required Map<String, Object?> draft,
   }) async {
-    final permission = PluginPermission.submitDraft;
-    final declared = manifest.permissions;
-    if (!declared.allows(permission)) {
-      throw PluginPermissionDenied(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
-    if (!declared.writeTypes.contains(writeType)) {
-      throw PluginPermissionDenied(
-        pluginId: manifest.id,
-        permission: permission,
-        detail: '写入类型 $writeType',
-      );
-    }
-    final backend = this.backend;
-    if (backend == null) {
-      throw PluginCapabilityUnavailable(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
+    final backend = pluginAccessGuard(
+      manifest,
+      PluginPermission.submitDraft,
+      this.backend,
+      allowed: manifest.permissions.writeTypes.contains(writeType),
+      detail: '写入类型 $writeType',
+    );
     return backend.submit(writeType: writeType, draft: draft);
   }
 }
@@ -204,20 +191,11 @@ final class PluginModelCallAccess {
   final PluginModelCallBackend? backend;
 
   Future<String> complete(String prompt) async {
-    final permission = PluginPermission.callModel;
-    if (!manifest.permissions.allows(permission)) {
-      throw PluginPermissionDenied(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
-    final backend = this.backend;
-    if (backend == null) {
-      throw PluginCapabilityUnavailable(
-        pluginId: manifest.id,
-        permission: permission,
-      );
-    }
+    final backend = pluginAccessGuard(
+      manifest,
+      PluginPermission.callModel,
+      this.backend,
+    );
     return backend.complete(prompt: prompt);
   }
 }

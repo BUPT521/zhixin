@@ -1,8 +1,12 @@
 /// 人格清单与当前启用项：读写在 `app_meta`，不形成数据提交。
 ///
-/// `persona.items` 保存 JSON 列表，第一次运行时写入两个内置人格；`persona.active`
-/// 保存当前启用的标识，空串表示没有启用。整库备份包含 `app_meta`，恢复或清空
-/// 之后重新调用 [load] 就能读到新状态。
+/// `persona.items` 保存 JSON 列表，第一次运行时由 [PersonaCatalog.ensureInitialized]
+/// 写入两个内置人格；`persona.active` 保存当前启用的标识，空串表示没有启用。
+/// 整库备份包含 `app_meta`，恢复或清空之后重新读取就能拿到新状态。
+///
+/// 读取路径 [PersonaCatalog.load] 只读：每次回答前都会调它一次，写库会让一次
+/// 上下文组装变成一次数据写入。清单内容坏了时保留上一次读到的人格，并把原因
+/// 留在 [PersonaCatalog.problem]，不再静默换成内置人格。
 library;
 
 import '../runtime/plugin_metadata_store.dart';
@@ -23,6 +27,7 @@ class PersonaCatalog {
 
   List<Persona> _items = List.of(builtinPersonas);
   String? _activeId;
+  String? _problem;
 
   /// 当前可用的人格；没有任何配置时退回内置人格。
   List<Persona> get items => List.unmodifiable(_items);
@@ -33,16 +38,40 @@ class PersonaCatalog {
   /// 当前启用的人格；没有启用或标识已经不在清单里时为空。
   Persona? get active => _find(_activeId);
 
-  /// 从 `app_meta` 重读人格列表与启用项；恢复、清空或切换之后调用。
+  /// 上一次读取读不出人格清单的原因；读取成功时为空。
+  ///
+  /// 这时 [items] 仍是上一次读到的人格，[active] 为空：提示词不会带上一个
+  /// 用户没有启用的人格，界面据此说明并给出重新导入或重置的入口。
+  String? get problem => _problem;
+
+  /// 第一次运行时把内置人格写进 `app_meta`；由插件运行时装载时调用。
+  ///
+  /// 写入只发生在这一处显式初始化里，读取路径不写库。
+  Future<void> ensureInitialized() async {
+    final raw = await store.read(personaItemsKey);
+    if (raw == null || raw.trim().isEmpty) {
+      await store.write(personaItemsKey, encodePersonaItems(builtinPersonas));
+    }
+    await load();
+  }
+
+  /// 从 `app_meta` 重读人格列表与启用项；恢复、清空、切换或每次回答之前调用。
+  ///
+  /// 只读：没有写过配置时用内置人格，但不补写；内容读不出来时保留上一次读到
+  /// 的人格并记下 [problem]，不换成内置人格。
   Future<void> load() async {
     final rawItems = await store.read(personaItemsKey);
-    if (rawItems == null || rawItems.trim().isEmpty) {
-      _items = List.of(builtinPersonas);
-      await store.write(personaItemsKey, encodePersonaItems(_items));
-    } else {
-      final parsed = decodePersonaItems(rawItems);
-      _items = parsed.isEmpty ? List.of(builtinPersonas) : parsed;
+    final configured = rawItems != null && rawItems.trim().isNotEmpty;
+    final parsed = configured ? decodePersonaItems(rawItems) : null;
+    if (configured && parsed == null) {
+      _problem = '人格清单读不出来（$personaItemsKey），已保留上一次读到的人格。';
+      _activeId = null;
+      return;
     }
+    _problem = null;
+    _items = parsed == null || parsed.isEmpty
+        ? List.of(builtinPersonas)
+        : parsed;
     final rawActive = await store.read(personaActiveKey);
     _activeId = _find(
       rawActive == null || rawActive.trim().isEmpty ? null : rawActive.trim(),
@@ -72,6 +101,7 @@ class PersonaCatalog {
     ];
     await store.write(personaItemsKey, encodePersonaItems(next));
     _items = next;
+    _problem = null;
     if (_activeId != null && _find(_activeId) == null) _activeId = null;
   }
 

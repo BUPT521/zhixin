@@ -101,8 +101,11 @@ class PluginRuntime {
 
   /// 应用启动、整库恢复与清空之后调用；重复调用只重读状态，已经在运行的插件
   /// 不再次启动。
+  ///
+  /// 首次运行时在这里把内置人格写进 `app_meta`：写入只发生在装载这一处显式
+  /// 初始化里，回答前的人格读取不写库。
   Future<void> load() async {
-    await personas.load();
+    await personas.ensureInitialized();
     _enabled.clear();
     _startFailures.clear();
     for (final plugin in _plugins.values) {
@@ -162,10 +165,16 @@ class PluginRuntime {
     return BuddyPersona(name: persona.name, text: persona.text);
   }
 
+  /// 人格清单读不出来时的说明；读取正常时为空。
+  ///
+  /// 人格页据此提示并给出重新导入或重置的入口；这时 [activePersonaPrompt]
+  /// 为空，回答不会带上一份用户没有启用的内置人格。
+  String? get personaProblem => personas.problem;
+
   /// 回答前重新读一次 `app_meta` 再取当前人格。
   ///
   /// 提示词构建走这里：整库恢复或清空之后即使页面还没重读，下一轮回答也用
-  /// 恢复后的状态，不继续带旧人格。
+  /// 恢复后的状态，不继续带旧人格。这一步只读，不补写配置。
   Future<BuddyPersona?> loadActivePersonaForPrompt() async {
     await personas.load();
     return activePersonaPrompt;

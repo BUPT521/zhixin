@@ -113,14 +113,17 @@ final class PersonaNotFound implements Exception {
 String encodePersonaItems(List<Persona> items) =>
     jsonEncode([for (final item in items) item.toJson()]);
 
-/// 读取 `persona.items`；损坏的条目跳过，整体解析失败时返回空列表。
-List<Persona> decodePersonaItems(String raw) {
+/// 读取 `persona.items`；整体不是 JSON 数组时返回空值，条目不合格的跳过。
+///
+/// 返回空值表示这一项内容坏了，与“清单是空列表”分开：调用方据此保留上一次
+/// 读到的人格并给出说明，而不是静默换回内置人格。
+List<Persona>? decodePersonaItems(String raw) {
   Object? value;
   try {
     value = jsonDecode(raw);
   } on FormatException {
-    return const [];
+    return null;
   }
-  if (value is! List) return const [];
+  if (value is! List) return null;
   return [for (final entry in value) ?Persona.tryFromJson(entry)];
 }
