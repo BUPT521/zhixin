@@ -145,6 +145,11 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge) (nowpay
 	if charge.Tokens <= 0 || charge.UserID == "" || charge.ID == "" {
 		return nowpay.Charge{}, false, nil
 	}
+	// 没有配置即刻收商品时没有换算比例，也不该产生待办；这个状态下 ReservePoints
+	// 从结算路径上也走不到，判空是为了让 nil 执行器不把进程带崩。
+	if s.nowpay == nil {
+		return nowpay.Charge{}, false, nil
+	}
 	date, err := pgDate(charge.Day)
 	if err != nil {
 		return nowpay.Charge{}, false, err

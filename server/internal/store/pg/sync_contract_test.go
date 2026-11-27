@@ -201,8 +201,8 @@ func TestPostgresRefs(t *testing.T) {
 	deletedAt := refs[0].DeletedAt
 	// 比删除时间更早的写入不复活，返回原来的墓碑。
 	ref, err = st.PutRef(ctx, "u1", syncsvc.Ref{Name: "第三章", CommitUID: "uid-late", UpdatedAt: deletedAt.Add(-time.Minute)})
-	if err != nil || ref.DeletedAt.IsZero() || ref.CommitUID != "" {
-		t.Fatalf("迟到的写入不应复活: %+v %v", ref, err)
+	if err != nil || ref.DeletedAt.IsZero() || ref.CommitUID != "uid-2" {
+		t.Fatalf("迟到的写入不应复活，墓碑保留删除之前那一次写入的提交编号: %+v %v", ref, err)
 	}
 	if refs, err = st.Refs(ctx, "u1"); err != nil || refs[0].DeletedAt.IsZero() {
 		t.Fatalf("迟到的写入不应改变墓碑: %+v %v", refs, err)
