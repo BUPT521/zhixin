@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -352,13 +353,51 @@ func TestHandlerResponsesLenientForAPIKeys(t *testing.T) {
 	if gotBody["max_output_tokens"] != float64(maxOutputTokens) {
 		t.Fatalf("上限应截到 %d，得到 %v", maxOutputTokens, gotBody["max_output_tokens"])
 	}
+
+	alias := map[string]any{
+		"model": "deepseek-flash", "input": "含有\"引号\"的文本\n下一行",
+		"max_tokens": 300, "max_completion_tokens": 400,
+		"reasoning_effort": "xhigh", "thinking": map[string]any{"type": "disabled"},
+		"response_format": map[string]any{"type": "json_object"},
+		"text":            map[string]any{"verbosity": "low"},
+		"title":           map[string]any{"enabled": true},
+	}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tokens.AccessToken,
+		map[string]any{"model": "deepseek-flash", "input": alias["input"]}, nil); code != http.StatusBadRequest {
+		t.Fatalf("访问令牌应拒绝字符串输入，得到 %d", code)
+	}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", apiKey, alias, nil); code != http.StatusOK {
+		t.Fatalf("接入密钥应转换第三方字段，得到 %d", code)
+	}
+	for _, name := range []string{"max_tokens", "max_completion_tokens", "reasoning_effort", "thinking", "response_format", "title"} {
+		if _, present := gotBody[name]; present {
+			t.Fatalf("不应转发客户端字段 %s：%+v", name, gotBody)
+		}
+	}
+	if gotBody["max_output_tokens"] != float64(400) ||
+		!reflect.DeepEqual(gotBody["input"], []any{map[string]any{"type": "message", "role": "user", "content": alias["input"]}}) ||
+		!reflect.DeepEqual(gotBody["reasoning"], map[string]any{"effort": "none"}) ||
+		!reflect.DeepEqual(gotBody["text"], map[string]any{"format": alias["response_format"], "verbosity": "low"}) {
+		t.Fatalf("第三方字段转换不对：%+v", gotBody)
+	}
+	alias["max_output_tokens"] = nil
+	alias["reasoning"] = map[string]any{"effort": "low", "summary": "auto"}
+	alias["text"] = map[string]any{"format": map[string]any{"type": "text"}}
+	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", apiKey, alias, nil); code != http.StatusOK {
+		t.Fatalf("同时带正式字段和别名应成功，得到 %d", code)
+	}
+	if gotBody["max_output_tokens"] != float64(defaultOutputTokens) ||
+		!reflect.DeepEqual(gotBody["reasoning"], alias["reasoning"]) ||
+		!reflect.DeepEqual(gotBody["text"], alias["text"]) {
+		t.Fatalf("同义字段应以正式字段为准：%+v", gotBody)
+	}
 }
 
 type testRoundTripper func(*http.Request) (*http.Response, error)
 
 func (f testRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-func TestHandlerResponsesConvertsCacheAffinityBySource(t *testing.T) {
+func TestHandlerResponsesAdaptsRequestBySource(t *testing.T) {
 	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
 		for id, endpoint := range map[string]string{
 			"opencode": "https://opencode.ai/inference/go/v1",
@@ -370,8 +409,8 @@ func TestHandlerResponsesConvertsCacheAffinityBySource(t *testing.T) {
 			putModel(t, c, ModelRecord{Name: id, Kind: KindChat, Routes: []Route{{ProviderID: id, UpstreamModel: id}}})
 		}
 		putModel(t, c, ModelRecord{Name: "failover", Kind: KindChat, Routes: []Route{
-			{ProviderID: "command", UpstreamModel: "unavailable", Priority: 0},
-			{ProviderID: "deepseek", UpstreamModel: "deepseek", Priority: 1},
+			{ProviderID: "deepseek", UpstreamModel: "unavailable", Priority: 0},
+			{ProviderID: "command", UpstreamModel: "command", Priority: 1},
 		}})
 	})
 	token := signIn(t, env.authSvc, "affinity@b.cn")
@@ -409,7 +448,8 @@ func TestHandlerResponsesConvertsCacheAffinityBySource(t *testing.T) {
 	call := func(credential, model, input, cacheKey string, headers map[string]string) {
 		t.Helper()
 		observed = nil
-		body := fmt.Sprintf(`{"model":%q,"input":[{"role":"user","content":%q}],"prompt_cache_key":%s,"store":true}`, model, input, cacheKey)
+		body := fmt.Sprintf(`{"model":%q,"input":[{"role":"user","content":%q}],"prompt_cache_key":%s,"store":true,
+			"reasoning":{"effort":"xhigh","summary":"auto"},"text":{"format":{"type":"json_object"},"verbosity":"low"},"parallel_tool_calls":true}`, model, input, cacheKey)
 		resp := env.c.Do(http.MethodPost, "/v1/llm/responses", credential, strings.NewReader(body), headers)
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK || len(observed) == 0 {
@@ -458,10 +498,19 @@ func TestHandlerResponsesConvertsCacheAffinityBySource(t *testing.T) {
 
 	call(apiKey, "failover", "切换来源", `"discussion-7"`, nil)
 	if len(observed) != 2 {
-		t.Fatalf("应切换到 DeepSeek 官方，得到 %d 次尝试", len(observed))
+		t.Fatalf("应从 DeepSeek 官方切换到 Command Code，得到 %d 次尝试", len(observed))
 	}
-	check(0, "", key)
-	check(1, "", nil)
+	check(0, "", nil)
+	check(1, "", key)
+	format := map[string]any{"type": "json_object"}
+	if got := observed[0].body; !reflect.DeepEqual(got["reasoning"], map[string]any{"effort": "high"}) ||
+		!reflect.DeepEqual(got["text"], map[string]any{"format": format}) || got["parallel_tool_calls"] != nil {
+		t.Fatalf("DeepSeek 官方应收到支持的选项：%+v", got)
+	}
+	if got := observed[1].body; !reflect.DeepEqual(got["reasoning"], map[string]any{"effort": "xhigh", "summary": "auto"}) ||
+		!reflect.DeepEqual(got["text"], map[string]any{"format": format, "verbosity": "low"}) || got["parallel_tool_calls"] != true {
+		t.Fatalf("切换路由后应使用原始选项：%+v", got)
+	}
 }
 
 func TestHandlerQuotaOverride(t *testing.T) {

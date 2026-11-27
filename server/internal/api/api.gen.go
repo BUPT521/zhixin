@@ -1636,8 +1636,9 @@ type PostV1LlmEmbeddingsLookupParams struct {
 
 // PostV1LlmResponsesJSONBody defines parameters for PostV1LlmResponses.
 type PostV1LlmResponsesJSONBody struct {
-	Input        []map[string]interface{} `json:"input"`
-	Instructions *string                  `json:"instructions,omitempty"`
+	// Input 输入条目列表，使用接入密钥时也可写成一条用户消息的文本。
+	Input        PostV1LlmResponsesJSONBody_Input `json:"input"`
+	Instructions *string                          `json:"instructions,omitempty"`
 
 	// MaxOutputTokens 省略时服务端补 4096，每次尝试按它与请求字节预留额度
 	MaxOutputTokens *int   `json:"max_output_tokens,omitempty"`
@@ -1666,6 +1667,17 @@ type PostV1LlmResponsesParams struct {
 	// 和请求体的 `prompt_cache_key`，第三方标识最长 128 字节。没有有效标识时，
 	// 由账号和首条用户消息分配路由，没有可用的首条用户消息时按权重随机排列。
 	XZhixinSessionId *string `json:"X-Zhixin-Session-Id,omitempty"`
+}
+
+// PostV1LlmResponsesJSONBodyInput0 defines parameters for PostV1LlmResponses.
+type PostV1LlmResponsesJSONBodyInput0 = []map[string]interface{}
+
+// PostV1LlmResponsesJSONBodyInput1 defines parameters for PostV1LlmResponses.
+type PostV1LlmResponsesJSONBodyInput1 = string
+
+// PostV1LlmResponsesJSONBody_Input defines parameters for PostV1LlmResponses.
+type PostV1LlmResponsesJSONBody_Input struct {
+	union json.RawMessage
 }
 
 // DeleteV1MeJSONBody defines parameters for DeleteV1Me.
@@ -1973,6 +1985,68 @@ func (t EmbeddingRequest_Input) MarshalJSON() ([]byte, error) {
 }
 
 func (t *EmbeddingRequest_Input) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsPostV1LlmResponsesJSONBodyInput0 returns the union data inside the PostV1LlmResponsesJSONBody_Input as a PostV1LlmResponsesJSONBodyInput0
+func (t PostV1LlmResponsesJSONBody_Input) AsPostV1LlmResponsesJSONBodyInput0() (PostV1LlmResponsesJSONBodyInput0, error) {
+	var body PostV1LlmResponsesJSONBodyInput0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPostV1LlmResponsesJSONBodyInput0 overwrites any union data inside the PostV1LlmResponsesJSONBody_Input as the provided PostV1LlmResponsesJSONBodyInput0
+func (t *PostV1LlmResponsesJSONBody_Input) FromPostV1LlmResponsesJSONBodyInput0(v PostV1LlmResponsesJSONBodyInput0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePostV1LlmResponsesJSONBodyInput0 performs a merge with any union data inside the PostV1LlmResponsesJSONBody_Input, using the provided PostV1LlmResponsesJSONBodyInput0
+func (t *PostV1LlmResponsesJSONBody_Input) MergePostV1LlmResponsesJSONBodyInput0(v PostV1LlmResponsesJSONBodyInput0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsPostV1LlmResponsesJSONBodyInput1 returns the union data inside the PostV1LlmResponsesJSONBody_Input as a PostV1LlmResponsesJSONBodyInput1
+func (t PostV1LlmResponsesJSONBody_Input) AsPostV1LlmResponsesJSONBodyInput1() (PostV1LlmResponsesJSONBodyInput1, error) {
+	var body PostV1LlmResponsesJSONBodyInput1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromPostV1LlmResponsesJSONBodyInput1 overwrites any union data inside the PostV1LlmResponsesJSONBody_Input as the provided PostV1LlmResponsesJSONBodyInput1
+func (t *PostV1LlmResponsesJSONBody_Input) FromPostV1LlmResponsesJSONBodyInput1(v PostV1LlmResponsesJSONBodyInput1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergePostV1LlmResponsesJSONBodyInput1 performs a merge with any union data inside the PostV1LlmResponsesJSONBody_Input, using the provided PostV1LlmResponsesJSONBodyInput1
+func (t *PostV1LlmResponsesJSONBody_Input) MergePostV1LlmResponsesJSONBodyInput1(v PostV1LlmResponsesJSONBodyInput1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t PostV1LlmResponsesJSONBody_Input) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *PostV1LlmResponsesJSONBody_Input) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

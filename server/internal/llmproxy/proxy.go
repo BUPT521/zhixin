@@ -24,7 +24,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -330,7 +329,7 @@ func (p *Proxy) beginRequest(w http.ResponseWriter, r *http.Request, userID stri
 }
 
 // requestBytes 是请求体在实例预算里占用的字节数。转发前要把模型名换成来源侧的
-// 名字，`withModel` 会按解析后的字段重新编码一份正文，所以预留两倍；声明长度缺失
+// 名字，转发前会按解析后的字段重新编码一份正文，所以预留两倍；声明长度缺失
 // 或超过上限时按上限算，客户端不能靠少写 Content-Length 少占预算。
 func (p *Proxy) requestBytes(r *http.Request) int64 {
 	if p.cfg.MaxRequestBytes <= 0 {
@@ -393,6 +392,9 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 	model := p.findModel(w, r, fields, KindChat)
 	if model == nil {
 		return
+	}
+	if lenient {
+		normalizeClientResponses(fields)
 	}
 	if !allowFields(w, r, fields, lenient, chatFields, clientHintFields) {
 		return
@@ -649,7 +651,7 @@ func (p *Proxy) responseTimeout(deadline time.Time) time.Duration {
 // 服务端的 32768 是发出去的答案的上限，拒绝整次请求不如截断之后照常回答。
 func responsesOutputLimit(fields map[string]json.RawMessage, lenient bool) (int64, error) {
 	raw, ok := fields["max_output_tokens"]
-	if !ok {
+	if !ok || (lenient && bytes.Equal(bytes.TrimSpace(raw), []byte("null"))) {
 		fields["max_output_tokens"] = json.RawMessage(strconv.FormatInt(defaultOutputTokens, 10))
 		return defaultOutputTokens, nil
 	}
@@ -730,7 +732,7 @@ func keyRejected(status int) bool {
 // 放行，供管理端自测与排查使用，客户端不再发送这两个字段。
 //
 // `store` 放行但取值不由客户端决定：Responses 创建接口默认 `store: true`，
-// 上游会把用户内容保存在模型来源一侧。转发前一律改写成 false，见 withModel。
+// 上游会把用户内容保存在模型来源一侧。转发前一律改写成 false。
 var chatFields = map[string]bool{
 	"model": true, "instructions": true, "input": true,
 	"max_output_tokens": true, "temperature": true, "top_p": true,
@@ -808,26 +810,6 @@ func retryable(status int) bool {
 		status >= 500
 }
 
-// withModel 返回转发给来源的请求体：model 换成来源侧名字，`store` 固定写成
-// false，并按来源写入服务端生成的缓存键。其余字段按原始值保留。
-// Responses 接口在缺少 `store` 字段时默认在上游保存响应。
-func withModel(fields map[string]json.RawMessage, upstream, cacheKey string) ([]byte, error) {
-	out := make(map[string]json.RawMessage, len(fields)+1)
-	for k, v := range fields {
-		out[k] = v
-	}
-	name, err := json.Marshal(upstream)
-	if err != nil {
-		return nil, err
-	}
-	out["model"] = name
-	out["store"] = json.RawMessage("false")
-	if cacheKey != "" {
-		out["prompt_cache_key"], _ = json.Marshal(cacheKey)
-	}
-	return json.Marshal(out)
-}
-
 type chatReply struct {
 	route      liveRoute
 	status     int
@@ -859,11 +841,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		if !deadline.IsZero() && !p.now().Before(deadline) {
 			return reply, context.DeadlineExceeded
 		}
-		var cacheKey string
-		if endpoint, err := url.Parse(rt.Provider.BaseURL); err == nil && strings.EqualFold(endpoint.Hostname(), "api.commandcode.ai") {
-			cacheKey = plan.session
-		}
-		body, err := withModel(fields, rt.UpstreamModel, cacheKey)
+		body, err := responsesUpstreamBody(fields, rt, plan.session)
 		if err != nil {
 			return reply, err
 		}

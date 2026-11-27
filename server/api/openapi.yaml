@@ -910,9 +910,15 @@ paths:
         `max_output_tokens` 取 16 到 32768，省略时补 4096，与客户端的上限一致，
         超出范围回 400 `invalid_request`。
         用接入密钥调用时按放宽的口径处理（见 ADR-0082）：
-        不认识的字段删掉再转发，`max_output_tokens` 超出范围时截到 16 与 32768 的
-        边界、写不成数字时退回 4096，第三方工具不会因为一个用不上的参数整次失败；
+        字符串 `input` 转成一条用户消息；`max_completion_tokens`、`max_tokens` 按此顺序
+        补充 `max_output_tokens`，`thinking` 与 `reasoning_effort` 补充 `reasoning.effort`，
+        `response_format` 的 `text` 与 `json_object` 转成 `text.format`。Responses 正式
+        字段优先，未识别的字段在转发前删除；输出上限超出范围时截到 16 与 32768 的边界，
+        省略、为 `null` 或写不成数字时使用 4096。
         用访问令牌调用仍按上面的字段与上限严格校验，未知字段与越界上限照旧回 400。
+        选择 DeepSeek 官方路由时，服务端保留 `text.format` 与实际生效的推理强度，
+        按官方定义换算 `minimal`、`medium`、`xhigh`，移除该来源忽略的
+        `reasoning.summary`、`text.verbosity` 和 `parallel_tool_calls`。
         额度预留与结算取流里
         `response.completed` 的 `usage`（`input_tokens`、`output_tokens`），非流式
         取响应体的 `usage`，缺少用量时保留预留值。错误分类为
@@ -958,10 +964,14 @@ paths:
                 model: { type: string }
                 instructions: { type: string }
                 input:
-                  type: array
-                  items:
-                    type: object
-                    additionalProperties: true
+                  description: |
+                    输入条目列表，使用接入密钥时也可写成一条用户消息的文本。
+                  oneOf:
+                    - type: array
+                      items:
+                        type: object
+                        additionalProperties: true
+                    - type: string
                 tools:
                   type: array
                   items:

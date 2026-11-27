@@ -369,7 +369,7 @@ func (p *Proxy) embedChunk(ctx context.Context, rt liveRoute, fields map[string]
 		f[k] = v
 	}
 	f["input"] = in
-	body, err := withModel(f, rt.UpstreamModel, "")
+	body, err := json.Marshal(requestFieldsWithModel(f, rt.UpstreamModel))
 	if err != nil {
 		return chunkOut{err: err}
 	}
