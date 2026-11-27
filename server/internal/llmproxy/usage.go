@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/BUPT521/zhixin/server/internal/api"
+	sharedderef "github.com/BUPT521/zhixin/server/internal/deref"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
@@ -151,7 +152,7 @@ func (s *MemoryUsage) RouteUsage(_ context.Context, from, to string) ([]RouteUsa
 func (p *Proxy) SetUsageStore(store UsageStore) { p.usage = store }
 
 func (a *Admin) Usage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1UsageParams) {
-	days := deref(params.Days, 7)
+	days := sharedderef.Value(params.Days, 7)
 	if days < 1 || days > 30 {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "days: 1 to 30")
 		return

@@ -174,7 +174,7 @@ func (a *Admin) CreateProvider(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
 		return
 	}
-	id := strings.TrimSpace(deref(in.Id, ""))
+	id := strings.TrimSpace(sharedderef.Value(in.Id, ""))
 	if !ValidProviderID(id) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "id: lowercase letters, digits, - and _, at most 32")
 		return
@@ -236,16 +236,16 @@ func (a *Admin) saveProvider(w http.ResponseWriter, r *http.Request, id string, 
 	}
 	rec.ID = id
 	rec.BaseURL = base
-	rec.Name = strings.TrimSpace(deref(in.Name, ""))
+	rec.Name = strings.TrimSpace(sharedderef.Value(in.Name, ""))
 	if rec.Name == "" {
 		rec.Name = id
 	}
-	rec.Note = strings.TrimSpace(deref(in.Note, ""))
+	rec.Note = strings.TrimSpace(sharedderef.Value(in.Note, ""))
 	if utf8.RuneCountInString(rec.Name) > 64 || utf8.RuneCountInString(rec.Note) > 200 {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name or note is too long")
 		return
 	}
-	rec.Enabled = deref(in.Enabled, true)
+	rec.Enabled = sharedderef.Value(in.Enabled, true)
 	if in.ApiKey != nil {
 		key := strings.TrimSpace(*in.ApiKey)
 		if strings.ContainsAny(key, " \t\r\n") {
@@ -404,7 +404,7 @@ func (a *Admin) CreateModel(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
 		return
 	}
-	name := strings.TrimSpace(deref(in.Name, ""))
+	name := strings.TrimSpace(sharedderef.Value(in.Name, ""))
 	if !ValidModelName(name) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name: letters, digits, . _ : -, at most 64, no slash")
 		return
@@ -490,8 +490,8 @@ func (a *Admin) saveModel(w http.ResponseWriter, r *http.Request, name string, o
 // 表示通过。
 func modelRecord(name string, in api.AdminModelInput, now time.Time) (ModelRecord, string) {
 	rec := ModelRecord{
-		Name: name, Kind: Kind(in.Kind), Enabled: deref(in.Enabled, true),
-		Note: strings.TrimSpace(deref(in.Note, "")), UpdatedAt: now,
+		Name: name, Kind: Kind(in.Kind), Enabled: sharedderef.Value(in.Enabled, true),
+		Note: strings.TrimSpace(sharedderef.Value(in.Note, "")), UpdatedAt: now,
 	}
 	switch rec.Kind {
 	case KindChat:
@@ -519,14 +519,14 @@ func modelRecord(name string, in api.AdminModelInput, now time.Time) (ModelRecor
 		rt := Route{
 			ProviderID:    strings.TrimSpace(ri.ProviderId),
 			UpstreamModel: strings.TrimSpace(ri.UpstreamModel),
-			Priority:      deref(ri.Priority, 0),
-			Weight:        deref(ri.Weight, 1),
-			MaxBatch:      deref(ri.MaxBatch, 0),
-			Enabled:       deref(ri.Enabled, true),
+			Priority:      sharedderef.Value(ri.Priority, 0),
+			Weight:        sharedderef.Value(ri.Weight, 1),
+			MaxBatch:      sharedderef.Value(ri.MaxBatch, 0),
+			Enabled:       sharedderef.Value(ri.Enabled, true),
 			// 能力标记省略时按支持处理：旧版后台脚本不发送这两个字段，行为保持
 			// 与加筛选之前一致。
-			SupportsTools:  deref(ri.SupportsTools, true),
-			SupportsImages: deref(ri.SupportsImages, true),
+			SupportsTools:  sharedderef.Value(ri.SupportsTools, true),
+			SupportsImages: sharedderef.Value(ri.SupportsImages, true),
 		}
 		switch {
 		case rt.UpstreamModel == "" || utf8.RuneCountInString(rt.UpstreamModel) > 128:
@@ -588,7 +588,7 @@ func (a *Admin) DeleteModel(w http.ResponseWriter, r *http.Request, name string)
 // TestModel 使用正常路由次序或指定路由发出最小请求。探测更新相应的健康状态，
 // 不计入账号额度与路由用量。
 func (a *Admin) TestModel(w http.ResponseWriter, r *http.Request, name string, params api.PostAdminV1ModelsNameTestParams) {
-	provider, upstream := deref(params.ProviderId, ""), deref(params.UpstreamModel, "")
+	provider, upstream := sharedderef.Value(params.ProviderId, ""), sharedderef.Value(params.UpstreamModel, "")
 	targeted := params.ProviderId != nil || params.UpstreamModel != nil
 	if targeted && (provider == "" || len(provider) > 32 || upstream == "" || utf8.RuneCountInString(upstream) > 128) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "supply provider_id (1–32 characters) and upstream_model (1–128 characters) together")
@@ -684,12 +684,8 @@ func probeFailure(trace []api.AdminProbeAttempt, empty string) string {
 	if len(trace) == 0 {
 		return empty
 	}
-	return deref(trace[len(trace)-1].Error, "没有来源返回可用的响应")
+	return sharedderef.Value(trace[len(trace)-1].Error, "没有来源返回可用的响应")
 }
-
-// deref 是包内的转发入口，实现由 internal/deref 提供。同包的 keyusage.go 与
-// usage.go 仍按这个名字调用，两处改用共用实现之后可以删掉这一层。
-func deref[T any](value *T, fallback T) T { return sharedderef.Value(value, fallback) }
 
 // stringPointer 取一个字符串的副本，返回的指针与调用处的变量无关。
 func stringPointer(s string) *string { return &s }

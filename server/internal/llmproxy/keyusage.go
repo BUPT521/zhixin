@@ -13,6 +13,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	sharedderef "github.com/BUPT521/zhixin/server/internal/deref"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
@@ -77,12 +78,12 @@ type KeyUsageStore interface {
 // 今天，按服务端时区计算。响应里的 tokens_per_point 与核销同一配置，后台据此把
 // 聊天和嵌入的计费 token 合计折成参考积分，各用途的用量仍单独列出。
 func (a *Admin) KeyUsage(w http.ResponseWriter, r *http.Request, params api.GetAdminV1KeyUsageParams) {
-	days := deref(params.Days, 7)
+	days := sharedderef.Value(params.Days, 7)
 	if days < 1 || days > 30 {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "days: 1 to 30")
 		return
 	}
-	userID := strings.TrimSpace(deref(params.UserId, ""))
+	userID := strings.TrimSpace(sharedderef.Value(params.UserId, ""))
 	if params.UserId != nil && (userID == "" || len(userID) > 128) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "user_id: 1 to 128 bytes")
 		return
