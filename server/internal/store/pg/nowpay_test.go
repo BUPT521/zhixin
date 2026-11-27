@@ -854,9 +854,8 @@ func TestPostgresConcurrentReserveAndSettleKeepTheInstanceLedger(t *testing.T) {
 	}
 }
 
-// TestPostgresStartsWithoutTheBalanceTable 守住建表顺序：余额副本是纯新增表，还没
-// 建好时服务照常启动，免费额度之外的放行停用，读写副本都静默跳过（ADR-0069）。
-func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {
+// 缺少余额副本表时不能启用收款，未启用收款的实例仍可使用免费额度。
+func TestPostgresRequiresBalanceTableForPaidQuota(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
@@ -865,12 +864,10 @@ func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {
 	if _, err := st.pool.Exec(ctx, `DROP TABLE nowpay_balance`); err != nil {
 		t.Fatalf("drop nowpay_balance: %v", err)
 	}
-	if err := st.CheckNowPaySchema(ctx); err != nil {
-		t.Fatalf("缺余额副本时启动不应失败: %v", err)
+	if err := st.CheckNowPaySchema(ctx); err == nil || !strings.Contains(err.Error(), "nowpay_balance") {
+		t.Fatalf("启用收款时缺余额副本表应拒绝启动: %v", err)
 	}
 	const day = "2026-11-25"
-	recorder := &fakeRecorder{perPoint: 1000}
-	st.SetNowPay(recorder)
 	st.SetQuotaLimits(100, 0)
 	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("缺表时写副本应跳过而不是报错: %v", err)
@@ -880,9 +877,6 @@ func TestPostgresStartsWithoutTheBalanceTable(t *testing.T) {
 	}
 	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 50); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
 		t.Fatalf("缺副本表时免费额度之外仍应拒绝，得到 %v", err)
-	}
-	if len(recorder.refreshed) != 0 {
-		t.Fatalf("缺表时不应排余额查询: %+v", recorder.refreshed)
 	}
 }
 
@@ -1357,17 +1351,6 @@ func TestPostgresRefusesToStartWithoutTheClaimColumn(t *testing.T) {
 	}
 	if err := st.CheckNowPaySchema(ctx); err == nil {
 		t.Fatal("缺 claimed_at 列时启动应失败")
-	}
-}
-
-func TestPostgresRefusesToStartWithoutTheBalanceStore(t *testing.T) {
-	st := newTestStore(t)
-	ctx := context.Background()
-	if _, err := st.pool.Exec(ctx, `DROP TABLE nowpay_balance`); err != nil {
-		t.Fatalf("drop balance table: %v", err)
-	}
-	if err := st.CheckNowPaySchema(ctx); err == nil || !strings.Contains(err.Error(), "nowpay_balance") {
-		t.Fatalf("missing balance store: %v", err)
 	}
 }
 
