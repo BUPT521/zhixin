@@ -34,6 +34,7 @@ import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
 import 'service_runtime.dart';
+import 'user_failure.dart';
 import 'used_pages.dart';
 
 import '../domain/rules/text.dart';
@@ -356,7 +357,7 @@ class DiscussionService {
     LlmCancelToken? cancelToken,
   }) {
     if (conversationId == null) {
-      if (repeatLast) throw ArgumentError('新讨论没有可以重新回答的问题');
+      if (repeatLast) throw UserFailure('新讨论没有可以重新回答的问题');
       return _openConversation(
         text: text,
         imagePaths: imagePaths,
@@ -402,7 +403,7 @@ class DiscussionService {
     final trimmed = text.trim();
     final paths = _cleanPaths(imagePaths);
     if (trimmed.isEmpty && paths.isEmpty) {
-      throw ArgumentError('请输入问题或添加图片');
+      throw UserFailure('请输入问题或添加图片');
     }
     final entryKind = trimmed.isEmpty
         ? EntryKind.photo
@@ -439,10 +440,10 @@ class DiscussionService {
     final trimmed = text.trim();
     final paths = _cleanPaths(imagePaths);
     if (trimmed.isEmpty && paths.isEmpty) {
-      throw ArgumentError('请输入消息内容或添加图片');
+      throw UserFailure('请输入消息内容或添加图片');
     }
     final record = await conversations.byId(conversationId);
-    if (record == null) throw StateError('未找到这条讨论');
+    if (record == null) throw UserFailure('未找到这条讨论');
     final needsReopen = !record.open;
 
     final before = await _promptHistory(conversationId);
@@ -491,7 +492,7 @@ class DiscussionService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final record = await conversations.byId(conversationId);
-    if (record == null) throw StateError('未找到这条讨论');
+    if (record == null) throw UserFailure('未找到这条讨论');
     if (!record.open) await conversations.reopen(conversationId);
     final read = await readModelConfig(
       ai,
@@ -503,7 +504,7 @@ class DiscussionService {
     }
     final userMessage = await conversations.lastUserMessage(conversationId);
     if (userMessage == null) {
-      throw StateError('这条讨论还没有可以重新回答的问题');
+      throw UserFailure('这条讨论还没有可以重新回答的问题');
     }
     return _answer(
       conversationId: conversationId,
@@ -779,7 +780,7 @@ class DiscussionService {
   Future<WriteResult> setGoal(String conversationId, String? goalId) async {
     if (goalId != null) {
       final goal = await tasks.goalById(goalId);
-      if (goal == null) throw ArgumentError('未找到这个目标');
+      if (goal == null) throw UserFailure('未找到这个目标');
     }
     return transactions.run(
       (txn) async {
@@ -802,7 +803,7 @@ class DiscussionService {
       final page = pageNo == null
           ? null
           : await materials.page(materialId, pageNo);
-      if (page == null) throw ArgumentError('未找到这份材料页面');
+      if (page == null) throw UserFailure('未找到这份材料页面');
     }
     return transactions.run(
       (txn) async {
@@ -887,11 +888,11 @@ class DiscussionService {
             conversationId,
             transaction: txn,
           );
-          if (record == null) throw StateError('未找到这条讨论');
+          if (record == null) throw UserFailure('未找到这条讨论');
           if (goalId != null) {
             final goal = await tasks.goalById(goalId, transaction: txn);
-            if (goal == null) throw ArgumentError('未找到这个目标');
-            if (!goal.active) throw ArgumentError('这个目标已暂停，请先恢复后再添加事项');
+            if (goal == null) throw UserFailure('未找到这个目标');
+            if (!goal.active) throw UserFailure('这个目标已暂停，请先恢复后再添加事项');
           }
 
           final message = await conversations.messageById(
@@ -899,20 +900,20 @@ class DiscussionService {
             transaction: txn,
           );
           if (message == null || message.conversationId != conversationId) {
-            throw StateError('未找到这条建议');
+            throw UserFailure('未找到这条建议');
           }
           final payload = message.payload ?? const ChatMessagePayload();
           final accepted = stepId != null
               ? payload.acceptedStepIds.contains(stepId)
               : payload.acceptedTitles.contains(draft.title);
           if (accepted) {
-            throw StateError('这条建议已保存为事项');
+            throw UserFailure('这条建议已保存为事项');
           }
           final dismissed = stepId != null
               ? payload.dismissedStepIds.contains(stepId)
               : payload.dismissedTitles.contains(draft.title);
           if (dismissed) {
-            throw StateError('这条建议已暂缓');
+            throw UserFailure('这条建议已暂缓');
           }
 
           final id = await tasks.createItem(
@@ -939,7 +940,7 @@ class DiscussionService {
             transaction: txn,
           );
           final item = await tasks.byId(id, transaction: txn);
-          if (item == null) throw StateError('学习事项保存失败');
+          if (item == null) throw UserFailure('学习事项保存失败');
           return AcceptedSuggestion(item: item, commitId: commitId);
         },
         label: acceptNextStepAction,
@@ -993,14 +994,14 @@ class DiscussionService {
   }) async {
     final message = await conversations.messageById(messageId);
     if (message == null || message.conversationId != conversationId) {
-      throw StateError('未找到这条建议');
+      throw UserFailure('未找到这条建议');
     }
     final payload = message.payload ?? const ChatMessagePayload();
     final accepted = stepId == null
         ? payload.acceptedTitles.contains(title)
         : payload.acceptedStepIds.contains(stepId);
     if (accepted) {
-      throw StateError('这条建议已经保存为事项');
+      throw UserFailure('这条建议已经保存为事项');
     }
     await conversations.markNextStepDismissed(messageId, title, stepId: stepId);
   }
@@ -1063,22 +1064,22 @@ class DiscussionService {
             conversationId,
             transaction: txn,
           );
-          if (record == null) throw StateError('未找到这条讨论');
+          if (record == null) throw UserFailure('未找到这条讨论');
           final message = await conversations.messageById(
             messageId,
             transaction: txn,
           );
           if (message == null || message.conversationId != conversationId) {
-            throw StateError('未找到这条记忆');
+            throw UserFailure('未找到这条记忆');
           }
           final item = message.payload?.memoryItem(itemId);
-          if (item == null) throw StateError('未找到这条记忆');
+          if (item == null) throw UserFailure('未找到这条记忆');
           if (item.status == MemoryCardStatus.accepted) {
             // 同一张卡连点两次：上一次已经写入，按重试返回，不再形成提交。
             return const AcceptedMemory(applied: true, notice: '这条记忆已经处理。');
           }
           if (item.status != MemoryCardStatus.pending) {
-            throw StateError('这条记忆已经处理');
+            throw UserFailure('这条记忆已经处理');
           }
 
           return confirmMemoryDraft(
@@ -1124,12 +1125,12 @@ class DiscussionService {
   }) async {
     final message = await conversations.messageById(messageId);
     if (message == null || message.conversationId != conversationId) {
-      throw StateError('未找到这条记忆');
+      throw UserFailure('未找到这条记忆');
     }
     final item = message.payload?.memoryItem(itemId);
-    if (item == null) throw StateError('未找到这条记忆');
+    if (item == null) throw UserFailure('未找到这条记忆');
     if (item.status != MemoryCardStatus.pending) {
-      throw StateError('这条记忆已经处理');
+      throw UserFailure('这条记忆已经处理');
     }
     await conversations.setMemoryItemStatus(
       messageId,
@@ -1283,7 +1284,7 @@ class DiscussionService {
 
   void _ensureCurrentEpoch(int expected) {
     if (runtime.dataEpoch != expected) {
-      throw StateError('数据已恢复或清空，请重新打开这条讨论后再发送。');
+      throw UserFailure('数据已恢复或清空，请重新打开这条讨论后再发送。');
     }
   }
 

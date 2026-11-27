@@ -11,6 +11,7 @@ import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/domain/models/study.dart';
 import 'package:zhixin/domain/rules/notices.dart';
 import 'package:zhixin/application/learning_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_service.dart';
@@ -160,7 +161,7 @@ void main() {
         isCorrect: false,
         independent: true,
       ),
-      throwsA(isA<StateError>()),
+      throwsA(isA<UserFailure>()),
     );
     expect(
       (await h.attempts.attemptById(attempt.id))!.userAnswer,
@@ -909,7 +910,7 @@ void main() {
         independent: false,
         checkable: '旧页面覆盖的依据',
       ),
-      throwsA(isA<StateError>()),
+      throwsA(isA<UserFailure>()),
     );
 
     expect((await h.attempts.attemptById(attempt.id))!.userAnswer, '提交时的答案');
@@ -1111,7 +1112,7 @@ void main() {
     h.epoch++;
     h.ai.resume!.complete();
 
-    await expectLater(pending, throwsA(isA<StateError>()));
+    await expectLater(pending, throwsA(isA<UserFailure>()));
     expect(await h.assessments.forAttempt(attempt.id), isEmpty);
   });
 

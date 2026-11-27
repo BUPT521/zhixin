@@ -6,6 +6,7 @@ import '../domain/models/backup_error.dart';
 import '../domain/models/material.dart';
 import 'account_service.dart';
 import 'sync_service.dart';
+import 'user_failure.dart';
 
 /// 本地读写失败时给界面看的一句说明。
 ///
@@ -34,6 +35,8 @@ String failureNotice(
 
 /// 已经是给人看的错误，直接保留它的说法；其余异常由调用方按动作改写。
 String? _knownMessage(Object error) => switch (error) {
+  // 可预期失败带着写给人看的说明，界面原样显示并补上保留状态与下一步。
+  UserFailure(:final message) => message,
   BackupException(:final message) => message,
   PageNumberTaken() => error.toString(),
   RevisionStaleHead() => error.toString(),

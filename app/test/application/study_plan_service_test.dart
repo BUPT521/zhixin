@@ -10,6 +10,7 @@ import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/application/material_service.dart';
 import 'package:zhixin/application/study_plan_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
@@ -474,7 +475,7 @@ void main() {
     h.epoch++;
     h.ai.resume!.complete();
 
-    await expectLater(pending, throwsA(isA<StateError>()));
+    await expectLater(pending, throwsA(isA<UserFailure>()));
     expect(await selectRows(h.db, 'study_plan'), isEmpty);
   });
 
@@ -491,7 +492,7 @@ void main() {
         pageTo: 2,
         steps: const [StudyStepDraft(title: '只读第 1 页', pageFrom: 1, pageTo: 1)],
       ),
-      throwsA(isA<ArgumentError>()),
+      throwsA(isA<UserFailure>()),
     );
     expect(await selectRows(h.db, 'study_plan'), isEmpty);
   });

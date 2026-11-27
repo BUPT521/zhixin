@@ -17,6 +17,7 @@ import 'buddy_answer.dart';
 import 'context_request.dart';
 import 'context_service.dart';
 import 'service_runtime.dart';
+import 'user_failure.dart';
 import '../../domain/rules/uuid_v7.dart';
 
 /// 一份学习计划与它的步骤。
@@ -95,6 +96,17 @@ class StudyPlanProposal {
   final String? notice;
 }
 
+/// 这一批模型顺序不可用：由调用方按页码补齐，不当作程序错误，也不是给用户
+/// 看的失败。原先用 FormatException 兼作这条控制流，格式错误的含义被借走了。
+final class _StepsUnusable implements Exception {
+  const _StepsUnusable(this.reason);
+
+  final String reason;
+
+  @override
+  String toString() => reason;
+}
+
 /// 系统学习：按材料范围提出顺序、保存进度，并提供临时讨论入口。
 ///
 /// 模型可用时按批提出学习步骤，并核对每个所选页码恰好被覆盖一次；某批
@@ -128,7 +140,7 @@ class StudyPlanService {
 
   Future<StudyPlanView> view(String planId) async {
     final plan = await plans.byId(planId);
-    if (plan == null) throw StateError('未找到这份学习计划');
+    if (plan == null) throw UserFailure('未找到这份学习计划');
     final steps = await plans.steps(planId);
     return StudyPlanView(plan: plan, steps: steps);
   }
@@ -169,7 +181,7 @@ class StudyPlanService {
   Future<StudyStepResume> resumePoint(String planId, String stepId) async {
     final view = await this.view(planId);
     final step = view.steps.where((item) => item.id == stepId).firstOrNull;
-    if (step == null) throw StateError('未找到这一步');
+    if (step == null) throw UserFailure('未找到这一步');
     final conversationId = step.conversationId;
     if (conversationId != null) {
       final record = await conversations.byId(conversationId);
@@ -206,9 +218,9 @@ class StudyPlanService {
   }) async {
     final view = await this.view(planId);
     final step = view.steps.where((item) => item.id == stepId).firstOrNull;
-    if (step == null) throw StateError('未找到这一步');
+    if (step == null) throw UserFailure('未找到这一步');
     final materialId = view.plan.materialId;
-    if (materialId == null) throw StateError('这一步还没有关联材料');
+    if (materialId == null) throw UserFailure('这一步还没有关联材料');
     return transactions.run((txn) async {
       final conversationId = await conversations.create(
         title:
@@ -252,7 +264,7 @@ class StudyPlanService {
       pageTo: pageTo,
     );
     if (inRange.isEmpty) {
-      throw StateError('所选范围暂无材料页面。请先添加页码和原文。');
+      throw UserFailure('所选范围暂无材料页面。请先添加页码和原文。');
     }
 
     final read = await readModelConfig(
@@ -298,10 +310,10 @@ class StudyPlanService {
           pageFrom: batchFrom,
           pageTo: batchTo,
         );
-        if (problem != null) throw FormatException(problem);
+        if (problem != null) throw _StepsUnusable(problem);
         proposed.addAll(batchSteps);
         modelBatches++;
-      } on FormatException {
+      } on _StepsUnusable {
         // 这一批模型没有给出可用步骤：按页码顺序补上，来源记为部分模型。
         proposed.addAll(
           _localSteps(
@@ -380,10 +392,10 @@ class StudyPlanService {
     final reply = run.answer;
     if (reply == null) {
       // 配置读取失败、调用失败或没有可发送内容：这一批退回本地顺序。
-      throw const FormatException('模型没有给出这一批的步骤');
+      throw const _StepsUnusable('模型没有给出这一批的步骤');
     }
     if (reply.studySteps.isEmpty) {
-      throw const FormatException('模型没有返回学习步骤');
+      throw const _StepsUnusable('模型没有返回学习步骤');
     }
     return reply.studySteps;
   }
@@ -399,19 +411,19 @@ class StudyPlanService {
     String? title,
   }) async {
     final requestEpoch = runtime.dataEpoch;
-    if (steps.isEmpty) throw ArgumentError('请先生成学习步骤');
+    if (steps.isEmpty) throw UserFailure('请先生成学习步骤');
     if (pageFrom <= 0 || pageTo < pageFrom) {
-      throw ArgumentError('学习计划页码范围无效');
+      throw UserFailure('学习计划页码范围无效');
     }
     final material = await materials.byId(materialId);
-    if (material == null) throw StateError('未找到这份材料');
+    if (material == null) throw UserFailure('未找到这份材料');
     final inRange = await materials.pagesBetween(
       materialId,
       pageFrom: pageFrom,
       pageTo: pageTo,
     );
     if (inRange.isEmpty) {
-      throw StateError('所选范围内没有材料页面');
+      throw UserFailure('所选范围内没有材料页面');
     }
     final problem = studyStepsProblem(
       steps: steps,
@@ -419,7 +431,7 @@ class StudyPlanService {
       pageFrom: pageFrom,
       pageTo: pageTo,
     );
-    if (problem != null) throw ArgumentError(problem);
+    if (problem != null) throw UserFailure(problem);
     final planTitle = title?.trim().isNotEmpty == true
         ? title!.trim()
         : '${material.title} ${material.position(pageFrom, to: pageTo)}';
@@ -582,7 +594,7 @@ class StudyPlanService {
   /// 生成与确认期间数据被整库恢复或清空时，旧范围与旧步骤不再使用。
   void _ensureCurrentEpoch(int expected) {
     if (runtime.dataEpoch != expected) {
-      throw StateError('数据已恢复或清空，请重新打开系统学习后再生成。');
+      throw UserFailure('数据已恢复或清空，请重新打开系统学习后再生成。');
     }
   }
 }

@@ -10,6 +10,7 @@ import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/application/buddy_actions.dart';
 import 'package:zhixin/application/context_service.dart';
 import 'package:zhixin/application/discussion_service.dart';
+import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/attachment_store.dart';
@@ -172,7 +173,7 @@ void main() {
     h.epoch++;
     h.ai.resume!.complete();
 
-    await expectLater(pending, throwsA(isA<StateError>()));
+    await expectLater(pending, throwsA(isA<UserFailure>()));
     final messages = await h.conversations.recent(id);
     expect(messages, hasLength(1));
     expect(messages.single.role, MessageRole.user);
@@ -798,7 +799,7 @@ void main() {
         draft: pending.first.draft,
         goalId: null,
       ),
-      throwsA(isA<StateError>()),
+      throwsA(isA<UserFailure>()),
     );
     expect(await h.tasks.items(), hasLength(1));
 

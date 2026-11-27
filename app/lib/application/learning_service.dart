@@ -31,6 +31,7 @@ import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
 import 'service_runtime.dart';
+import 'user_failure.dart';
 import 'used_pages.dart';
 
 /// 一道题的当前状态：原题、尝试、一条未提交尝试，以及学习页要显示的判断与
@@ -166,7 +167,7 @@ class LearningService {
       attempts.attemptsFor(conversationId),
       conversations.recent(conversationId, limit: _recentMessageCount),
     ).wait;
-    if (question == null) throw StateError('未找到这道题');
+    if (question == null) throw UserFailure('未找到这道题');
     final open = recordAttempts.where((attempt) => attempt.isOpen).firstOrNull;
     return QuestionView(
       question: question,
@@ -307,7 +308,7 @@ class LearningService {
         .where((path) => path.trim().isNotEmpty)
         .toList(growable: false);
     final text = stem.trim();
-    if (text.isEmpty && images.isEmpty) throw ArgumentError('题目不能为空');
+    if (text.isEmpty && images.isEmpty) throw UserFailure('题目不能为空');
     // 记录、原题消息、场次与草稿属于同一次“带入题目”，整组写入或整组回滚；
     // 同时到达的两次带入只会留下一条未提交草稿。
     return transactions.run((txn) async {
@@ -334,7 +335,7 @@ class LearningService {
         transaction: txn,
       );
       final message = await conversations.lastUserMessage(conversationId);
-      if (message == null) throw StateError('题目消息没有写入');
+      if (message == null) throw UserFailure('题目消息没有写入');
       await conversations.setQuestionMessage(
         conversationId,
         message.id,
@@ -359,12 +360,12 @@ class LearningService {
   Future<String> startAnswering({required String conversationId}) async {
     final requestEpoch = runtime.dataEpoch;
     final record = await conversations.byId(conversationId);
-    if (record == null) throw StateError('未找到这条讨论');
+    if (record == null) throw UserFailure('未找到这条讨论');
     final message = await conversations.lastUserMessage(conversationId);
     final question = await conversations.question(conversationId);
     if (question == null ||
         (question.stem.trim().isEmpty && question.imagePaths.isEmpty)) {
-      throw StateError('这条讨论还没有可以作答的题目内容');
+      throw UserFailure('这条讨论还没有可以作答的题目内容');
     }
     await transactions.run((txn) async {
       _ensureCurrentEpoch(requestEpoch);
@@ -399,7 +400,7 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final question = await conversations.question(questionId);
-    if (question == null) throw StateError('未找到这道题');
+    if (question == null) throw UserFailure('未找到这道题');
     final conversation = await conversations.byId(questionId);
     final resolved = await memoryScope.resolve(
       questionId,
@@ -617,15 +618,15 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final attempt = await attempts.attemptById(attemptId);
-    if (attempt == null) throw StateError('未找到这次作答');
+    if (attempt == null) throw UserFailure('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
-    if (item == null) throw StateError('未找到这条记忆');
+    if (item == null) throw UserFailure('未找到这条记忆');
     if (item.status == MemoryCardStatus.accepted) {
       // 同一张卡连点两次：上一次已经写入，按重试返回，不再形成提交。
       return const AcceptedMemory(applied: true, notice: '这条记忆已经处理。');
     }
     if (item.status != MemoryCardStatus.pending) {
-      throw StateError('这条记忆已经处理');
+      throw UserFailure('这条记忆已经处理');
     }
     final scope = (await memoryScope.resolve(attempt.conversationId)).scope;
     try {
@@ -675,11 +676,11 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final attempt = await attempts.attemptById(attemptId);
-    if (attempt == null) throw StateError('未找到这次作答');
+    if (attempt == null) throw UserFailure('未找到这次作答');
     final item = _helpMemory(attempt, helpIndex, itemId);
-    if (item == null) throw StateError('未找到这条记忆');
+    if (item == null) throw UserFailure('未找到这条记忆');
     if (item.status != MemoryCardStatus.pending) {
-      throw StateError('这条记忆已经处理');
+      throw UserFailure('这条记忆已经处理');
     }
     await transactions.run((txn) async {
       _ensureCurrentEpoch(requestEpoch);
@@ -751,9 +752,9 @@ class LearningService {
       (txn) async {
         _ensureCurrentEpoch(requestEpoch);
         final before = await attempts.attemptById(attemptId, transaction: txn);
-        if (before == null) throw StateError('未找到这次作答');
+        if (before == null) throw UserFailure('未找到这次作答');
         if (before.submitted) {
-          throw StateError('这次作答已经提交，请新建一次作答');
+          throw UserFailure('这次作答已经提交，请新建一次作答');
         }
         await assessments.saveUserBasisDraft(
           attemptId,
@@ -770,7 +771,7 @@ class LearningService {
           feedback: feedback,
           transaction: txn,
         );
-        if (changed != 1) throw StateError('这次作答已提交，请新建一次作答');
+        if (changed != 1) throw UserFailure('这次作答已提交，请新建一次作答');
         return txn.result();
       },
       label: '提交作答',
@@ -794,12 +795,12 @@ class LearningService {
   }) async {
     final requestEpoch = runtime.dataEpoch;
     final question = await conversations.question(questionId);
-    if (question == null) throw StateError('未找到这道题');
+    if (question == null) throw UserFailure('未找到这道题');
     final conversation = await conversations.byId(questionId);
     final attempt = await attempts.attemptById(attemptId);
-    if (attempt == null) throw StateError('未找到这次作答');
+    if (attempt == null) throw UserFailure('未找到这次作答');
     if (attempt.conversationId != questionId) {
-      throw ArgumentError('这次作答不属于当前题目');
+      throw UserFailure('这次作答不属于当前题目');
     }
     final goalId = conversation?.goalId;
     final facts = await context.load(
@@ -820,7 +821,7 @@ class LearningService {
     final prepared = await AttachmentService(filesDir: () => runtime.filesDir)
         .prepare(question.imagePaths, enabled: config?.allowImages ?? false);
     if (question.stem.trim().isEmpty && prepared.images.isEmpty) {
-      throw StateError(
+      throw UserFailure(
         prepared.omitted.isEmpty
             ? '没有可发送的题目图片，无法进行模型判断。'
             : '题目图片都没有发送'
@@ -842,7 +843,7 @@ class LearningService {
     _ensureCurrentEpoch(requestEpoch);
     final draft = answer.assessment;
     if (draft == null) {
-      throw StateError('模型未提供可用判断');
+      throw UserFailure('模型未提供可用判断');
     }
     late final String id;
     try {
@@ -938,9 +939,9 @@ class LearningService {
       (txn) async {
         _ensureCurrentEpoch(requestEpoch);
         final before = await attempts.attemptById(attemptId, transaction: txn);
-        if (before == null) throw StateError('未找到这次作答');
+        if (before == null) throw UserFailure('未找到这次作答');
         if (before.submitted) {
-          throw StateError('这次作答已经提交，草稿不能再修改');
+          throw UserFailure('这次作答已经提交，草稿不能再修改');
         }
         await attempts.saveDraft(
           attemptId,
@@ -1045,7 +1046,7 @@ class LearningService {
 
   void _ensureCurrentEpoch(int expected) {
     if (runtime.dataEpoch != expected) {
-      throw StateError('数据已恢复或清空，请重新打开这条学习记录后再求助。');
+      throw UserFailure('数据已恢复或清空，请重新打开这条学习记录后再求助。');
     }
   }
 }
