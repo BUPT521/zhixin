@@ -27,7 +27,7 @@ import 'plugins/runtime/plugin_runtime.dart';
 
 /// 应用根持有的全部服务，按使用场景分成八组。
 ///
-/// 页面只从这里取服务，装配顺序仍留在 [AppScopeState]；分组只决定从哪里
+/// 页面只从这里取服务，装配顺序仍留在 [AppComposition]；分组只决定从哪里
 /// 找，不改变服务之间的依赖。
 class AppServices {
   const AppServices({
