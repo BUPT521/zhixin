@@ -75,8 +75,8 @@ Future<MaterialSelection?> showMaterialPicker(
   );
   if (material == null || !context.mounted) return null;
 
-  final pages = await scope.library.material.pages(material.id);
-  if (!context.mounted) return null;
+  final pages = await _readPages(context, material);
+  if (pages == null || !context.mounted) return null;
   if (pages.isEmpty) {
     showToast(context, '这份材料还没有页面');
     return null;
@@ -117,6 +117,34 @@ Future<MaterialSelection?> showMaterialPicker(
     materialTitle: material.title,
     pageNo: page.pageNo,
   );
+}
+
+/// 读一份材料的页码：读取失败时给出与材料列表同一套说明，不把异常留给框架。
+///
+/// 选中材料之后紧接着就要读页码，这一步与前面读材料列表同样可能失败；失败时
+/// 返回空并把原因提示出来，调用方据此结束这次选择。
+Future<List<MaterialPage>?> _readPages(
+  BuildContext context,
+  Material material,
+) async {
+  try {
+    return await AppScope.of(context).library.material.pages(material.id);
+  } catch (error, stack) {
+    if (!context.mounted) return null;
+    showToast(
+      context,
+      describeFailure(
+        context,
+        error,
+        stack,
+        action: '读取这份材料的页码',
+        kind: 'material_picker_pages',
+        kept: '材料没有改动',
+        next: '可以再打开一次',
+      ),
+    );
+    return null;
+  }
 }
 
 /// 材料候选：按标题、来源和页标签过滤，查询变化后只显示最后一次请求的结果。
