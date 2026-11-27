@@ -31,7 +31,7 @@ type Service struct {
 	// 由装配处经 SetObjects 注入，没有注入时对账不执行。
 	objects objectstore.Store
 	// reconcileInterval 是后台对账的周期，由配置项
-	// ZHIXIN_BACKUP_RECONCILE_INTERVAL 设置；0 或负数表示只在启动时跑一次。
+	// ZHIXIN_BACKUP_RECONCILE_INTERVAL 设置；0 表示只在启动时跑一次。
 	reconcileInterval time.Duration
 }
 

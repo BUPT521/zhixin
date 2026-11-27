@@ -217,6 +217,44 @@ func TestLoadDefaultsForHardening(t *testing.T) {
 	}
 }
 
+// TestLoadClosableValues 守住“0 表示关闭”的配置项：周期对账设 0 只在启动时跑
+// 一次，反馈清理设 0 不清理，后台占比 0 与 100 都不单独限制后台，前台保留名额
+// 可以设 0。负数仍然拒绝：只有 0 表示关闭，负值多半是写错。
+func TestLoadClosableValues(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"ZHIXIN_BACKUP_RECONCILE_INTERVAL":       "0",
+		"ZHIXIN_FEEDBACK_KEEP_DAYS":              "0",
+		"ZHIXIN_LLM_FOREGROUND_RESERVED":         "0",
+		"ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT": "0",
+	}))
+	if err != nil {
+		t.Fatalf("0 是合法值：%v", err)
+	}
+	if cfg.BackupReconcileInterval != 0 || cfg.FeedbackKeepDays != 0 ||
+		cfg.LLM.ForegroundReserved != 0 || cfg.LLM.BackgroundInstancePercent != 0 {
+		t.Fatalf("0 没有原样读入：%+v", cfg)
+	}
+
+	for _, tc := range []struct{ key, val string }{
+		{"ZHIXIN_BACKUP_RECONCILE_INTERVAL", "-1h"},
+		{"ZHIXIN_FEEDBACK_KEEP_DAYS", "-1"},
+		{"ZHIXIN_LLM_FOREGROUND_RESERVED", "-1"},
+		{"ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT", "-1"},
+		{"ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT", "101"},
+	} {
+		if _, err := Load(env(map[string]string{tc.key: tc.val})); err == nil ||
+			!strings.Contains(err.Error(), tc.key) {
+			t.Fatalf("%s=%s 应当被拒绝，得到 %v", tc.key, tc.val, err)
+		}
+	}
+
+	// 100 表示不单独限制后台，仍然合法。
+	cfg, err = Load(env(map[string]string{"ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT": "100"}))
+	if err != nil || cfg.LLM.BackgroundInstancePercent != 100 {
+		t.Fatalf("100 应当合法：%+v, %v", cfg.LLM, err)
+	}
+}
+
 func TestLoadSyncSnapshotOptions(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
 		"ZHIXIN_SYNC_COMPACT":        "1",

@@ -51,8 +51,8 @@ func NewService(store Store) *Service {
 	return &Service{store: store, now: time.Now, keepDays: DefaultKeepDays}
 }
 
-// SetKeepDays 设置反馈的保留天数，与 ZHIXIN_FEEDBACK_KEEP_DAYS 对应；设成 0 或
-// 负数表示不清理。装配处读完配置调用一次即可。
+// SetKeepDays 设置反馈的保留天数，与 ZHIXIN_FEEDBACK_KEEP_DAYS 对应；设成 0
+// 表示不清理。装配处读完配置调用一次即可。
 func (s *Service) SetKeepDays(days int) { s.keepDays = days }
 
 // Prune 删除保留期之外的反馈，返回删除的行数。保留期按保留天数从当天倒推，

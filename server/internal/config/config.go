@@ -72,7 +72,8 @@ type Config struct {
 	// BackupsKept is how many snapshots are retained per account.
 	BackupsKept int
 	// BackupReconcileInterval 是对象存储对账的周期：列出 backups/ 下的对象，
-	// 库里找不到对应元数据的遗留字节删掉（ADR-0037）。设 0 关闭。
+	// 库里找不到对应元数据的遗留字节删掉（ADR-0037）。设 0 表示只在启动时对账
+	// 一次，之后不再重跑。
 	BackupReconcileInterval time.Duration
 	// BlobDir is the local directory for backup and attachment bytes. Used
 	// when S3 is not configured.
@@ -155,7 +156,7 @@ type Config struct {
 	FeedbackGlobalRatePerSecond float64
 	FeedbackGlobalBurst         int
 	// FeedbackKeepDays 是反馈的保留天数；更早的行由每日清理删除，正文与联系
-	// 方式不无限期保留。
+	// 方式不无限期保留。设 0 关闭每日清理。
 	FeedbackKeepDays int
 	// TelemetrySecret 是匿名安装标识的 HMAC 密钥（ADR-0019）；为空时每次启动
 	// 随机生成，重启后同一个安装会被当成新的，留存数字偏高。
@@ -286,7 +287,8 @@ type LLMConfig struct {
 	RoundBudgetMax time.Duration
 	// ForegroundReserved 是每个账号为聊天与检索查询保留的并发名额：材料导入与
 	// 索引补算只能使用其余名额，两者合计仍不超过 ConcurrentPerUser。后台至少
-	// 保留一个名额，所以设得等于并发上限也不会把后台完全挡住。
+	// 保留一个名额，所以设得等于并发上限也不会把后台完全挡住；设 0 表示不为
+	// 前台保留，后台可以使用全部名额。
 	ForegroundReserved int
 	// BackgroundInstancePercent 是实例在途字节预算中后台批次最多占用的百分比，
 	// 其余留给前台。0 与 100 都表示不单独限制后台，具体比例按并发走查确定。
@@ -325,6 +327,22 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return n
 	}
+	// nonnegNum 解析允许取 0 的整数：这类配置用 0 表示关闭或“不单独限制”。
+	nonnegNum := func(key, def string) int64 {
+		n, err := strconv.ParseInt(get(key, def), 10, 64)
+		if err != nil || n < 0 {
+			errs = append(errs, fmt.Errorf("%s: want a non-negative integer such as 0", key))
+		}
+		return n
+	}
+	// nonnegDur 解析允许取 0 的时长：0 表示关闭周期任务，启动时那次照常执行。
+	nonnegDur := func(key, def string) time.Duration {
+		d, err := time.ParseDuration(get(key, def))
+		if err != nil || d < 0 {
+			errs = append(errs, fmt.Errorf("%s: want 0 or a positive duration such as 1h", key))
+		}
+		return d
+	}
 
 	loc, err := time.LoadLocation(get("ZHIXIN_TIMEZONE", "Asia/Shanghai"))
 	if err != nil {
@@ -359,7 +377,7 @@ func Load(getenv func(string) string) (Config, error) {
 		SyncSnapshotGrace:         dur("ZHIXIN_SYNC_SNAPSHOT_GRACE", "24h"),
 		SyncDeviceActive:          dur("ZHIXIN_SYNC_DEVICE_ACTIVE", "720h"),
 		BackupsKept:               int(num("ZHIXIN_BACKUPS_KEPT", "5")),
-		BackupReconcileInterval:   dur("ZHIXIN_BACKUP_RECONCILE_INTERVAL", "24h"),
+		BackupReconcileInterval:   nonnegDur("ZHIXIN_BACKUP_RECONCILE_INTERVAL", "24h"),
 		BlobDir:                   get("ZHIXIN_BLOB_DIR", "data/blobs"),
 		ApplySchema:               get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
 		S3: objectstore.S3Config{
@@ -410,7 +428,7 @@ func Load(getenv func(string) string) (Config, error) {
 		FeedbackBurst:               int(num("ZHIXIN_FEEDBACK_BURST", "3")),
 		FeedbackGlobalRatePerSecond: fnum("ZHIXIN_FEEDBACK_GLOBAL_RATE", "2"),
 		FeedbackGlobalBurst:         int(num("ZHIXIN_FEEDBACK_GLOBAL_BURST", "30")),
-		FeedbackKeepDays:            int(num("ZHIXIN_FEEDBACK_KEEP_DAYS", "365")),
+		FeedbackKeepDays:            int(nonnegNum("ZHIXIN_FEEDBACK_KEEP_DAYS", "365")),
 
 		TelemetrySecret:              get("ZHIXIN_TELEMETRY_SECRET", ""),
 		TelemetryRatePerSecond:       fnum("ZHIXIN_TELEMETRY_RATE", "0.2"),
@@ -441,8 +459,8 @@ func Load(getenv func(string) string) (Config, error) {
 			HeaderTimeout:             dur("ZHIXIN_LLM_HEADER_TIMEOUT", "60s"),
 			FirstOutputTimeout:        dur("ZHIXIN_LLM_FIRST_OUTPUT_TIMEOUT", "20s"),
 			RoundBudgetMax:            dur("ZHIXIN_LLM_ROUND_BUDGET_MAX", "5m"),
-			ForegroundReserved:        int(num("ZHIXIN_LLM_FOREGROUND_RESERVED", "2")),
-			BackgroundInstancePercent: int(num("ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT", "60")),
+			ForegroundReserved:        int(nonnegNum("ZHIXIN_LLM_FOREGROUND_RESERVED", "2")),
+			BackgroundInstancePercent: int(nonnegNum("ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT", "60")),
 		},
 
 		AdminToken:         get("ZHIXIN_ADMIN_TOKEN", ""),
@@ -452,16 +470,13 @@ func Load(getenv func(string) string) (Config, error) {
 	if cfg.AdminToken != "" && len(cfg.AdminToken) < 32 {
 		errs = append(errs, errors.New("ZHIXIN_ADMIN_TOKEN: use at least 32 characters, e.g. `openssl rand -base64 32`"))
 	}
-	if cfg.LLM.ForegroundReserved < 0 {
-		errs = append(errs, errors.New("ZHIXIN_LLM_FOREGROUND_RESERVED: want a non-negative number"))
-	}
 	if cfg.LLM.TokensPerPoint > 1000000000 {
 		errs = append(errs, errors.New("ZHIXIN_TOKENS_PER_POINT 必须是 1 到 10 亿之间的整数"))
 	}
 	if cfg.LLM.EmbeddingBillingPermille < 1 || cfg.LLM.EmbeddingBillingPermille > 10000 {
 		errs = append(errs, errors.New("ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE: want 1 to 10000"))
 	}
-	if cfg.LLM.BackgroundInstancePercent < 0 || cfg.LLM.BackgroundInstancePercent > 100 {
+	if cfg.LLM.BackgroundInstancePercent > 100 {
 		errs = append(errs, errors.New("ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT: want 0 to 100"))
 	}
 	if raw := get("ZHIXIN_SECRET_KEY", ""); raw != "" {

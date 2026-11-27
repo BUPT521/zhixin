@@ -460,7 +460,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_FEEDBACK_BURST` | `3` | 应用内反馈的桶容量 |
 | `ZHIXIN_FEEDBACK_GLOBAL_RATE` | `2` | 整个实例的反馈写入补充速率（个/秒），与按地址的桶同时生效 |
 | `ZHIXIN_FEEDBACK_GLOBAL_BURST` | `30` | 全局反馈桶容量 |
-| `ZHIXIN_FEEDBACK_KEEP_DAYS` | `365` | 反馈保留天数，更早的行由每日清理删除 |
+| `ZHIXIN_FEEDBACK_KEEP_DAYS` | `365` | 反馈保留天数，更早的行由每日清理删除；设 `0` 关闭每日清理 |
 | `ZHIXIN_TELEMETRY_SECRET` | 空 | 匿名安装标识的 HMAC 密钥；为空时每次启动随机生成，重启后留存数字偏高，配置了数据库时必填 |
 | `ZHIXIN_TELEMETRY_RATE` | `0.2` | 匿名活跃上报按来源地址的补充速率（个/秒），设 `0` 关闭 |
 | `ZHIXIN_TELEMETRY_BURST` | `20` | 匿名活跃上报的桶容量；同一出口地址后面可能有多台设备，容量留得比反馈大 |
@@ -479,7 +479,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_SYNC_SNAPSHOT_GRACE` | `24h` | 旧快照附件的回收宽限期：让位时间早于它的旧字节在下一次登记时删除（[ADR-0047](../docs/adr/0047-快照附件回收与压缩前的客户端门槛.md)） |
 | `ZHIXIN_SYNC_DEVICE_ACTIVE` | `720h` | 压缩门槛看设备是否活跃、以及设备位置门槛看哪些设备的时间窗口：最近这段时间内出现过的设备都声明了 `snapshot` 才删提交，常规压缩也不越过这些设备的最小 `synced_seq`（[ADR-0047](../docs/adr/0047-快照附件回收与压缩前的客户端门槛.md)、[ADR-0054](../docs/adr/0054-数据版本位置标记补强.md)） |
 | `ZHIXIN_BACKUPS_KEPT` | `5` | 每个账号保留的备份份数 |
-| `ZHIXIN_BACKUP_RECONCILE_INTERVAL` | `24h` | 备份对象对账的周期：列出对象存储里的备份对象，删掉库里已经没有元数据、且写于一小时前的遗留字节 |
+| `ZHIXIN_BACKUP_RECONCILE_INTERVAL` | `24h` | 备份对象对账的周期：列出对象存储里的备份对象，删掉库里已经没有元数据、且写于一小时前的遗留字节；设 `0` 表示只在启动时对账一次 |
 | `ZHIXIN_REGISTER_GLOBAL_RATE` | `0.05` | 注册的实例级上限（个/秒），与按来源地址的桶同时生效，换地址也不能把未验证账号灌满库 |
 | `ZHIXIN_REGISTER_GLOBAL_BURST` | `10` | 注册实例级上限的桶容量 |
 | `ZHIXIN_UNVERIFIED_KEEP_DAYS` | `7` | 没有任何已验证登录方式的账号保留天数，超过之后由每日清理删除，释放联系方式与账号行 |
@@ -500,7 +500,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` | `32000000` | 整个实例一天的总预算，单位与账号额度相同，都是计费 token；只累计免费额度内的用量，超出部分由积分承担、不占这个预算，用尽之后免费额度内的托管请求返回 429。改造前是 20000000 个原始 token，同步调整的原因同上 |
 | `ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT` | `1` | 设为 `1` 时没有任何已验证登录方式的账号不能使用托管额度，聊天与嵌入入口均返回 403 `contact_unverified` |
 | `ZHIXIN_LLM_CONCURRENT_PER_USER` | `4` | 同一账号同时进行的托管请求上限 |
-| `ZHIXIN_LLM_FOREGROUND_RESERVED` | `2` | 每个账号为聊天与检索查询保留的并发名额，后台批次只能用其余名额；后台至少保留一个，具体比例按并发走查调整 |
+| `ZHIXIN_LLM_FOREGROUND_RESERVED` | `2` | 每个账号为聊天与检索查询保留的并发名额，后台批次只能用其余名额；后台至少保留一个，设 `0` 表示不为前台保留；具体比例按并发走查调整 |
 | `ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT` | `60` | 实例在途字节预算中后台批次最多占用的百分比，其余留给前台；`0` 与 `100` 表示不单独限制 |
 | `ZHIXIN_LLM_MAX_RESPONSE_BYTES` | `33554432` | 一次响应的字节上限；非流式响应超过时按 `upstream_failed` 处理，流式响应超过时结束转发，已转出的内容照常交付，这次尝试不记来源故障 |
 | `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` | `90s` | 流式响应两次收到数据之间的最长等待 |
