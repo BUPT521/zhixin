@@ -14,7 +14,16 @@ ORDER BY b.start_at;
 --
 -- 关键词由应用层按事项标题与说明筛，这里只筛目标、状态与日期（docs/02
 -- 第 3.14 节）。
-searchPlanBlocks:
+--
+-- 四个参数都显式声明为必填文本：空字符串表示未筛选，与事项搜索同一套口径。
+-- :goalId 同时与 '' 和可空的 goal_id 列比较，靠推断会在可空与非空之间摇摆，
+-- 生成文件因此每次重建都可能不同，CI 的生成核对随之偶发失败。
+searchPlanBlocks(
+  REQUIRED :goalId AS TEXT,
+  REQUIRED :status AS TEXT,
+  REQUIRED :dayStart AS TEXT,
+  REQUIRED :dayEnd AS TEXT
+):
 SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status
 FROM schedule_block b
 JOIN plan_item p ON p.id = b.plan_item_id

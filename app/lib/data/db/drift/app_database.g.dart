@@ -14727,7 +14727,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   }
 
   Selectable<SearchPlanBlocksResult> searchPlanBlocks(
-    String? goalId,
+    String goalId,
     String status,
     String dayStart,
     String dayEnd,
