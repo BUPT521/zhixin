@@ -95,6 +95,46 @@ func TestLoadRequiresAccessShorterThanRefresh(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error")
 	}
+	// 前面有别的配置写错时，TTL 校验也不能被跳过（S16）。
+	_, err = Load(env(map[string]string{
+		"ZHIXIN_ACCESS_TTL":       "800h",
+		"ZHIXIN_LLM_DAILY_TOKENS": "-1",
+	}))
+	if err == nil || !strings.Contains(err.Error(), "ZHIXIN_ACCESS_TTL") {
+		t.Fatalf("无关错误不应跳过 TTL 校验：%v", err)
+	}
+}
+
+// TestLoadRejectsNonBooleanSwitch 守住布尔项只认 0 与 1：写成 true、yes 这类值时
+// 报错，而不是静默当成关闭。拼错验证门槛会直接关掉聊天与嵌入的 403（S16）。
+func TestLoadRejectsNonBooleanSwitch(t *testing.T) {
+	for _, key := range []string{
+		"ZHIXIN_SYNC_COMPACT",
+		"ZHIXIN_APPLY_SCHEMA",
+		"ZHIXIN_S3_USE_SSL",
+		"ZHIXIN_MAIL_LOG",
+		"ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT",
+	} {
+		for _, value := range []string{"true", "yes", "2", "-1"} {
+			if _, err := Load(env(map[string]string{key: value})); err == nil ||
+				!strings.Contains(err.Error(), key) {
+				t.Errorf("%s=%s 应当报错，得到 %v", key, value, err)
+			}
+		}
+	}
+	// 0 与 1 照常读入。
+	cfg, err := Load(env(map[string]string{
+		"ZHIXIN_SYNC_COMPACT":                 "1",
+		"ZHIXIN_APPLY_SCHEMA":                 "0",
+		"ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT": "0",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.SyncCompact || cfg.ApplySchema || cfg.LLM.RequireVerifiedContact {
+		t.Fatalf("0 与 1 没有原样读入：compact=%v apply=%v verified=%v",
+			cfg.SyncCompact, cfg.ApplySchema, cfg.LLM.RequireVerifiedContact)
+	}
 }
 
 func TestLoadS3(t *testing.T) {
@@ -267,13 +307,10 @@ func TestLoadSyncSnapshotOptions(t *testing.T) {
 	if !cfg.SyncCompact || cfg.SyncSnapshotGrace != 48*time.Hour || cfg.SyncDeviceActive != 24*time.Hour {
 		t.Fatalf("快照回收与压缩门槛: compact=%v grace=%v active=%v", cfg.SyncCompact, cfg.SyncSnapshotGrace, cfg.SyncDeviceActive)
 	}
-	// 只写 0 或 1；其它值按关闭处理，避免把拼写错误当成打开。
-	cfg, err = Load(env(map[string]string{"ZHIXIN_SYNC_COMPACT": "true"}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.SyncCompact {
-		t.Fatal("ZHIXIN_SYNC_COMPACT 只认 1")
+	// 只写 0 或 1：其它写法记错误，而不是静默当成关闭（S16）。
+	if _, err := Load(env(map[string]string{"ZHIXIN_SYNC_COMPACT": "true"})); err == nil ||
+		!strings.Contains(err.Error(), "ZHIXIN_SYNC_COMPACT") {
+		t.Fatalf("ZHIXIN_SYNC_COMPACT=true 应当报错，得到 %v", err)
 	}
 }
 

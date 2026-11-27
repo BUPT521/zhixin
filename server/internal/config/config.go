@@ -351,6 +351,20 @@ func Load(getenv func(string) string) (Config, error) {
 		}
 		return d
 	}
+	// boolean 解析只接受 0 或 1 的开关。写 true、yes 这类值不再静默当成关闭；
+	// 拼错 ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT 会直接关掉聊天与嵌入的 403 门槛，
+	// 所以按错误处理，与 dur 和 num 写错时的行为一致。
+	boolean := func(key, def string) bool {
+		switch v := get(key, def); v {
+		case "0":
+			return false
+		case "1":
+			return true
+		default:
+			errs = append(errs, fmt.Errorf("%s: want 0 or 1", key))
+			return false
+		}
+	}
 
 	loc, err := time.LoadLocation(get("ZHIXIN_TIMEZONE", "Asia/Shanghai"))
 	if err != nil {
@@ -383,20 +397,20 @@ func Load(getenv func(string) string) (Config, error) {
 		SyncMaxConcurrent:         num("ZHIXIN_SYNC_MAX_CONCURRENT", "4"),
 		SyncPullMaxBytes:          num("ZHIXIN_SYNC_PULL_MAX_BYTES", "4194304"),
 		SyncCompactKeep:           dur("ZHIXIN_SYNC_COMPACT_KEEP", "168h"),
-		SyncCompact:               get("ZHIXIN_SYNC_COMPACT", "0") == "1",
+		SyncCompact:               boolean("ZHIXIN_SYNC_COMPACT", "0"),
 		SyncSnapshotGrace:         dur("ZHIXIN_SYNC_SNAPSHOT_GRACE", "24h"),
 		SyncDeviceActive:          dur("ZHIXIN_SYNC_DEVICE_ACTIVE", "720h"),
 		BackupsKept:               int(num("ZHIXIN_BACKUPS_KEPT", "5")),
 		BackupReconcileInterval:   nonnegDur("ZHIXIN_BACKUP_RECONCILE_INTERVAL", "24h"),
 		BlobDir:                   get("ZHIXIN_BLOB_DIR", "data/blobs"),
-		ApplySchema:               get("ZHIXIN_APPLY_SCHEMA", "0") == "1",
+		ApplySchema:               boolean("ZHIXIN_APPLY_SCHEMA", "0"),
 		S3: objectstore.S3Config{
 			Endpoint:  get("ZHIXIN_S3_ENDPOINT", ""),
 			Bucket:    get("ZHIXIN_S3_BUCKET", "zhixin"),
 			AccessKey: get("ZHIXIN_S3_ACCESS_KEY", ""),
 			SecretKey: get("ZHIXIN_S3_SECRET_KEY", ""),
 			Region:    get("ZHIXIN_S3_REGION", ""),
-			UseSSL:    get("ZHIXIN_S3_USE_SSL", "0") == "1",
+			UseSSL:    boolean("ZHIXIN_S3_USE_SSL", "0"),
 		},
 
 		AuthRatePerSecond:           fnum("ZHIXIN_AUTH_RATE", "0.2"),
@@ -420,7 +434,7 @@ func Load(getenv func(string) string) (Config, error) {
 		SMTPUsername:      get("ZHIXIN_SMTP_USERNAME", ""),
 		SMTPPassword:      get("ZHIXIN_SMTP_PASSWORD", ""),
 		SMTPTLS:           get("ZHIXIN_SMTP_TLS", "starttls"),
-		MailLog:           get("ZHIXIN_MAIL_LOG", "0") == "1",
+		MailLog:           boolean("ZHIXIN_MAIL_LOG", "0"),
 		CodeSecret:        get("ZHIXIN_CODE_SECRET", ""),
 		CodeTTL:           dur("ZHIXIN_CODE_TTL", "10m"),
 		CodeCooldown:      dur("ZHIXIN_CODE_COOLDOWN", "60s"),
@@ -457,7 +471,7 @@ func Load(getenv func(string) string) (Config, error) {
 			TokensPerPoint:            num("ZHIXIN_TOKENS_PER_POINT", "10000"),
 			InstanceDailyTokens:       num("ZHIXIN_LLM_INSTANCE_DAILY_TOKENS", "32000000"),
 			MaxRequestBytes:           num("ZHIXIN_LLM_MAX_REQUEST_BYTES", "8388608"),
-			RequireVerifiedContact:    get("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1") == "1",
+			RequireVerifiedContact:    boolean("ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT", "1"),
 			ConcurrentPerUser:         int(num("ZHIXIN_LLM_CONCURRENT_PER_USER", "4")),
 			MaxInstanceBytes:          num("ZHIXIN_LLM_MAX_INSTANCE_BYTES", "536870912"),
 			MaxResponseBytes:          num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
@@ -586,7 +600,7 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 
 	// 带 key 的上游地址由管理后台保存，地址在保存时校验（见 llmproxy.Admin）。
-	if cfg.AccessTTL >= cfg.RefreshTTL && len(errs) == 0 {
+	if cfg.AccessTTL >= cfg.RefreshTTL {
 		errs = append(errs, errors.New("ZHIXIN_ACCESS_TTL must be shorter than ZHIXIN_REFRESH_TTL"))
 	}
 	// 发布清单不合法时启动直接失败：更新检查是公测前必须可用的功能，清单写错
