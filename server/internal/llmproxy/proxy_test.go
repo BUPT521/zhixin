@@ -354,55 +354,114 @@ func TestHandlerResponsesLenientForAPIKeys(t *testing.T) {
 	}
 }
 
-// TestHandlerResponsesOpenCodeSession 断言发往 OpenCode 网关的请求带上稳定的
-// `x-opencode-session`：Go 通道缺这个头会按 `MissingSessionID` 回 400，而客户端
-// 不需要知道这个头。同一个讨论的两次请求必须带同一个值，别的来源不带这个头。
-func TestHandlerResponsesOpenCodeSession(t *testing.T) {
-	var mu sync.Mutex
-	var sessions []string
-	var other string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		if strings.HasPrefix(r.URL.Path, "/opencode.ai") {
-			sessions = append(sessions, r.Header.Get("x-opencode-session"))
-		} else {
-			other = r.Header.Get("x-opencode-session")
-		}
-		mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"id":"resp_1","object":"response","status":"completed","output":[]}`)
-	}))
-	defer upstream.Close()
+type testRoundTripper func(*http.Request) (*http.Response, error)
 
+func (f testRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestHandlerResponsesConvertsCacheAffinityBySource(t *testing.T) {
 	env := newTestServer(t, baseConfig(), func(c *MemoryCatalog, box *secretbox.Box) {
-		putProvider(t, c, box, "oc", upstream.URL+"/opencode.ai/v1", "sk-oc")
-		putModel(t, c, ModelRecord{Name: "opencode-chat", Kind: KindChat, Routes: []Route{{ProviderID: "oc", UpstreamModel: "deepseek-v4.1-flash"}}})
-		putProvider(t, c, box, "plain", upstream.URL+"/plain/v1", "sk-plain")
-		putModel(t, c, ModelRecord{Name: "plain-chat", Kind: KindChat, Routes: []Route{{ProviderID: "plain", UpstreamModel: "deepseek-flash"}}})
+		for id, endpoint := range map[string]string{
+			"opencode": "https://opencode.ai/inference/go/v1",
+			"command":  "https://api.commandcode.ai/provider/v1",
+			"deepseek": "https://api.deepseek.com/v1",
+			"other":    "https://api.commandcode.ai.example/opencode.ai/v1",
+		} {
+			putProvider(t, c, box, id, endpoint, "test-key")
+			putModel(t, c, ModelRecord{Name: id, Kind: KindChat, Routes: []Route{{ProviderID: id, UpstreamModel: id}}})
+		}
+		putModel(t, c, ModelRecord{Name: "failover", Kind: KindChat, Routes: []Route{
+			{ProviderID: "command", UpstreamModel: "unavailable", Priority: 0},
+			{ProviderID: "deepseek", UpstreamModel: "deepseek", Priority: 1},
+		}})
 	})
-	tokens, err := env.authSvc.Register(context.Background(), "opencode@b.cn", "password1", "")
+	token := signIn(t, env.authSvc, "affinity@b.cn")
+	principal, err := env.authSvc.Authenticate(t.Context(), token)
 	if err != nil {
 		t.Fatal(err)
 	}
-	env.quota.SetDailyLimit(tokens.UserID, 1<<30)
-
-	input := []any{map[string]any{"type": "message", "role": "user", "content": "同一个讨论"}}
-	for i := 0; i < 2; i++ {
-		if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tokens.AccessToken,
-			map[string]any{"model": "opencode-chat", "input": input}, nil); code != http.StatusOK {
-			t.Fatalf("第 %d 次请求应通过，得到 %d", i+1, code)
+	_, apiKey, err := env.authSvc.CreateAPIKey(t.Context(), principal, "测试")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherToken := signIn(t, env.authSvc, "other-affinity@b.cn")
+	type observedRequest struct {
+		header http.Header
+		body   map[string]any
+	}
+	var observed []observedRequest
+	env.proxy.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
+		defer r.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			return nil, err
+		}
+		observed = append(observed, observedRequest{r.Header.Clone(), body})
+		status, raw := http.StatusOK, `{"object":"response","status":"completed","output":[],"usage":{"total_tokens":5}}`
+		if body["model"] == "unavailable" {
+			status, raw = http.StatusServiceUnavailable, `{"error":{"message":"busy"}}`
+		}
+		return &http.Response{
+			StatusCode: status,
+			Header:     http.Header{"Content-Type": {"application/json"}},
+			Body:       io.NopCloser(strings.NewReader(raw)),
+		}, nil
+	})
+	call := func(credential, model, input, cacheKey string, headers map[string]string) {
+		t.Helper()
+		observed = nil
+		body := fmt.Sprintf(`{"model":%q,"input":[{"role":"user","content":%q}],"prompt_cache_key":%s,"store":true}`, model, input, cacheKey)
+		resp := env.c.Do(http.MethodPost, "/v1/llm/responses", credential, strings.NewReader(body), headers)
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || len(observed) == 0 {
+			t.Fatalf("%s 应成功转发，得到状态 %d、尝试 %d 次", model, resp.StatusCode, len(observed))
 		}
 	}
-	if len(sessions) != 2 || sessions[0] == "" || sessions[0] != sessions[1] {
-		t.Fatalf("同一讨论应带同一个会话标识，得到 %v", sessions)
+	check := func(i int, header string, key any) {
+		t.Helper()
+		got := observed[i]
+		if got.header.Get("x-opencode-session") != header || got.body["prompt_cache_key"] != key || got.body["store"] != false {
+			t.Fatalf("上游应收到会话头 %q、缓存键 %v、store=false，得到 %v、%v、%v",
+				header, key, got.header.Get("x-opencode-session"), got.body["prompt_cache_key"], got.body["store"])
+		}
+		if got.header.Get("X-Zhixin-Session-Id") != "" || got.header.Get("X-DeepSeek-Harness-Session-Id") != "" {
+			t.Fatal("上游不应收到客户端原始会话头")
+		}
 	}
-	if code := env.c.JSON(http.MethodPost, "/v1/llm/responses", tokens.AccessToken,
-		map[string]any{"model": "plain-chat", "input": input}, nil); code != http.StatusOK {
-		t.Fatalf("普通来源应通过，得到 %d", code)
+
+	raw := "discussion-7"
+	key := sessionKey(principal.UserID, &raw, maxSessionIDBytes)
+	call(apiKey, "opencode", "首条消息", `"discussion-7"`, nil)
+	check(0, key, nil)
+	call(apiKey, "opencode", "压缩之后", `null`, map[string]string{"X-DeepSeek-Harness-Session-Id": raw})
+	check(0, key, nil)
+	call(apiKey, "command", "压缩之后", `"fallback"`, map[string]string{"X-OpenCode-Session": raw})
+	check(0, "", key)
+	call(token, "command", "继续讨论", `"fallback"`, map[string]string{"X-Zhixin-Session-Id": raw, "X-OpenCode-Session": "other"})
+	check(0, "", key)
+	call(otherToken, "command", "另一个账号", `"discussion-7"`, nil)
+	if got := observed[0].body["prompt_cache_key"]; got == nil || got == key || got == raw {
+		t.Fatalf("账号之间的缓存键应隔离，得到 %v", got)
 	}
-	if other != "" {
-		t.Fatalf("普通来源不该收到 x-opencode-session，得到 %q", other)
+	call(token, "other", "相似的地址", `"discussion-7"`, nil)
+	check(0, "", nil)
+
+	longSession := "ses_" + strings.Repeat("a", 64)
+	call(apiKey, "opencode", "OpenCode 会话", `null`, map[string]string{"X-Session-Affinity": longSession})
+	check(0, sessionKey(principal.UserID, &longSession, maxClientSessionIDBytes), nil)
+	call(token, "command", "回退到首条消息", `null`, nil)
+	derivedKey := observed[0].body["prompt_cache_key"]
+	if derivedKey == nil {
+		t.Fatal("缺少标识时应从首条用户消息派生调度键")
 	}
+	call(token, "command", "回退到首条消息", `42`, map[string]string{"X-OpenCode-Session": strings.Repeat("x", maxClientSessionIDBytes+1)})
+	check(0, "", derivedKey)
+
+	call(apiKey, "failover", "切换来源", `"discussion-7"`, nil)
+	if len(observed) != 2 {
+		t.Fatalf("应切换到 DeepSeek 官方，得到 %d 次尝试", len(observed))
+	}
+	check(0, "", key)
+	check(1, "", nil)
 }
 
 func TestHandlerQuotaOverride(t *testing.T) {

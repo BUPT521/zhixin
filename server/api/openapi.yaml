@@ -900,10 +900,11 @@ paths:
         `max_output_tokens`、`stream` 与 `store: false`，客户端不使用
         `previous_response_id`，也不发送 `temperature` 与 `top_p`。服务端校验
         `model` 后转发到来源的 `/responses`，只放行白名单内的字段，其余字段回 400。
-        第三方客户端常见、取值由服务端与来源决定的字段是例外，接受但不转发：
-        `prompt_cache_key`、`prompt_cache_retention`、`prompt_cache_options`、
-        `service_tier` 与 `include`；把它们转给不认识这些字段的来源，只会让整次
-        请求按来源错误失败。
+        服务端接受 `prompt_cache_key` 作为会话标识，按账号散列后参与路由选择。
+        转发对话时，OpenCode 收到散列后的 `x-opencode-session`，Command Code 收到
+        散列后的 `prompt_cache_key`，DeepSeek 官方按提示词前缀自动缓存。
+        `prompt_cache_retention`、`prompt_cache_options`、`service_tier` 与 `include`
+        仍接受但不转发，由服务端与来源决定相应行为。
         `store` 放行但不按客户端取值转发：服务端在转发前一律写成 `false`，因为
         Responses 接口在缺少该字段时默认让上游保存响应。
         `max_output_tokens` 取 16 到 32768，省略时补 4096，与客户端的上限一致，
@@ -939,10 +940,12 @@ paths:
           required: false
           description: |
             客户端为一条讨论或同一次批量模型调用生成的稳定标识，最长 64 字节，
-            只参与同优先级组内的路由排列。同一讨论的追问、工具步骤和重试应复用此标识，
-            让上游有机会复用已经处理过的前缀。服务端按账号散列标识，仅在代理内使用。
-            标识缺失、空白或超长时按账号和首条用户消息分配路由，没有可用的首条用户
-            消息时按权重随机排列。
+            同一讨论的追问、工具步骤和重试应复用此标识。服务端按账号散列，供同优先级
+            组内的路由排列和支持缓存亲和的来源使用。
+            知新标识无效时，依次检查 `x-opencode-session`、`x-session-affinity`、
+            `x-session-id`、`x-deepseek-harness-session-id`、`x-opencode-session-id`
+            和请求体的 `prompt_cache_key`，第三方标识最长 128 字节。没有有效标识时，
+            由账号和首条用户消息分配路由，没有可用的首条用户消息时按权重随机排列。
           schema: { type: string, maxLength: 64 }
       requestBody:
         required: true

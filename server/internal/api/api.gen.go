@@ -1659,10 +1659,12 @@ type PostV1LlmResponsesParams struct {
 	XZhixinRoundBudgetMs *int64 `json:"X-Zhixin-Round-Budget-Ms,omitempty"`
 
 	// XZhixinSessionId 客户端为一条讨论或同一次批量模型调用生成的稳定标识，最长 64 字节，
-	// 只参与同优先级组内的路由排列。同一讨论的追问、工具步骤和重试应复用此标识，
-	// 让上游有机会复用已经处理过的前缀。服务端按账号散列标识，仅在代理内使用。
-	// 标识缺失、空白或超长时按账号和首条用户消息分配路由，没有可用的首条用户
-	// 消息时按权重随机排列。
+	// 同一讨论的追问、工具步骤和重试应复用此标识。服务端按账号散列，供同优先级
+	// 组内的路由排列和支持缓存亲和的来源使用。
+	// 知新标识无效时，依次检查 `x-opencode-session`、`x-session-affinity`、
+	// `x-session-id`、`x-deepseek-harness-session-id`、`x-opencode-session-id`
+	// 和请求体的 `prompt_cache_key`，第三方标识最长 128 字节。没有有效标识时，
+	// 由账号和首条用户消息分配路由，没有可用的首条用户消息时按权重随机排列。
 	XZhixinSessionId *string `json:"X-Zhixin-Session-Id,omitempty"`
 }
 

@@ -88,21 +88,21 @@ func TestSessionOrderFollowsWeights(t *testing.T) {
 // 讨论稳定，换账号、空白或超长标识都不参与会话分配。
 func TestSessionKeyScopesAccount(t *testing.T) {
 	id := "discussion-1"
-	if sessionKey("u1", &id) != sessionKey("u1", &id) {
+	if sessionKey("u1", &id, maxSessionIDBytes) != sessionKey("u1", &id, maxSessionIDBytes) {
 		t.Fatal("同一账号与同一讨论应得到同一个键")
 	}
-	if sessionKey("u1", &id) == sessionKey("u2", &id) {
+	if sessionKey("u1", &id, maxSessionIDBytes) == sessionKey("u2", &id, maxSessionIDBytes) {
 		t.Fatal("不同账号的同一讨论标识不应共用分配")
 	}
-	if sessionKey("u1", nil) != "" {
+	if sessionKey("u1", nil, maxSessionIDBytes) != "" {
 		t.Fatal("没有标识时应返回空键")
 	}
 	blank := "  "
-	if sessionKey("u1", &blank) != "" {
+	if sessionKey("u1", &blank, maxSessionIDBytes) != "" {
 		t.Fatal("空白标识应按没有处理")
 	}
 	long := strings.Repeat("x", maxSessionIDBytes+1)
-	if sessionKey("u1", &long) != "" {
+	if sessionKey("u1", &long, maxSessionIDBytes) != "" {
 		t.Fatal("超长标识应按没有处理")
 	}
 }
@@ -110,24 +110,24 @@ func TestSessionKeyScopesAccount(t *testing.T) {
 func TestRoutingSessionKeyFallsBackToFirstUserMessage(t *testing.T) {
 	initial := []byte(`[{"role":"developer","content":"规则"},{"role":"user","content":[{"type":"input_text","text":"第一问"}]}]`)
 	followup := []byte(`[{"role":"developer","content":"更新后的规则"},{"role":"user","content":[ { "type":"input_text", "text":"第一问" } ]},{"role":"assistant","content":"上次回答"},{"role":"user","content":"追问"}]`)
-	key := routingSessionKey("u1", nil, initial)
-	if key == "" || routingSessionKey("u1", nil, followup) != key {
+	key := routingSessionKey("u1", nil, nil, nil, initial)
+	if key == "" || routingSessionKey("u1", nil, nil, nil, followup) != key {
 		t.Fatal("追加消息、更新开发者指令或改变 JSON 空白时应复用首条用户消息的调度键")
 	}
 	blank, long := "  ", strings.Repeat("x", maxSessionIDBytes+1)
 	for _, id := range []*string{&blank, &long} {
-		if routingSessionKey("u1", id, initial) != key {
+		if routingSessionKey("u1", id, nil, nil, initial) != key {
 			t.Fatal("无效标识应按首条用户消息调度")
 		}
 	}
 	explicit := "discussion-7"
-	if routingSessionKey("u1", &explicit, initial) != sessionKey("u1", &explicit) {
+	if routingSessionKey("u1", &explicit, nil, nil, initial) != sessionKey("u1", &explicit, maxSessionIDBytes) {
 		t.Fatal("显式讨论标识应优先")
 	}
-	if routingSessionKey("u2", nil, initial) == key {
+	if routingSessionKey("u2", nil, nil, nil, initial) == key {
 		t.Fatal("不同账号的相同消息不应共用调度键")
 	}
-	if other := routingSessionKey("u1", nil, []byte(`[{"role":"user","content":"另一条讨论"}]`)); other == "" || other == key {
+	if other := routingSessionKey("u1", nil, nil, nil, []byte(`[{"role":"user","content":"另一条讨论"}]`)); other == "" || other == key {
 		t.Fatal("首条消息不同应得到不同的键")
 	}
 	for _, input := range []string{
@@ -136,7 +136,7 @@ func TestRoutingSessionKeyFallsBackToFirstUserMessage(t *testing.T) {
 		`[{"role":"user","content":"   "}]`,
 		`[{"role":"user","content":[]}]`,
 	} {
-		if routingSessionKey("u1", nil, []byte(input)) != "" {
+		if routingSessionKey("u1", nil, nil, nil, []byte(input)) != "" {
 			t.Fatalf("没有可用首条用户消息时应保持随机路由：%s", input)
 		}
 	}

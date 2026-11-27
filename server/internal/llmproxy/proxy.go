@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -396,7 +397,6 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 	if !allowFields(w, r, fields, lenient, chatFields, clientHintFields) {
 		return
 	}
-	stripClientHints(fields)
 	if raw, ok := fields["input"]; !ok || !isJSONArray(raw) {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "input must be a list of input items")
 		return
@@ -448,7 +448,8 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 		httpx.WriteProblem(w, r, http.StatusBadGateway, httpx.CodeUpstreamFailed, capabilityDetail(need))
 		return
 	}
-	session := routingSessionKey(userID, opts.SessionID, fields["input"])
+	session := routingSessionKey(userID, opts.SessionID, r.Header, fields["prompt_cache_key"], fields["input"])
+	stripClientHints(fields)
 	plan := attemptPlan{
 		model:      model,
 		session:    session,
@@ -533,27 +534,43 @@ func writeRoundExpired(w http.ResponseWriter, r *http.Request) {
 // 不让它影响路由选择，也不写进日志。
 const maxSessionIDBytes = 64
 
-// sessionKey 把账号与客户端给的讨论标识收成一个只在代理内使用的调度键：同一
-// 账号的同一讨论永远得到同一个键，换账号不会共享；键是散列值，日志与上游都
-// 看不到原标识。没有有效标识时返回空串，由调用方决定如何回退。
-func sessionKey(userID string, raw *string) string {
+// 第三方会话标识可以带前缀，例如 OpenCode 的 ses_ 加 64 位十六进制字符。
+const maxClientSessionIDBytes = 128
+
+// sessionKey 按账号散列讨论标识，供知新调度与来源的缓存亲和使用。
+func sessionKey(userID string, raw *string, maxBytes int) string {
 	if raw == nil {
 		return ""
 	}
 	id := strings.TrimSpace(*raw)
-	if id == "" || len(id) > maxSessionIDBytes {
+	if id == "" || len(id) > maxBytes {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(userID + "\x00" + id))
 	return hex.EncodeToString(sum[:16])
 }
 
-// routingSessionKey 优先使用显式标识。缺省时，同账号中保留了首条用户消息的
-// 追问仍可复用路由，追加消息及变动的 instructions 不影响这个选择。
-func routingSessionKey(userID string, explicit *string, input json.RawMessage) string {
-	if key := sessionKey(userID, explicit); key != "" {
+// routingSessionKey 依次取知新标识、第三方会话头、缓存键和首条用户消息。
+func routingSessionKey(userID string, explicit *string, headers http.Header, cacheKey, input json.RawMessage) string {
+	if key := sessionKey(userID, explicit, maxSessionIDBytes); key != "" {
 		return key
 	}
+	for _, name := range []string{
+		"X-OpenCode-Session", "X-Session-Affinity", "X-Session-Id",
+		"X-DeepSeek-Harness-Session-Id", "X-OpenCode-Session-Id",
+	} {
+		id := headers.Get(name)
+		if key := sessionKey(userID, &id, maxClientSessionIDBytes); key != "" {
+			return key
+		}
+	}
+	var id string
+	if len(cacheKey) > 0 && json.Unmarshal(cacheKey, &id) == nil {
+		if key := sessionKey(userID, &id, maxClientSessionIDBytes); key != "" {
+			return key
+		}
+	}
+	// 缺少标识时，只要保留首条用户消息，追加消息和变动的 instructions 都不影响调度。
 	decoder := json.NewDecoder(bytes.NewReader(input))
 	if start, err := decoder.Token(); err != nil || start != json.Delim('[') {
 		return ""
@@ -721,12 +738,8 @@ var chatFields = map[string]bool{
 	"reasoning": true, "text": true, "store": true,
 }
 
-// clientHintFields 是第三方 Responses 客户端常见、服务端接受但不转发的字段。
-// 缓存亲和、缓存保留与服务档位由服务端与来源决定，转发给不认识这些字段的来源
-// 只会让整次请求被拒；`include` 只要求上游多返回推理内容，知新的客户端不保存
-// 推理条目，当前来源默认就会返回。DeepSeek Harness 一类的工具每次请求都带
-// `prompt_cache_key`，开启思考时再带 `include`，按白名单回 400 会让接入密钥在
-// 这些工具里完全不可用（ADR-0063）。
+// clientHintFields 是第三方 Responses 客户端常见、接受但不原样转发的字段。
+// prompt_cache_key 参与会话调度，其他提示字段由服务端与来源决定。
 var clientHintFields = map[string]bool{
 	"prompt_cache_key": true, "prompt_cache_retention": true, "prompt_cache_options": true,
 	"service_tier": true, "include": true,
@@ -796,9 +809,9 @@ func retryable(status int) bool {
 }
 
 // withModel 返回转发给来源的请求体：model 换成来源侧名字，`store` 固定写成
-// false 并随请求带上，其余字段按原始字节保留。`store` 由服务端决定而不是
-// 删掉，因为 Responses 接口在缺少该字段时默认在上游保存响应。
-func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, error) {
+// false，并按来源写入服务端生成的缓存键。其余字段按原始值保留。
+// Responses 接口在缺少 `store` 字段时默认在上游保存响应。
+func withModel(fields map[string]json.RawMessage, upstream, cacheKey string) ([]byte, error) {
 	out := make(map[string]json.RawMessage, len(fields)+1)
 	for k, v := range fields {
 		out[k] = v
@@ -809,6 +822,9 @@ func withModel(fields map[string]json.RawMessage, upstream string) ([]byte, erro
 	}
 	out["model"] = name
 	out["store"] = json.RawMessage("false")
+	if cacheKey != "" {
+		out["prompt_cache_key"], _ = json.Marshal(cacheKey)
+	}
 	return json.Marshal(out)
 }
 
@@ -843,7 +859,11 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		if !deadline.IsZero() && !p.now().Before(deadline) {
 			return reply, context.DeadlineExceeded
 		}
-		body, err := withModel(fields, rt.UpstreamModel)
+		var cacheKey string
+		if endpoint, err := url.Parse(rt.Provider.BaseURL); err == nil && strings.EqualFold(endpoint.Hostname(), "api.commandcode.ai") {
+			cacheKey = plan.session
+		}
+		body, err := withModel(fields, rt.UpstreamModel, cacheKey)
 		if err != nil {
 			return reply, err
 		}
@@ -1077,13 +1097,6 @@ func (p *Proxy) firstOutputBudget(plan *attemptPlan, index int, deadline time.Ti
 // 以 /v1 结尾；管理员在后台配置来源时写的就是这个结尾。
 const upstreamResponsesPath = "/responses"
 
-// isOpenCodeSource 报告这个来源是不是 OpenCode 的网关。它的 Go 通道要求同一条
-// 会话带稳定的 `x-opencode-session`，缺了按 `MissingSessionID` 回 400；管理员在
-// 后台写的是 `https://opencode.ai/inference/go/v1` 这类地址，按主机名判断即可。
-func isOpenCodeSource(baseURL string) bool {
-	return strings.Contains(strings.ToLower(baseURL), "opencode.ai")
-}
-
 // attempt 向一个来源发一次请求。eventStream 表示这是等待流式事件的聊天请求，
 // 请求带上 Accept: text/event-stream；headerTimeout 大于 0 时，响应头必须在这段
 // 时间内到达，否则尝试下一条路由。非流式聊天要等整段回答生成完才有响应头，传 0。
@@ -1109,7 +1122,8 @@ func (p *Proxy) attempt(ctx context.Context, prov *liveProvider, path string, bo
 	if eventStream {
 		req.Header.Set("Accept", "text/event-stream")
 	}
-	if isOpenCodeSource(prov.BaseURL) {
+	host := strings.ToLower(req.URL.Hostname())
+	if path == upstreamResponsesPath && (host == "opencode.ai" || strings.HasSuffix(host, ".opencode.ai")) {
 		if session == "" {
 			// 后台自测与探活没有讨论标识，用固定值即可：这个头只要求同一个会话内
 			// 稳定，否则网关按缺少会话标识拒绝整次请求。
