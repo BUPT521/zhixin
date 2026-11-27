@@ -258,7 +258,10 @@ type LLMConfig struct {
 	StreamIdleTimeout time.Duration
 	// StreamTotalTimeout 是一次流式响应的总时限。
 	StreamTotalTimeout time.Duration
-	// EmbeddingBillingPermille is the billed share of raw embedding tokens, in thousandths.
+	// EmbeddingBillingPermille is the billed tokens per thousand raw embedding
+	// tokens. The default 2500 aligns the two kinds by cost: Bailian's real-time
+	// input price is 0.50 CNY per million raw tokens and the channel price for
+	// chat is 0.20 CNY per million billed tokens.
 	EmbeddingBillingPermille int64
 	// EmbeddingMaxInputs caps the number of inputs in one embeddings request.
 	EmbeddingMaxInputs int
@@ -420,7 +423,7 @@ func Load(getenv func(string) string) (Config, error) {
 			MaxResponseBytes:          num("ZHIXIN_LLM_MAX_RESPONSE_BYTES", "33554432"),
 			StreamIdleTimeout:         dur("ZHIXIN_LLM_STREAM_IDLE_TIMEOUT", "90s"),
 			StreamTotalTimeout:        dur("ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT", "30m"),
-			EmbeddingBillingPermille:  num("ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE", "200"),
+			EmbeddingBillingPermille:  num("ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE", "2500"),
 			EmbeddingMaxInputs:        int(num("ZHIXIN_LLM_EMBEDDING_MAX_INPUTS", "256")),
 			EmbeddingCacheBytes:       num("ZHIXIN_LLM_EMBEDDING_CACHE_BYTES", "1073741824"),
 			MaxAttempts:               int(num("ZHIXIN_LLM_MAX_ATTEMPTS", "3")),

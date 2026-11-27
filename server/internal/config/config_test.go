@@ -313,7 +313,7 @@ func TestLoadModelRoutingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLM.EmbeddingBillingPermille != 200 || cfg.LLM.EmbeddingMaxInputs != 256 || cfg.LLM.MaxAttempts != 3 || cfg.LLM.HeaderTimeout != time.Minute {
+	if cfg.LLM.EmbeddingBillingPermille != 2500 || cfg.LLM.EmbeddingMaxInputs != 256 || cfg.LLM.MaxAttempts != 3 || cfg.LLM.HeaderTimeout != time.Minute {
 		t.Fatalf("unexpected routing defaults: %+v", cfg.LLM)
 	}
 	if cfg.AdminToken != "" || cfg.SecretKey != nil {

@@ -1338,6 +1338,7 @@ class _AccountPageState extends State<AccountPage> {
                   modelUsageText(
                     chatTokens: quota.chatUsedTokens,
                     embeddingTokens: quota.embeddingUsedTokens,
+                    tokensPerPoint: quota.tokensPerPoint,
                   ),
                   style: theme.text.bodyMedium,
                 ),

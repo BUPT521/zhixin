@@ -1,11 +1,19 @@
 import 'format.dart';
 
-/// 分用途列出已结算用量，使用同一计费单位，避免各自折成整积分后相加。
+/// 分用途列出已结算用量。两类都折成积分并保留一位小数，避免各自取整之后与
+/// 合计差一分；旧版服务端不返回折算比例时退回计费 token。
 String modelUsageText({
   required int chatTokens,
   required int embeddingTokens,
-}) =>
-    '聊天 ${groupDigits(chatTokens)} · 嵌入 ${groupDigits(embeddingTokens)} 计费 token';
+  int? tokensPerPoint,
+}) {
+  final ratio = tokensPerPoint;
+  if (ratio == null || ratio <= 0) {
+    return '聊天 ${groupDigits(chatTokens)} · 嵌入 ${groupDigits(embeddingTokens)} 计费 token';
+  }
+  String points(int tokens) => (tokens / ratio).toStringAsFixed(1);
+  return '聊天 ${points(chatTokens)} 分 · 嵌入 ${points(embeddingTokens)} 分';
+}
 
 /// 购买积分的当日视图：今天已经从积分扣了多少、余额副本里还剩多少。
 ///

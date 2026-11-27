@@ -223,7 +223,7 @@ server/
 
 账号没有任何一种已验证登录方式时，聊天与嵌入请求均返回 403 `contact_unverified`，这个检查默认启用，开发联调时可通过 `ZHIXIN_LLM_REQUIRE_VERIFIED_CONTACT=0` 关闭。每个账号同时最多 `ZHIXIN_LLM_CONCURRENT_PER_USER` 个托管请求，超出的请求在读取请求体之前返回 429。整个实例同时在途的请求还共用一份 `ZHIXIN_LLM_MAX_INSTANCE_BYTES` 的字节预算：请求体按声明长度的两倍（长度未知时按请求体上限）、非流式响应与嵌入请求按各自的上限在读进内存之前预留，占不到时同样回 429，实例内存因此不随账号数量上涨。聊天与检索查询按前台请求处理，材料导入、索引重建与补算按后台批次处理：客户端在嵌入请求上用 `X-Zhixin-Workload: batch` 标明后台批次，缺省与 `query` 都按前台处理。每个账号的后台请求最多占用并发上限减去 `ZHIXIN_LLM_FOREGROUND_RESERVED` 的名额、且至少保留一个，实例字节预算里后台批次最多占 `ZHIXIN_LLM_BACKGROUND_INSTANCE_PERCENT`，其余留给前台；占不到容量时后台批次同样回 429，由客户端保留已完成的批次并稍后重试，前台请求因此不会被导入挤掉。非流式响应超过 `ZHIXIN_LLM_MAX_RESPONSE_BYTES` 时按无效响应处理，流式响应的空闲时限与总时限分别由 `ZHIXIN_LLM_STREAM_IDLE_TIMEOUT` 与 `ZHIXIN_LLM_STREAM_TOTAL_TIMEOUT` 决定，两者都不超过本轮剩余预算，响应开始转发后，超时会中断当前来源并结束响应。账号的共享额度与实例当日总预算 `ZHIXIN_LLM_INSTANCE_DAILY_TOKENS` 任一用完都返回 429 `quota_exceeded`，响应里的 `extra.reason` 说明是账号免费额度与积分都用完（`account`）、积分不够这一次（`points`）、实例预算用完（`instance`），还是余额副本缺失或过期、服务端刚排了一次查询（`syncing`），客户端据此给购买入口或只说稍后重试（[ADR-0071](../docs/adr/0071-核销只读已结算用量与额度用完的原因.md)、[ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)）。实例预算读的是 `llm_instance_usage` 里按自然日记的账本，只累计免费额度内的用量，超出免费额度、由积分承担的部分不计入，付费用量因此不会占掉给免费额度兜底的预算（[ADR-0070](../docs/adr/0070-额度预留与失败结算口径.md)）。删号与清空云端数据都不减少这本账，提供方已经计费的部分因此不会重新变成可用额度。最后一次上游尝试返回 429 时，代理按 429 `rate_limited` 返回并原样转出上游的 `Retry-After`，客户端据此提示稍后重试；其余上游拒绝仍按 `upstream_failed` 处理，两者都不带上游响应正文。
 
-聊天与嵌入共用按账号计算的每日免费额度，并按自然日、用途与接入密钥分开记录到 `llm_usage`，因此两类请求共同占用额度，后台仍能核对各自的用量。聊天保持 [ADR-0066](../docs/adr/0066-额度按缓存命中折算.md) 的权重，嵌入按 `ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE` 折算，上游没有返回用量时按输入估算；额度判定计入已结算量和在途预留，核销与用量展示只读已结算量，见 [ADR-0084](../docs/adr/0084-聊天与嵌入共用积分.md)。当天免费部分另记在 `llm_instance_usage`，与账号用量在同一个事务更新。管理员可以在账号管理页调整一份共享额度，覆盖值保存在 `llm_quota.daily_tokens`，默认取 `ZHIXIN_LLM_DAILY_TOKENS`；改动从下一次请求生效，当天调低额度可能使当天已结算用量超出新上限并进入核销，因此额度调整宜在自然日切换后进行。`GET /v1/llm/quota` 返回共享额度、已结算用量合计和其中的嵌入用量，开通收款后也返回已核销与可用积分；余额副本缺失时可用积分留空，见 [ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)。
+聊天与嵌入共用按账号计算的每日免费额度，并按自然日、用途与接入密钥分开记录到 `llm_usage`，因此两类请求共同占用额度，后台仍能核对各自的用量。聊天保持 [ADR-0066](../docs/adr/0066-额度按缓存命中折算.md) 的权重，嵌入按 `ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE` 折算（默认 2500，即每千个原始 token 记 2,500 个计费 token，按成本与聊天对齐），上游没有返回用量时按输入估算；额度判定计入已结算量和在途预留，核销与用量展示只读已结算量，见 [ADR-0084](../docs/adr/0084-聊天与嵌入共用积分.md)。当天免费部分另记在 `llm_instance_usage`，与账号用量在同一个事务更新。管理员可以在账号管理页调整一份共享额度，覆盖值保存在 `llm_quota.daily_tokens`，默认取 `ZHIXIN_LLM_DAILY_TOKENS`；改动从下一次请求生效，当天调低额度可能使当天已结算用量超出新上限并进入核销，因此额度调整宜在自然日切换后进行。`GET /v1/llm/quota` 返回共享额度、已结算用量合计和其中的嵌入用量，开通收款后也返回已核销与可用积分；余额副本缺失时可用积分留空，见 [ADR-0073](../docs/adr/0073-余额副本的快照、刷新与放行原因.md)。
 
 ```sql
 -- 调高或新建一个账号的额度；只调一类时另一列写 NULL
@@ -469,7 +469,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_REGISTER_GLOBAL_BURST` | `10` | 注册实例级上限的桶容量 |
 | `ZHIXIN_UNVERIFIED_KEEP_DAYS` | `7` | 没有任何已验证登录方式的账号保留天数，超过之后由每日清理删除，释放联系方式与账号行 |
 | `ZHIXIN_LLM_DAILY_TOKENS` | `400000` | 聊天与嵌入共用的账号每日免费计费 token。账号未设置覆盖值时使用这个值，默认折合 40 积分 |
-| `ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE` | `200` | 每千个原始嵌入 token 折成多少个计费 token，允许 1 到 10000，按次向上取整 |
+| `ZHIXIN_LLM_EMBEDDING_BILLING_PERMILLE` | `2500` | 每千个原始嵌入 token 折成多少个计费 token，允许 1 到 10000，按次向上取整；默认按成本折算：百炼实时输入价每百万 0.50 元，聊天渠道价每百万计费 token 0.20 元，2.5 倍之后两类请求每个计费 token 的成本相同 |
 | `ZHIXIN_LLM_MAX_REQUEST_BYTES` | `8388608` | 代理请求体上限，图片以 base64 内联 |
 | `ZHIXIN_LLM_MAX_INSTANCE_BYTES` | `536870912` | 整个实例同时在途的托管请求可占用的内存，按字节计；输出上限放大到 32768 token 之后从 256 MiB 提到 512 MiB（[ADR-0055](../docs/adr/0055-模型调用协议与上限统一.md)） |
 | `ZHIXIN_LLM_EMBEDDING_MAX_INPUTS` | `256` | 一次嵌入请求最多的输入条数，查找接口的 `hashes` 上限相同 |

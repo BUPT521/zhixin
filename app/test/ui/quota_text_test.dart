@@ -2,7 +2,18 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ui/quota_text.dart';
 
 void main() {
-  test('分开显示两种模型的已结算计费量', () {
+  test('分开显示两种模型的已结算积分', () {
+    expect(
+      modelUsageText(
+        chatTokens: 12345,
+        embeddingTokens: 6789,
+        tokensPerPoint: 10000,
+      ),
+      '聊天 1.2 分 · 嵌入 0.7 分',
+    );
+  });
+
+  test('旧版服务端没有折算比例时退回计费 token', () {
     expect(
       modelUsageText(chatTokens: 12345, embeddingTokens: 6789),
       '聊天 12,345 · 嵌入 6,789 计费 token',
