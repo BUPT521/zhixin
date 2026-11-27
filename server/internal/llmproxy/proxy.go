@@ -514,7 +514,7 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 		result.clientCanceled = true
 	case guard.fromBudget && guard.expired.Load():
 		// 本轮预算在服务端这一侧用完：不是来源的故障，按取消计，不增加失败数。
-		outcome = healthOutcome{reason: "本轮预算用完"}
+		outcome = healthOutcome{reason: healthReasonRoundBudget}
 		result.clientCanceled = true
 	case errors.Is(streamErr, errResponseTooLarge):
 		// 实例的响应字节上限到了：来源已经把这段回答生成并转出，是代理自己停下
@@ -857,7 +857,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				// 本轮总时限的计时器与首字时限的计时器可能同时到点，谁先触发都按
 				// 预算用完结束，不算来源故障，也不让客户端收到 candidates_exhausted。
 				p.finishAttempt(plan, attempt, attemptResult{clientCanceled: true}, 0,
-					healthOutcome{reason: "本轮预算用完", sourceReached: true})
+					healthOutcome{reason: healthReasonRoundBudget, sourceReached: true})
 				return reply, context.DeadlineExceeded
 			}
 			// 连接都没有建立时上游不可能计费，记 0；已经连上之后超时或被取消
@@ -938,7 +938,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				// 首字时限来自本轮预算时，是这一轮没有时间了，不算来源故障。
 				if !deadline.IsZero() && !p.now().Before(deadline) {
 					p.finishAttempt(plan, attempt, attemptResult{clientCanceled: true}, reply.status,
-						healthOutcome{reason: "本轮预算用完", sourceReached: true})
+						healthOutcome{reason: healthReasonRoundBudget, sourceReached: true})
 					return reply, context.DeadlineExceeded
 				}
 				p.finishAttempt(plan, attempt, attemptResult{}, reply.status,
@@ -950,7 +950,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				resp.Body.Close()
 				if ctx.Err() != nil {
 					p.finishAttempt(plan, attempt, attemptResult{}, reply.status,
-						healthOutcome{reason: "请求已取消或超时"})
+						healthOutcome{reason: healthReasonCanceled})
 					return reply, ctx.Err()
 				}
 				reason := "首个有效输出之前中断"
@@ -1002,7 +1002,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			outcome := healthOutcome{reason: "聊天响应不可用", scope: routeFailure, sourceReached: true}
 			if ctx.Err() != nil {
 				p.finishAttempt(plan, attempt, attemptResult{usage: amount}, reply.status,
-					healthOutcome{reason: "请求已取消或超时"})
+					healthOutcome{reason: healthReasonCanceled})
 				return reply, ctx.Err()
 			}
 			p.finishAttempt(plan, attempt, attemptResult{usage: amount}, reply.status, outcome)
