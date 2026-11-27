@@ -363,7 +363,6 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 		return res, true
 	}
 	res.usage.success = true
-	res.usage.unknown = res.usage.usage.Total() <= 0
 	res.body, res.dimensions, res.vectors = body, dims, merged
 	return res, false
 }

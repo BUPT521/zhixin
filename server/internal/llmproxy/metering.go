@@ -12,9 +12,8 @@ import (
 
 type attemptResult struct {
 	// usage 是来源报告的原始用量，额度结算、账号统计与路由统计都从这里取数。
-	// unknown 表示这次没有拿到 usage（请求失败、来源不报用量），结算改用估算。
-	usage   Usage
-	unknown bool
+	// 没有来源用量时它为零值，结算改按估算；是否按 0 结算由 unbilled 决定。
+	usage Usage
 	// estimated 是没有拿到上游用量的部分按输入估算的原始 token 数，只进后台
 	// 用量统计的估算列，不参与扣减：扣减只认 usage，拿不到就记 0。结算时由
 	// billedTokens 补齐；嵌入按批次已经算过一部分的沿用那一份。
