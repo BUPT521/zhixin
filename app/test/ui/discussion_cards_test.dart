@@ -8,6 +8,7 @@ import 'package:zhixin/application/memory_view.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 import 'package:zhixin/domain/models/memory.dart';
 import 'package:zhixin/ui/discussion_cards.dart';
+import 'package:zhixin/ui/workspace_widgets.dart';
 
 MemoryItemView memory({
   String content = '讲解概率时先用具体例子。',
@@ -197,7 +198,7 @@ void main() {
     expect(find.text('改动回执'), findsOneWidget);
     expect(find.text('已添加记忆：语义 · 讲解先用例子'), findsOneWidget);
     expect(find.text('已创建学习事项：练习条件概率'), findsOneWidget);
-    expect(find.byType(Divider), findsOneWidget);
+    expect(find.byType(CardDivider), findsOneWidget);
     expect(find.text('撤销'), findsNWidgets(2));
 
     await tester.tap(find.text('撤销').at(1));

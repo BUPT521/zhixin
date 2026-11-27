@@ -133,10 +133,14 @@ class DiscussionChatState extends State<DiscussionChat> {
   late final DiscussionCardActions _cards = DiscussionCardActions(
     stream: _reply,
     onChanged: _onCardsChanged,
-    showNotice: (notice) => setState(() => _notice = notice),
+    showNotice: (notice) => setState(() => _failure = notice),
   );
 
-  String? _notice;
+  /// 失败说明：用错误样式，按状态带重试入口。
+  String? _failure;
+
+  /// 一次回答的收尾说明或图片保存说明：只说明发生了什么，不画错误样式。
+  String? _result;
 
   /// 用户消息已经落库、但这一轮没有保存回答；提示条据此给出重试入口。
   bool _retryableNotice = false;
@@ -346,7 +350,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       kept: '已经保存的消息没有改动',
       next: '可以点下面「重试」再读一次',
     );
-    setState(() => _notice = message);
+    setState(() => _failure = message);
   }
 
   /// 读取失败之后重新订阅这条讨论；已经显示的消息留到新结果到达。
@@ -355,7 +359,8 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (id == null) return;
     setState(() {
       _readFailed = false;
-      _notice = null;
+      _failure = null;
+      _result = null;
       _stream = _createStream();
     });
   }
@@ -405,7 +410,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       if (mounted) {
         setState(() {
           _loadingOlder = false;
-          _notice = describeFailure(
+          _failure = describeFailure(
             context,
             error,
             stack,
@@ -468,7 +473,8 @@ class DiscussionChatState extends State<DiscussionChat> {
     _reply.settle();
     setState(() {
       _draftMessages = messages;
-      _notice = notice;
+      _failure = null;
+      _result = notice;
       _retryableNotice = false;
     });
     if (followReply) _jumpToEnd();
@@ -491,7 +497,8 @@ class DiscussionChatState extends State<DiscussionChat> {
         retrying: retrying,
         afterMessageId: _messages.lastOrNull?.id ?? '',
       );
-      _notice = null;
+      _failure = null;
+      _result = null;
       _retryableNotice = false;
     });
     return cancel;
@@ -513,7 +520,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         _conversationId = fallbackConversationId;
         _stream = _createStream();
       }
-      _notice = reason;
+      _failure = reason;
       _retryableNotice = retryable;
     });
   }
@@ -615,7 +622,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (picks.isEmpty) return const [];
     final paths = await _attachments.persist(scope);
     if (paths.length < picks.length && mounted) {
-      setState(() => _notice = '图片保存失败，本次已改为发送文字。');
+      setState(() => _result = '图片保存失败，本次已改为发送文字。');
     }
     return paths;
   }
@@ -627,7 +634,10 @@ class DiscussionChatState extends State<DiscussionChat> {
   Future<void> _startAnswering() async {
     final id = _conversationId;
     if (id == null) return;
-    setState(() => _notice = null);
+    setState(() {
+      _failure = null;
+      _result = null;
+    });
     await _cards.startAnswering(context, id);
   }
 
@@ -648,7 +658,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     } catch (error, stack) {
       if (!mounted) return;
       setState(
-        () => _notice = describeFailure(
+        () => _failure = describeFailure(
           context,
           error,
           stack,
@@ -682,7 +692,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     } catch (error, stack) {
       if (!mounted) return;
       setState(
-        () => _notice = describeFailure(
+        () => _failure = describeFailure(
           context,
           error,
           stack,
@@ -704,7 +714,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final material = await scope.library.material.byId(materialId);
     if (!mounted) return;
     if (material == null) {
-      setState(() => _notice = '未找到这份材料');
+      setState(() => _failure = '未找到这份材料');
       return;
     }
     await showStudyPlanSetup(
@@ -780,7 +790,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     } catch (error, stack) {
       if (!mounted) return;
       setState(
-        () => _notice = describeFailure(
+        () => _failure = describeFailure(
           context,
           error,
           stack,
@@ -824,7 +834,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     );
     if (!mounted) return;
     if (result.notice != null) {
-      setState(() => _notice = result.notice);
+      setState(() => _failure = result.notice);
       return;
     }
     final configured = result.configured;
@@ -937,7 +947,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 发送后提示条已经显示同一句时不再重复；重新打开讨论时只在这里显示。
-          if (failureNotice != null && failureNotice != _notice)
+          if (failureNotice != null && failureNotice != (_failure ?? _result))
             Padding(
               padding: EdgeInsets.only(bottom: theme.space.tight),
               child: Text(failureNotice, style: theme.text.bodySmall),
@@ -1325,9 +1335,10 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
       for (final item in state._memoryItems) BuddyMemoryEntry(item),
       for (final suggestion in state._pending) BuddySuggestionEntry(suggestion),
       if (state._changes.isNotEmpty) BuddyChangesEntry(state._changes),
-      if (state._notice != null)
+      if (state._failure != null)
         BuddyNoticeEntry(
-          message: state._notice!,
+          message: state._failure!,
+          failed: true,
           actions: [
             // 读取失败时就地给重试入口，不再另弹一条同样的 toast。
             if (state._readFailed && !state._reply.streaming)
@@ -1349,6 +1360,8 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
               ),
           ],
         ),
+      if (state._result != null)
+        BuddyNoticeEntry(message: state._result!, failed: false),
     ];
   }
 

@@ -60,7 +60,16 @@ class _LearningPageState extends State<LearningPage> {
   String? _readError;
 
   bool _busy = false;
-  String? _notice;
+
+  /// 失败说明：用错误样式，按状态带恢复入口。
+  String? _failure;
+
+  /// 一次回答的收尾说明：写明保留了什么与下一步，不画错误样式。
+  String? _result;
+
+  /// 页面引导，例如提交前提示先写答案；只说明怎么做，不表示失败。
+  String? _hint;
+
   bool _started = false;
   bool _leaving = false;
 
@@ -186,7 +195,7 @@ class _LearningPageState extends State<LearningPage> {
       if (_view == null) {
         _readError = message;
       } else {
-        _notice = message;
+        _failure = message;
       }
     });
   }
@@ -329,7 +338,7 @@ class _LearningPageState extends State<LearningPage> {
     } catch (error, stack) {
       if (!mounted) return false;
       setState(
-        () => _notice = describeFailure(
+        () => _failure = describeFailure(
           context,
           error,
           stack,
@@ -354,7 +363,9 @@ class _LearningPageState extends State<LearningPage> {
     final service = app.chat.learning;
     setState(() {
       _busy = true;
-      _notice = null;
+      _failure = null;
+      _result = null;
+      _hint = null;
       _generating = true;
     });
     // 检查、提示与讲解都读已经保存的尝试，先把草稿落下再看题。
@@ -388,7 +399,7 @@ class _LearningPageState extends State<LearningPage> {
       if (!mounted) return;
       setState(() {
         _generating = false;
-        _notice = answerNoticeText(result.outcome);
+        _result = answerNoticeText(result.outcome);
       });
       if (!mounted) return;
       if (!result.fromModel &&
@@ -399,7 +410,7 @@ class _LearningPageState extends State<LearningPage> {
       if (!mounted) return;
       setState(() {
         _generating = false;
-        _notice = describeFailure(
+        _failure = describeFailure(
           context,
           error,
           stack,
@@ -433,7 +444,7 @@ class _LearningPageState extends State<LearningPage> {
         itemId: item.itemId,
       ),
       scope: 'learning',
-      showNotice: (notice) => setState(() => _notice = notice),
+      showNotice: (notice) => setState(() => _failure = notice),
     );
   }
 
@@ -449,7 +460,7 @@ class _LearningPageState extends State<LearningPage> {
         itemId: item.itemId,
       ),
       scope: 'learning',
-      showNotice: (notice) => setState(() => _notice = notice),
+      showNotice: (notice) => setState(() => _failure = notice),
     );
   }
 
@@ -460,7 +471,7 @@ class _LearningPageState extends State<LearningPage> {
       context: context,
       commitId: commitId,
       scope: 'learning',
-      showNotice: (notice) => setState(() => _notice = notice),
+      showNotice: (notice) => setState(() => _failure = notice),
     );
   }
 
@@ -492,7 +503,7 @@ class _LearningPageState extends State<LearningPage> {
     );
     if (!mounted) return;
     if (result.notice != null) {
-      setState(() => _notice = result.notice);
+      setState(() => _failure = result.notice);
       return;
     }
     final configured = result.configured;
@@ -511,7 +522,9 @@ class _LearningPageState extends State<LearningPage> {
     final service = AppScope.of(context).chat.learning;
     setState(() {
       _busy = true;
-      _notice = null;
+      _failure = null;
+      _result = null;
+      _hint = null;
     });
     try {
       await service.openAttempt(widget.questionId, independentRedo: true);
@@ -530,7 +543,7 @@ class _LearningPageState extends State<LearningPage> {
     } catch (error, stack) {
       if (!mounted) return;
       setState(
-        () => _notice = describeFailure(
+        () => _failure = describeFailure(
           context,
           error,
           stack,
@@ -549,13 +562,19 @@ class _LearningPageState extends State<LearningPage> {
     if (_busy) return;
     final answer = _answerDraft.text.trim();
     if (answer.isEmpty) {
-      setState(() => _notice = '先写下答案或关键步骤，草稿会留在记录里。');
+      setState(() {
+        _failure = null;
+        _result = null;
+        _hint = '先写下答案或关键步骤，草稿会留在记录里。';
+      });
       return;
     }
     final scope = AppScope.of(context);
     setState(() {
       _busy = true;
-      _notice = null;
+      _failure = null;
+      _result = null;
+      _hint = null;
     });
     try {
       final attempt = await scope.chat.learning.openAttempt(widget.questionId);
@@ -583,7 +602,7 @@ class _LearningPageState extends State<LearningPage> {
       await _saveDraft(notify: false);
       if (!mounted) return;
       setState(
-        () => _notice = describeFailure(
+        () => _failure = describeFailure(
           context,
           error,
           stack,
@@ -1160,7 +1179,7 @@ class _LearningPageState extends State<LearningPage> {
               ],
               if (attempt.submitted) ...[
                 SizedBox(height: theme.space.gap),
-                Divider(height: 1, color: theme.colors.outlineVariant),
+                const CardDivider(gap: 0),
                 Padding(
                   padding: EdgeInsets.only(top: theme.space.xs),
                   child: Text(
@@ -1215,7 +1234,7 @@ class _LearningPageState extends State<LearningPage> {
     } catch (error, stack) {
       if (!mounted) return;
       setState(
-        () => _notice = describeFailure(
+        () => _failure = describeFailure(
           context,
           error,
           stack,
@@ -1272,8 +1291,12 @@ class _LearningTimeline extends BuddyTimelineAdapter {
       failure: llmFailureFromName(help?.failureName),
       quotaReason: QuotaExhaustedReason.fromName(help?.quotaReason),
     );
+    // 失败、回答收尾与页面引导各自一格；回答收尾在没有本地提示时用保存的状态写。
+    final failure = state._failure;
     final notice =
-        state._notice ??
+        failure ??
+        state._result ??
+        state._hint ??
         savedAnswerNoticeText(saved, keptPartial: help?.fromModel == true);
     return [
       if (help != null || state._generating)
@@ -1286,6 +1309,7 @@ class _LearningTimeline extends BuddyTimelineAdapter {
       if (notice != null)
         BuddyNoticeEntry(
           message: notice,
+          failed: failure != null,
           actions: [
             if (mode != null && (retry || help?.fromModel == false))
               ModelRecoveryButtons(

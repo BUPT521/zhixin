@@ -178,12 +178,7 @@ class ChangeReceiptCard extends StatelessWidget {
       title: '改动回执',
       children: [
         for (final (index, change) in changes.indexed) ...[
-          if (index > 0)
-            Divider(
-              height: 1,
-              thickness: 1,
-              color: theme.colors.outlineVariant,
-            ),
+          if (index > 0) const CardDivider(gap: 0),
           Row(
             children: [
               Expanded(child: Text(change.text, style: theme.text.bodySmall)),
