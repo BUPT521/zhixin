@@ -7,8 +7,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../application/account_service.dart';
+import '../application/quota_purchase_controller.dart';
 import '../domain/models/quota_purchase.dart';
-import '../domain/rules/uuid_v7.dart';
 import 'format.dart';
 import 'theme.dart';
 import 'workspace_widgets.dart';
@@ -18,6 +18,8 @@ import 'workspace_widgets.dart';
 /// 客户端不参与定价，也不凭返回页放行：点购买只取一张购买链接交给支付宝，回到知新
 /// 之后重新查余额；扣减发生在服务端核销，见 ADR-0067。每次点击带一个幂等键，同一次
 /// 点击失败后的重试沿用原来的键，换一次点击换新键，避免重试时重复创单（ADR-0074）。
+/// 付款对账、刷新排队、幂等键与限流冷却在 [QuotaPurchaseController] 里，这里只留
+/// 渲染、生命周期与拉起支付宝（A30）。
 class QuotaPurchasePanel extends StatefulWidget {
   const QuotaPurchasePanel({
     required this.account,
@@ -42,48 +44,27 @@ class QuotaPurchasePanel extends StatefulWidget {
 
 class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     with WidgetsBindingObserver {
-  QuotaPurchaseOverview? _purchases;
-  bool _busy = false;
-  String? _notice;
-
-  /// 概览读取失败时保留上一次的数据，并在上方说明与给出重试，不把整段藏起来。
-  bool _loadFailed = false;
-  String? _loadError;
-
-  /// 已经打开购买页，等用户回到知新之后刷新余额。外部应用拉起时 launcher 立刻
-  /// 返回，付款是否完成只能靠回到前台这一个信号判断。
-  bool _awaitingReturn = false;
+  late final QuotaPurchaseController _purchase;
 
   /// 只有先进过后台、再回到前台才算“从支付宝回来”；启动与页面切换的 resumed
   /// 不刷新余额，避免每切一次页就多查一次。
   bool _paused = false;
 
-  /// 刷新途中又来了一个刷新请求（例如回到前台时上一次查询还没结束）：记下来，
-  /// 等当前这次结束之后再补一次，而不是丢掉。
-  bool _refreshQueued = false;
-
-  /// 回到前台查一次之后余额没有变化时安排的补查，离开页面时取消。
-  Timer? _resumeTimer;
-
-  /// 429 之后按钮要禁用到的时刻；定时器到点清空，界面随之恢复可点。
+  /// 冷却到点由控制器判断，这个定时器只负责在到点时通知它清掉。
   Timer? _cooldownTimer;
-
-  /// 同一次点击的幂等键：失败后重试沿用这里记下的键，换一次点击生成新键。
-  ({QuotaPurchaseOption option, String requestNo})? _pendingPurchase;
-
-  /// 购买链接已经取到但没能拉起支付宝时留下来，供“复制链接”与“重试打开”使用。
-  QuotaPurchaseLink? _failedOpenLink;
-
-  /// 本次打开的购买链接，用来判断回到前台时它是否还在有效期内。
-  QuotaPurchaseLink? _lastLink;
-
-  /// 已经付过款的购买链接编号：余额在打开它之后增加了，这张链接不再作为“继续上次
-  /// 购买”的入口，免得把用户带回一张已经支付过的页面（ADR-0074）。
-  String? _paidRequestNo;
 
   @override
   void initState() {
     super.initState();
+    _purchase = QuotaPurchaseController(
+      now: DateTime.now,
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+    );
+    _purchase.onResumeRefresh = () {
+      unawaited(_refreshBalance(quiet: true));
+    };
     WidgetsBinding.instance.addObserver(this);
     unawaited(_load());
   }
@@ -91,8 +72,8 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _resumeTimer?.cancel();
     _cooldownTimer?.cancel();
+    _purchase.dispose();
     super.dispose();
   }
 
@@ -105,8 +86,8 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     if (state != AppLifecycleState.resumed) return;
     final cameBack = _paused;
     _paused = false;
-    if (!cameBack || !_awaitingReturn) return;
-    _awaitingReturn = false;
+    if (!cameBack || !_purchase.awaitingReturn) return;
+    _purchase.setAwaitingReturn(false);
     unawaited(_refreshAfterReturn());
   }
 
@@ -114,23 +95,13 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     try {
       final purchases = await widget.account.quotaPurchases();
       if (!mounted) return;
-      setState(() {
-        _purchases = purchases;
-        _loadFailed = false;
-        _loadError = null;
-      });
+      _purchase.loaded(purchases);
     } on QuotaPurchaseFailure catch (error) {
       if (!mounted) return;
-      setState(() {
-        _loadFailed = true;
-        _loadError = _loadFailureText(error);
-      });
+      _purchase.loadFailedWith(_loadFailureText(error));
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _loadFailed = true;
-        _loadError = '暂时无法读取购买信息，请稍后重试。';
-      });
+      _purchase.loadFailedWith('暂时无法读取购买信息，请稍后重试。');
     }
   }
 
@@ -150,110 +121,71 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
   /// 回到前台之后先查一次余额；余额没有变化且链接还没过期时，再安排一次补查，
   /// 因为支付宝的到账通知可能比回到前台晚几秒。
   Future<void> _refreshAfterReturn() async {
-    final before = _purchases;
-    final link = _lastLink ?? _purchases?.latestPurchase;
+    final before = _purchase.purchases;
+    final link = _purchase.lastLink ?? before?.latestPurchase;
     final refreshed = await _refreshBalance(quiet: true);
     if (!mounted || !refreshed || before == null) return;
-    final after = _purchases;
+    final after = _purchase.purchases;
     if (after == null || after.balanceUnavailable) return;
     final changed = after.balancePoints != before.balancePoints;
     final expired = link != null && !link.expiresAt.isAfter(DateTime.now());
     if (changed || expired) return;
-    _resumeTimer?.cancel();
-    _resumeTimer = Timer(const Duration(seconds: 6), () {
-      if (mounted) unawaited(_refreshBalance(quiet: true));
-    });
+    _purchase.scheduleResumeRefresh();
   }
 
   /// 查一次余额；[quiet] 为真时是后台补查，不覆盖已有的说明。
   ///
   /// 正在刷新时把这次请求排队，当前一次结束后再补一次，不直接丢掉。
   Future<bool> _refreshBalance({bool quiet = false}) async {
-    if (_busy) {
-      _refreshQueued = true;
+    if (!_purchase.begin()) {
+      _purchase.queueRefresh();
       return false;
     }
+    if (!quiet) _purchase.setNotice(null);
     final epoch = widget.account.identityEpoch;
-    setState(() {
-      _busy = true;
-      if (!quiet) _notice = null;
-    });
     var refreshed = false;
     try {
       final balance = await widget.account.quotaBalance();
       if (!mounted || widget.account.identityEpoch != epoch) return false;
-      final purchases = _purchases;
-      final before = purchases == null || purchases.balanceUnavailable
-          ? null
-          : purchases.balancePoints;
       refreshed = true;
-      // 只有先前读到过余额、这次又变多了才算到账：先前读不到时没有对照，不能
-      // 直接说“已到账”。
-      final paid = before != null && balance.remaining > before;
-      setState(() {
-        if (purchases == null) return;
-        _purchases = QuotaPurchaseOverview(
-          balancePoints: balance.remaining,
-          tokensPerPoint: purchases.tokensPerPoint,
-          product: purchases.product,
-          latestPurchase: purchases.latestPurchase,
+      final outcome = _purchase.applyBalance(balance, quiet: quiet);
+      if (outcome.paid) {
+        _purchase.markLinkPaid(
+          _purchase.lastLink ?? _purchase.purchases?.latestPurchase,
         );
-        if (paid) {
-          // 增加的积分来自刚打开的那张购买链接：它已经付过款，不再作为继续购买的
-          // 入口，否则会重新打开一张已经支付过的页面。
-          _paidRequestNo =
-              _lastLink?.outRequestNo ?? purchases.latestPurchase?.outRequestNo;
-          _notice = '已到账，可用积分 ${balance.remaining} 分。';
-        } else if (before == null) {
-          _notice = '已刷新，可用积分 ${balance.remaining} 分。';
-        } else if (!quiet) {
-          _notice = '还没有查到新的积分，可以稍后再刷新一次。';
-        }
-      });
-      if (paid) await widget.onPaid();
+        await widget.onPaid();
+      }
     } on AccountSignedOut {
       if (mounted) {
-        _awaitingReturn = false;
-        setState(() => _notice = '登录状态已经变化，请重新登录之后再查询余额。');
+        _purchase.setAwaitingReturn(false);
+        _purchase.setNotice('登录状态已经变化，请重新登录之后再查询余额。');
       }
     } on QuotaPurchaseFailure catch (error) {
       if (!mounted) return false;
       final waited = error.retryAfter?.inSeconds;
-      setState(
-        () => _notice =
-            error.kind == QuotaPurchaseFailureKind.rateLimited && waited != null
+      _purchase.setNotice(
+        error.kind == QuotaPurchaseFailureKind.rateLimited && waited != null
             ? '余额查询过于频繁，请 $waited 秒后再试。'
             : '暂时无法查询余额，请稍后再试。',
       );
     } catch (_) {
-      if (mounted) setState(() => _notice = '暂时无法查询余额，请稍后再试。');
+      if (mounted) _purchase.setNotice('暂时无法查询余额，请稍后再试。');
     } finally {
-      if (mounted) setState(() => _busy = false);
-      _runQueuedRefresh();
+      // 忙的时候到来的一次刷新在这里补上，不直接丢掉。
+      if (_purchase.end()) unawaited(_refreshBalance(quiet: true));
     }
     return refreshed;
-  }
-
-  /// 忙的时候到来的一次刷新被记下来了：当前这次结束后补上，不直接丢掉。
-  void _runQueuedRefresh() {
-    if (!mounted || !_refreshQueued) return;
-    _refreshQueued = false;
-    unawaited(_refreshBalance(quiet: true));
   }
 
   /// 点一个档位：取一张新的购买链接并交给支付宝。
   ///
   /// [requestNo] 只由同一次点击失败后的重试传入；普通点击不传，这里生成新键。
   Future<void> _buy(QuotaPurchaseOption option, {String? requestNo}) async {
-    if (_busy || _cooldownTimer != null) return;
+    if (_purchase.busy || _purchase.cooling) return;
     final epoch = widget.account.identityEpoch;
-    final key = requestNo ?? newUuidV7();
-    setState(() {
-      _busy = true;
-      _notice = null;
-      _pendingPurchase = null;
-      _failedOpenLink = null;
-    });
+    final key = _purchase.requestNo(retryOf: requestNo);
+    _purchase.beginPurchase();
+    if (!_purchase.begin()) return;
     try {
       final link = await widget.account.quotaPurchaseLink(
         skuId: option.skuId,
@@ -264,7 +196,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
         _staleIdentity();
         return;
       }
-      _lastLink = link;
+      _purchase.rememberLastLink(link);
       await _openLink(link, epoch: epoch);
     } on AccountSignedOut {
       if (mounted) _staleIdentity();
@@ -277,13 +209,10 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
       _handlePurchaseProblem(error, option: option, requestNo: key);
     } catch (_) {
       if (!mounted) return;
-      setState(() {
-        _notice = '暂时无法获取购买链接，请稍后重试。';
-        _pendingPurchase = (option: option, requestNo: key);
-      });
+      _purchase.setNotice('暂时无法获取购买链接，请稍后重试。');
+      _purchase.rememberPendingPurchase(option, key);
     } finally {
-      if (mounted) setState(() => _busy = false);
-      _runQueuedRefresh();
+      if (_purchase.end()) unawaited(_refreshBalance(quiet: true));
     }
   }
 
@@ -297,10 +226,8 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     if (error.kind == QuotaPurchaseFailureKind.rateLimited) {
       final seconds = error.retryAfter?.inSeconds;
       _startCooldown(seconds ?? 30);
-      setState(
-        () => _notice = seconds == null
-            ? '请求过于频繁，请稍后再试。'
-            : '请求过于频繁，请 $seconds 秒后再试。',
+      _purchase.setNotice(
+        seconds == null ? '请求过于频繁，请稍后再试。' : '请求过于频繁，请 $seconds 秒后再试。',
       );
       return;
     }
@@ -317,19 +244,19 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
       QuotaPurchaseFailureKind.unavailable => '服务端暂时无法查询即刻收商品，请稍后再试。',
       _ => '暂时无法获取购买链接，请稍后重试。',
     };
-    setState(() {
-      _notice = text;
-      _pendingPurchase = transient
-          ? (option: option, requestNo: requestNo)
-          : null;
-    });
+    _purchase.setNotice(text);
+    if (transient) {
+      _purchase.rememberPendingPurchase(option, requestNo);
+    } else {
+      _purchase.clearPendingPurchase();
+    }
   }
 
   /// 用外部应用打开购买页；没能拉起支付宝时保留链接，供复制与重试打开使用。
   Future<void> _openLink(QuotaPurchaseLink link, {required int epoch}) async {
     final url = link.purchaseUrl.trim();
     if (url.isEmpty) {
-      setState(() => _notice = '服务端没有返回可以打开的购买页，请稍后重试。');
+      _purchase.setNotice('服务端没有返回可以打开的购买页，请稍后重试。');
       return;
     }
     var opened = false;
@@ -348,132 +275,105 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
       return;
     }
     if (opened) {
-      _awaitingReturn = true;
-      setState(() => _notice = '在支付宝里完成付款后回到知新，这里会重新查一次余额。');
+      _purchase.setAwaitingReturn(true);
+      _purchase.setNotice('在支付宝里完成付款后回到知新，这里会重新查一次余额。');
       return;
     }
-    setState(() {
-      _notice = '没能打开支付宝，确认已安装后重试。';
-      _failedOpenLink = link;
-    });
+    _purchase.setNotice('没能打开支付宝，确认已安装后重试。');
+    _purchase.rememberFailedOpenLink(link);
   }
 
   /// 打开上次没有过期的购买链接；打开之前先核对有效期，过期就重新读一次概览。
   /// 已经付过款的那一张不再提供，避免重新打开一张支付过的页面。
   Future<void> _openLatest() async {
-    if (_busy) return;
-    var purchases = _purchases;
-    if (purchases == null) return;
-    var latest = _latestLink(purchases);
+    if (_purchase.busy) return;
+    var latest = _purchase.latestLink();
     if (latest == null) {
-      if (purchases.latestPurchase?.outRequestNo == _paidRequestNo) {
-        setState(() => _notice = '上次的购买已经到账，不再重复打开同一张购买页。');
+      if (_purchase.purchases?.latestPurchase?.outRequestNo ==
+          _purchase.paidRequestNo) {
+        _purchase.setNotice('上次的购买已经到账，不再重复打开同一张购买页。');
         return;
       }
       await _load();
       if (!mounted) return;
-      purchases = _purchases;
-      latest = purchases == null ? null : _latestLink(purchases);
+      latest = _purchase.latestLink();
       if (latest == null) {
-        setState(() => _notice = '上次的购买链接已经过期，请重新选择档位购买。');
+        _purchase.setNotice('上次的购买链接已经过期，请重新选择档位购买。');
         return;
       }
     }
     final epoch = widget.account.identityEpoch;
     final link = latest;
-    setState(() {
-      _busy = true;
-      _notice = null;
-    });
+    if (!_purchase.begin()) return;
     try {
-      _lastLink = link;
+      _purchase.rememberLastLink(link);
       await _openLink(link, epoch: epoch);
     } finally {
-      if (mounted) setState(() => _busy = false);
-      _runQueuedRefresh();
+      if (_purchase.end()) unawaited(_refreshBalance(quiet: true));
     }
   }
 
   Future<void> _reopenLink(QuotaPurchaseLink link) async {
-    if (_busy) return;
+    if (_purchase.busy) return;
     final epoch = widget.account.identityEpoch;
-    setState(() {
-      _busy = true;
-      _notice = null;
-    });
+    if (!_purchase.begin()) return;
     try {
       await _openLink(link, epoch: epoch);
     } finally {
-      if (mounted) setState(() => _busy = false);
-      _runQueuedRefresh();
+      if (_purchase.end()) unawaited(_refreshBalance(quiet: true));
     }
   }
 
   /// 没能打开支付宝时把链接复制出去，用户可以自己粘到浏览器里打开。
   Future<void> _copyLink() async {
-    final link = _failedOpenLink;
+    final link = _purchase.failedOpenLink;
     if (link == null) return;
     try {
       await Clipboard.setData(ClipboardData(text: link.purchaseUrl));
-      if (mounted) setState(() => _notice = '购买链接已复制，可以粘贴到浏览器里打开。');
+      _purchase.setNotice('购买链接已复制，可以粘贴到浏览器里打开。');
     } catch (_) {
-      if (mounted) setState(() => _notice = '复制购买链接失败，可以稍后再试。');
+      _purchase.setNotice('复制购买链接失败，可以稍后再试。');
     }
   }
 
   /// 429 之后禁用按钮到服务端给的等待时间；没有给出秒数时按 30 秒处理。
   void _startCooldown(int seconds) {
+    _purchase.startCooldown(seconds);
     _cooldownTimer?.cancel();
     _cooldownTimer = Timer(Duration(seconds: seconds <= 0 ? 1 : seconds), () {
       if (!mounted) return;
-      setState(() => _cooldownTimer = null);
+      _purchase.clearCooldown();
     });
   }
 
-  /// 切了账号或实例：清掉等待返回的标记，提示重新登录，不把旧账号的链接当结果。
+  /// 切了账号或实例：清掉等待返回的标记与待重试项，提示重新登录。
   void _staleIdentity() {
-    _awaitingReturn = false;
-    _resumeTimer?.cancel();
-    _resumeTimer = null;
-    setState(() => _notice = '登录状态已经变化，请重新登录之后再购买。');
+    _purchase.staleIdentity();
+    _purchase.setNotice('登录状态已经变化，请重新登录之后再购买。');
   }
 
   /// 同一次点击重试时复用的动作；没有可重试的失败时为空。
   VoidCallback? get _retryAction {
-    final pending = _pendingPurchase;
+    final pending = _purchase.pendingPurchase;
     if (pending != null) {
       return () => _buy(pending.option, requestNo: pending.requestNo);
     }
-    final link = _failedOpenLink;
+    final link = _purchase.failedOpenLink;
     if (link != null) return () => _reopenLink(link);
     return null;
-  }
-
-  /// 可以“继续上次购买”的入口：同一个档位、没有过期、链接非空，而且这张链接
-  /// 还没有付过款。付过款的那一张再打开只会让人以为要再付一次（ADR-0074）。
-  QuotaPurchaseLink? _latestLink(QuotaPurchaseOverview purchases) {
-    final latest = purchases.latestPurchase;
-    if (latest == null || latest.purchaseUrl.trim().isEmpty) return null;
-    if (!latest.expiresAt.isAfter(DateTime.now())) return null;
-    if (latest.outRequestNo == _paidRequestNo) return null;
-    final sku = latest.skuId;
-    if (sku == null) return null;
-    final product = purchases.product;
-    if (product == null) return null;
-    return product.options.any((option) => option.skuId == sku) ? latest : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final purchases = _purchases;
+    final purchases = _purchase.purchases;
     if (purchases == null) {
-      if (!_loadFailed) return const SizedBox.shrink();
+      if (!_purchase.loadFailed) return const SizedBox.shrink();
       return Padding(
         padding: EdgeInsets.only(top: theme.space.sm),
         child: InlineNotice(
-          message: _loadError ?? '暂时无法读取购买信息，请稍后重试。',
-          onRetry: _busy ? null : _load,
+          message: _purchase.loadError ?? '暂时无法读取购买信息，请稍后重试。',
+          onRetry: _purchase.busy ? null : _load,
         ),
       );
     }
@@ -486,16 +386,16 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     if (product == null &&
         !hasPoints &&
         !purchases.balanceUnavailable &&
-        !_loadFailed) {
+        !_purchase.loadFailed) {
       return const SizedBox.shrink();
     }
-    final enabled = !_busy && widget.enabled && _cooldownTimer == null;
+    final enabled = !_purchase.busy && widget.enabled && !_purchase.cooling;
     final tokensPerPoint = purchases.tokensPerPoint;
     final ratio = tokensPerPoint != null && tokensPerPoint > 0
         ? tokensPerPoint
         : null;
     final daily = widget.dailyTokens;
-    final latest = _latestLink(purchases);
+    final latest = _purchase.latestLink();
     final retry = _retryAction;
     // 换算口径见 ADR-0068：一个积分覆盖 ratio 个计费 token，免费额度也按计费
     // token 计。额度读不到时只说明比例，不猜每天有多少。
@@ -520,10 +420,10 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              if (_loadFailed)
+              if (_purchase.loadFailed)
                 InlineNotice(
-                  message: _loadError ?? '暂时无法读取购买信息，请稍后重试。',
-                  onRetry: _busy ? null : _load,
+                  message: _purchase.loadError ?? '暂时无法读取购买信息，请稍后重试。',
+                  onRetry: _purchase.busy ? null : _load,
                 ),
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -602,12 +502,12 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
                     ),
                   ),
                 ),
-              if (_notice case final notice?)
+              if (_purchase.notice case final notice?)
                 Padding(
                   padding: EdgeInsets.only(top: theme.space.sm),
                   child: Text(notice, style: theme.text.bodySmall),
                 ),
-              if (_busy)
+              if (_purchase.busy)
                 Padding(
                   padding: EdgeInsets.only(top: theme.space.sm),
                   child: Row(
@@ -618,7 +518,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
                     ],
                   ),
                 ),
-              if (retry != null || _failedOpenLink != null)
+              if (retry != null || _purchase.failedOpenLink != null)
                 Padding(
                   padding: EdgeInsets.only(top: theme.space.xs),
                   child: Wrap(
@@ -633,12 +533,12 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
                           onPress: enabled ? retry : null,
                           child: const Text('重试'),
                         ),
-                      if (_failedOpenLink != null)
+                      if (_purchase.failedOpenLink != null)
                         forui.FButton(
                           variant: forui.FButtonVariant.ghost,
                           size: forui.FButtonSizeVariant.sm,
                           mainAxisSize: MainAxisSize.min,
-                          onPress: _busy ? null : _copyLink,
+                          onPress: _purchase.busy ? null : _copyLink,
                           child: const Text('复制链接'),
                         ),
                     ],
