@@ -31,6 +31,10 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 // 没有匹配到契约路由的请求不会进入生成的处理器，mux 的兜底处理器直接回 404，
 // 这条中间件只在已匹配的路由里运行。
 //
+// 装配处必须把它放进生成代码的中间件链，不要套在 mux 外层：在 mux 外层取到的
+// r.Pattern 为空，公开与受保护的判断都会失效。测试装配同样走这条链，见
+// testutil.NewServer。
+//
 // 只有 ErrInvalidToken（缺失、过期、已轮换掉、已撤销）回 401；存储不可用等其余
 // 错误走 WriteInternal，回 500 并记日志，不再把数据库故障报成“令牌无效”。
 func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler {
