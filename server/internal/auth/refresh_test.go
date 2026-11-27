@@ -56,7 +56,7 @@ func TestRefreshKeepsSessionAndRotates(t *testing.T) {
 	}
 
 	c.t = c.t.Add(2 * time.Hour)
-	second, err := s.Refresh(ctx, first.RefreshToken, "req-1")
+	second, err := s.refresh(ctx, first.RefreshToken, "req-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +75,36 @@ func TestRefreshKeepsSessionAndRotates(t *testing.T) {
 	}
 }
 
+// TestRefreshChecksAccountLimitBeforeRotating 核对按账号的刷新预算在轮换之前
+// 判定：allowed 拿到的是会话所属账号，返回 false 时回 errRefreshLimited、旧令牌
+// 不消费，预算恢复之后仍能正常刷新。
+func TestRefreshChecksAccountLimitBeforeRotating(t *testing.T) {
+	ctx := context.Background()
+	s, c, _ := newRefreshService(t)
+	first, err := s.Register(ctx, "a@b.cn", "password1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.t = c.t.Add(30 * time.Minute)
+	var seen string
+	allowed := func(userID string) bool {
+		seen = userID
+		return false
+	}
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", allowed); !errors.Is(err, errRefreshLimited) {
+		t.Fatalf("回调拒绝时应返回 errRefreshLimited，得到 %v", err)
+	}
+	if seen != first.UserID {
+		t.Fatalf("回调应拿到会话所属账号 %q，得到 %q", first.UserID, seen)
+	}
+	if _, err := s.Authenticate(ctx, first.AccessToken); err != nil {
+		t.Fatalf("被预算拦下的刷新不应消费旧令牌: %v", err)
+	}
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", func(string) bool { return true }); err != nil {
+		t.Fatalf("预算恢复之后刷新应当成功: %v", err)
+	}
+}
+
 // TestRefreshRetryWithinGrace 核对宽限期内带同一 request_id 的重试成功，连续
 // 重试也能拿到可用令牌，且不记安全事件。
 func TestRefreshRetryWithinGrace(t *testing.T) {
@@ -82,13 +112,13 @@ func TestRefreshRetryWithinGrace(t *testing.T) {
 	s, c, buf := newRefreshService(t)
 	first, _ := s.Register(ctx, "a@b.cn", "password1", "")
 	c.t = c.t.Add(2 * time.Hour)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); err != nil {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", nil); err != nil {
 		t.Fatal(err)
 	}
 
 	for i := 0; i < 3; i++ {
 		c.t = c.t.Add(5 * time.Second)
-		retry, err := s.Refresh(ctx, first.RefreshToken, "req-1")
+		retry, err := s.refresh(ctx, first.RefreshToken, "req-1", nil)
 		if err != nil {
 			t.Fatalf("第 %d 次重试应当成功: %v", i+1, err)
 		}
@@ -96,7 +126,7 @@ func TestRefreshRetryWithinGrace(t *testing.T) {
 			t.Fatalf("第 %d 次重试返回的访问令牌应可用: %v", i+1, err)
 		}
 		if i == 2 {
-			if _, err := s.Refresh(ctx, retry.RefreshToken, "req-1"); err != nil {
+			if _, err := s.refresh(ctx, retry.RefreshToken, "req-1", nil); err != nil {
 				t.Fatalf("重试返回的刷新令牌应可用: %v", err)
 			}
 		}
@@ -113,12 +143,12 @@ func TestRefreshReplayWithoutRequestIDRevokes(t *testing.T) {
 	s, c, buf := newRefreshService(t)
 	first, _ := s.Register(ctx, "a@b.cn", "password1", "")
 	c.t = c.t.Add(2 * time.Hour)
-	second, err := s.Refresh(ctx, first.RefreshToken, "req-1")
+	second, err := s.refresh(ctx, first.RefreshToken, "req-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := s.Refresh(ctx, first.RefreshToken, ""); !errors.Is(err, ErrInvalidToken) {
+	if _, err := s.refresh(ctx, first.RefreshToken, "", nil); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("无 request_id 的重放应返回无效令牌，得到 %v", err)
 	}
 	if _, err := s.Authenticate(ctx, second.AccessToken); !errors.Is(err, ErrInvalidToken) {
@@ -138,13 +168,13 @@ func TestRefreshReplayAfterGraceRevokes(t *testing.T) {
 	s, c, _ := newRefreshService(t)
 	first, _ := s.Register(ctx, "a@b.cn", "password1", "")
 	c.t = c.t.Add(2 * time.Hour)
-	second, err := s.Refresh(ctx, first.RefreshToken, "req-1")
+	second, err := s.refresh(ctx, first.RefreshToken, "req-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	c.t = c.t.Add(refreshGrace + time.Second)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); !errors.Is(err, ErrInvalidToken) {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", nil); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("宽限期过后的重放应返回无效令牌，得到 %v", err)
 	}
 	if _, err := s.Authenticate(ctx, second.AccessToken); !errors.Is(err, ErrInvalidToken) {
@@ -159,10 +189,10 @@ func TestRefreshReplayDifferentRequestIDRevokes(t *testing.T) {
 	s, c, _ := newRefreshService(t)
 	first, _ := s.Register(ctx, "a@b.cn", "password1", "")
 	c.t = c.t.Add(2 * time.Hour)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); err != nil {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-2"); !errors.Is(err, ErrInvalidToken) {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-2", nil); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("request_id 不同的重放应返回无效令牌，得到 %v", err)
 	}
 	if got := sessionCount(s); got != 0 {
@@ -177,15 +207,15 @@ func TestRefreshRetryDoesNotExtendGrace(t *testing.T) {
 	s, c, _ := newRefreshService(t)
 	first, _ := s.Register(ctx, "a@b.cn", "password1", "")
 	c.t = c.t.Add(2 * time.Hour)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); err != nil {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", nil); err != nil {
 		t.Fatal(err)
 	}
 	c.t = c.t.Add(30 * time.Second)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); err != nil {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", nil); err != nil {
 		t.Fatalf("宽限期内的重试应当成功: %v", err)
 	}
 	c.t = c.t.Add(refreshGrace - 29*time.Second)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); !errors.Is(err, ErrInvalidToken) {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", nil); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("重试不应延长宽限期，得到 %v", err)
 	}
 }
@@ -206,7 +236,7 @@ func TestConcurrentRefreshOneWins(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := s.Refresh(ctx, reg.RefreshToken, fmt.Sprintf("req-%d", i))
+			_, err := s.refresh(ctx, reg.RefreshToken, fmt.Sprintf("req-%d", i), nil)
 			results <- err
 		}(i)
 	}
@@ -292,10 +322,10 @@ func TestRefreshReplayRevokesAPIKeys(t *testing.T) {
 	}
 
 	c.t = c.t.Add(2 * time.Hour)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-1"); err != nil {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-1", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-2"); !errors.Is(err, ErrInvalidToken) {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-2", nil); !errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("request_id 不同的重放应返回无效令牌，得到 %v", err)
 	}
 	if _, err := s.AuthenticateAPIKey(ctx, secret); !errors.Is(err, ErrInvalidToken) {

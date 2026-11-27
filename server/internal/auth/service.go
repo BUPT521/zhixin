@@ -465,14 +465,12 @@ var errRefreshLimited = errors.New("refresh rate limited")
 // 而永远不被发现。
 const refreshGrace = 60 * time.Second
 
-// Refresh rotates the session: the old refresh token stops working at once.
+// refresh 轮换会话，旧刷新令牌立即失效。它是包内唯一的刷新入口，处理器在轮换
+// 之前通过 allowed 按账号扣一次刷新预算；allowed 返回 false 时以
+// errRefreshLimited 结束，旧令牌不消费，客户端稍后仍可用它重试。
 //
 // requestID 是客户端为这次刷新生成的标识，重试时原样带上；服务端据此判断旧
 // 令牌是同一客户端的重试还是被复制之后的重放。
-func (s *Service) Refresh(ctx context.Context, refreshToken, requestID string) (Tokens, error) {
-	return s.refresh(ctx, refreshToken, requestID, nil)
-}
-
 func (s *Service) refresh(ctx context.Context, refreshToken, requestID string, allowed func(string) bool) (Tokens, error) {
 	now := s.now()
 	oldHash := hashToken(refreshToken)

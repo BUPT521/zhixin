@@ -127,7 +127,7 @@ func TestRefreshRotates(t *testing.T) {
 	first, _ := s.Register(ctx, "a@b.cn", "password1", "")
 	c.t = c.t.Add(2 * time.Hour)
 
-	second, err := s.Refresh(ctx, first.RefreshToken, "req-1")
+	second, err := s.refresh(ctx, first.RefreshToken, "req-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,19 +135,19 @@ func TestRefreshRotates(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 同一 request_id 在宽限期内再出现按重试处理，两次拿到的令牌都可继续用。
-	retry, err := s.Refresh(ctx, first.RefreshToken, "req-1")
+	retry, err := s.refresh(ctx, first.RefreshToken, "req-1", nil)
 	if err != nil {
 		t.Fatalf("同一客户端的重试应当成功: %v", err)
 	}
 	if _, err := s.Authenticate(ctx, retry.AccessToken); err != nil {
 		t.Fatalf("重试返回的访问令牌应当可用: %v", err)
 	}
-	if _, err := s.Refresh(ctx, retry.RefreshToken, "req-2"); err != nil {
+	if _, err := s.refresh(ctx, retry.RefreshToken, "req-2", nil); err != nil {
 		t.Fatalf("重试返回的刷新令牌应当可用: %v", err)
 	}
 
 	c.t = c.t.Add(31 * 24 * time.Hour)
-	if _, err := s.Refresh(ctx, first.RefreshToken, "req-3"); !errors.Is(err, ErrInvalidToken) {
+	if _, err := s.refresh(ctx, first.RefreshToken, "req-3", nil); !errors.Is(err, ErrInvalidToken) {
 		t.Fatal("expired refresh token accepted")
 	}
 }
