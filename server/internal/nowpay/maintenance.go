@@ -37,6 +37,12 @@ const (
 	maintenanceLimit = 5 * time.Minute
 )
 
+// PendingChargeStore 是结算之后还没有申请核销的用量，由 store/pg 实现。
+type PendingChargeStore interface {
+	// SweepPendingCharges 处理创建早于 before 的一批待办，返回处理掉的条数。
+	SweepPendingCharges(ctx context.Context, before time.Time, limit int) (int, error)
+}
+
 // SweepLoop 每十分钟把创建超过五分钟、仍然没有终结的流水排进核销队列。它兜住队列
 // 满、进程重启与补查遗漏：核销失败不回滚已经交付的回答，流水只能靠补查收尾。
 // 失败只记日志，下一轮再试。
@@ -56,6 +62,28 @@ func SweepLoop(ctx context.Context, meter *Meter, log *slog.Logger) {
 		}
 		if count > 0 {
 			log.Info("enqueued unsettled nowpay charges", "charges", count)
+		}
+	})
+}
+
+// ChargeSweepLoop 每十分钟补一次核销申请。结算提交用量与申请核销是两步，进程在
+// 中间退出、或者申请那一步读失败时，这段用量只有当天之后的结算按累计差额补，跨日
+// 之后没有入口；待办让补查按当天的用量重新申请（ADR-0087）。与 SweepLoop 一样先
+// 就地跑一次，一直阻塞到 ctx 结束，调用方要用 goroutine 启动它。
+func ChargeSweepLoop(ctx context.Context, store PendingChargeStore, log *slog.Logger) {
+	if store == nil {
+		return
+	}
+	periodic.Run(ctx, sweepInterval, func() {
+		sweepCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		count, err := store.SweepPendingCharges(sweepCtx, time.Now().Add(-sweepGrace), sweepBatch)
+		if err != nil {
+			log.Error("sweep the pending nowpay charges", "error", err)
+			return
+		}
+		if count > 0 {
+			log.Info("renewed the pending nowpay charges", "rows", count)
 		}
 	})
 }

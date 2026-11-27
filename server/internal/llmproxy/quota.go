@@ -34,6 +34,9 @@ type Quota interface {
 	// 命中，不参与扣减。实例账本只调整免费额度内的那一段，超出部分由积分承担
 	// （ADR-0070）。失败按 0 结算时 actual 是 0，token 两列都不变，所以另外传一次
 	// 尝试与它失败与否，让后台看得见失败的调用（ADR-0083）。
+	//
+	// 返回错误时这笔预留不能继续留在账上：实现要退回它，或者留下一条待补偿记录
+	// 由之后的请求或补查退掉，不能只把错误交回调用方（ADR-0086）。
 	Settle(ctx context.Context, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) error
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。

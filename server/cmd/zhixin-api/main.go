@@ -14,6 +14,7 @@ import (
 	_ "time/tzdata" // the container image may not ship zoneinfo
 
 	"github.com/BUPT521/zhixin/server/internal/config"
+	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/retention"
@@ -38,10 +39,15 @@ func run(log *slog.Logger) error {
 	var stores server.Stores
 	// meter 是即刻收的积分核销执行器；没有配置商品时保持为空，结算之后不产生核销。
 	var meter *nowpay.Meter
+	// settlementFailures 是结算失败之后的补退入口，只有 PostgreSQL 实现；内存实现
+	// 的结算不会失败，保持为空，补查循环直接返回（ADR-0086）。
+	var settlementFailures llmproxy.SettlementFailureStore
 	// nowpayClient 是购买接口的调用入口，与 meter 共用同一个客户端。
 	var nowpayClient *nowpay.Client
 	// nowpayMaintenance 是补查与保留期用的存储，配置了即刻收商品时才有值。
 	var nowpayMaintenance nowpay.MaintenanceStore
+	// chargePending 是结算之后还没有申请核销的用量，配置了即刻收商品时才有值。
+	var chargePending nowpay.PendingChargeStore
 	if cfg.DatabaseURL == "" {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
 		stores = server.MemoryStores()
@@ -62,14 +68,15 @@ func run(log *slog.Logger) error {
 				return err
 			}
 		}
-		// llm_usage 的 reserved_tokens 列是预留与结算分开记的前提，缺列时每条模型
-		// 请求都会写失败；启动时直接拒绝，让自动部署回滚到上一份文件（ADR-0071）。
+		// 额度结算要有在途预留与嵌入计费两列，还要有结算失败的补偿表；缺任何一项
+		// 都直接拒绝启动，让自动部署回滚到上一份文件（ADR-0071、ADR-0086）。
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), 8*time.Second)
 		err = pgStore.CheckQuotaSchema(checkCtx)
 		checkCancel()
 		if err != nil {
 			return err
 		}
+		settlementFailures = pgStore
 		if cfg.NowPay != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 			err := pgStore.CheckNowPaySchema(ctx)
@@ -88,6 +95,7 @@ func run(log *slog.Logger) error {
 			pgStore.SetNowPay(meter)
 			nowpayClient = client
 			nowpayMaintenance = pgStore
+			chargePending = pgStore
 			// 启动时查一次商品收费能力：配置错、商品未审核或应用凭证不匹配会在日志里
 			// 先出现，购买接口的第一次请求不必承担这次排查；失败只记日志，不阻塞启动。
 			probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -154,8 +162,12 @@ func run(log *slog.Logger) error {
 	if meter != nil {
 		meter.Start(ctx)
 		go nowpay.SweepLoop(ctx, meter, log)
+		go nowpay.ChargeSweepLoop(ctx, chargePending, log)
 		go nowpay.MaintenanceLoop(ctx, nowpayMaintenance, cfg.Location, log)
 	}
+	// 结算失败留下的预留每十分钟补退一次、每天清一次两天之前的在途预留；它不依赖
+	// 收款配置，配了数据库就启用（ADR-0086）。
+	go llmproxy.SettlementSweepLoop(ctx, settlementFailures, log)
 
 	handler, _ := server.Build(ctx, cfg, stores, log)
 	srv := &http.Server{

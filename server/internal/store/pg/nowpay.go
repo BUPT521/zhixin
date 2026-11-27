@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -28,15 +29,18 @@ var (
 // 新增表，缺表时只记日志并停用免费额度之外的放行（ADR-0069），这样已经在收款的
 // 实例可以先部署新版，再按运维手册建表并重启，不会因为建表顺序停服。
 func (s *Store) CheckNowPaySchema(ctx context.Context) error {
-	var installed, balance, purchaseColumns, purchaseIndex bool
+	var installed, balance, purchaseColumns, purchaseIndex, chargePending, chargeClaimed bool
 	err := s.pool.QueryRow(ctx, `SELECT
 		to_regclass('nowpay_charge') IS NOT NULL AND to_regclass('nowpay_purchase') IS NOT NULL,
 		to_regclass('nowpay_balance') IS NOT NULL,
 		(SELECT count(*) FROM information_schema.columns
 		  WHERE table_name = 'nowpay_purchase'
 		    AND column_name IN ('client_request_no', 'state', 'updated_at')) = 3,
-		to_regclass('nowpay_purchase_client_request_idx') IS NOT NULL`).
-		Scan(&installed, &balance, &purchaseColumns, &purchaseIndex)
+		to_regclass('nowpay_purchase_client_request_idx') IS NOT NULL,
+		to_regclass('llm_charge_pending') IS NOT NULL,
+		(SELECT count(*) FROM information_schema.columns
+		  WHERE table_name = 'nowpay_charge' AND column_name = 'claimed_at') = 1`).
+		Scan(&installed, &balance, &purchaseColumns, &purchaseIndex, &chargePending, &chargeClaimed)
 	if err != nil {
 		return err
 	}
@@ -46,6 +50,15 @@ func (s *Store) CheckNowPaySchema(ctx context.Context) error {
 	if !purchaseColumns || !purchaseIndex {
 		return errors.New("pg: nowpay_purchase 缺 client_request_no、state、updated_at 或幂等键索引，" +
 			"按运维手册 4.11 的增量语句补齐")
+	}
+	// 结算事务会写这张待办，缺表时每一次结算都会失败，所以启动时直接拒绝，由自动
+	// 部署回滚到上一份可执行文件（ADR-0087）。
+	if !chargePending {
+		return errors.New("pg: 缺少 llm_charge_pending 表，按运维手册 4.11 建表之后再启动")
+	}
+	// 认领是发送核销之前的一步，缺列时每一笔核销都发不出去（ADR-0088）。
+	if !chargeClaimed {
+		return errors.New("pg: nowpay_charge 缺 claimed_at 列，按运维手册 4.11 加列之后再启动")
 	}
 	s.balanceReady.Store(balance)
 	if !balance {
@@ -171,6 +184,22 @@ func chargeDelta(required, applied, available int64) int64 {
 		points = min(points, available)
 	}
 	return max(points, 0)
+}
+
+// ClaimCharge 认领一笔核销流水：把 claimed_at 推到当前时刻，只有这笔流水仍是
+// pending、且上一次认领已经超过租约时才成功。状态保持 pending 而不是 processing：
+// 认领之后进程可能退出、请求根本没有发出去，processing 只能按请求号查结果，查不到
+// 就一直停在 processing（ADR-0088）。
+func (s *Store) ClaimCharge(ctx context.Context, id string, lease time.Duration) (bool, error) {
+	if id == "" {
+		return false, nil
+	}
+	seconds := int32(math.Ceil(lease.Seconds()))
+	claimed, err := s.q.ClaimCharge(ctx, db.ClaimChargeParams{ID: id, LeaseSeconds: seconds})
+	if err != nil {
+		return false, fmt.Errorf("pg: 认领核销流水失败: %w", err)
+	}
+	return claimed > 0, nil
 }
 
 // Unsettled 取账号还没有确认结果的流水，供下一轮对话开工前补查。

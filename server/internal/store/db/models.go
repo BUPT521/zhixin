@@ -87,6 +87,13 @@ type InstallActive struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type LlmChargePending struct {
+	UserID           string
+	Day              pgtype.Date
+	ChargeableTokens int64
+	CreatedAt        pgtype.Timestamptz
+}
+
 type LlmInstanceUsage struct {
 	Day    pgtype.Date
 	Tokens int64
@@ -158,6 +165,17 @@ type LlmRouteUsage struct {
 	FailoverCachedReports int64
 }
 
+type LlmSettlementFailure struct {
+	ID             string
+	UserID         string
+	Day            pgtype.Date
+	Kind           string
+	ApiKeyID       string
+	ReservedTokens int64
+	BilledTokens   int64
+	CreatedAt      pgtype.Timestamptz
+}
+
 type LlmUsage struct {
 	UserID                  string
 	Day                     pgtype.Date
@@ -189,6 +207,7 @@ type NowpayCharge struct {
 	Note         string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	ClaimedAt    pgtype.Timestamptz
 }
 
 type NowpayPurchase struct {

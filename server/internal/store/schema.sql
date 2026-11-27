@@ -235,6 +235,40 @@ CREATE TABLE llm_instance_usage (
   tokens  BIGINT NOT NULL DEFAULT 0
 );
 
+-- 结算失败、等待补退的预留（ADR-0086）。结算在事务里失败时写一行，之后补退预留与
+-- 删除这一行在同一个事务里完成。reserved_tokens 只有结算会减，结算失败之后如果没有
+-- 这份记录，那笔预留再也没有人退，当天的额度就一直被白占，而 `GET /v1/llm/quota`
+-- 只显示已结算用量，用户看到的是“没用多少却一直 429”。下一次请求按账号补退，全局
+-- 补查按创建时间兜底；账号删除时随外键级联，账号不在了也不需要把这笔额度退给谁。
+CREATE TABLE llm_settlement_failure (
+  id              TEXT PRIMARY KEY DEFAULT replace(gen_random_uuid()::text, '-', ''),
+  user_id         TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day             DATE NOT NULL,                -- ZHIXIN_TIMEZONE 下的自然日
+  kind            TEXT NOT NULL CHECK (kind IN ('chat', 'embedding')),
+  api_key_id      TEXT NOT NULL DEFAULT '',
+  reserved_tokens BIGINT NOT NULL CHECK (reserved_tokens > 0),
+  billed_tokens   BIGINT NOT NULL DEFAULT 0,    -- 这次没有记进已结算用量的计费 token
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- 行在补退成功时立即删除，这张表正常时是空的，两个索引都不留长期成本：
+-- 下一次请求先按账号补退，再判断额度；全局补查按创建时间取最早的一批。
+CREATE INDEX llm_settlement_failure_user_idx ON llm_settlement_failure (user_id, created_at);
+CREATE INDEX llm_settlement_failure_created_idx ON llm_settlement_failure (created_at);
+
+-- 结算之后还没有申请核销的用量（ADR-0087）。结算把用量提交进 llm_usage，申请核销
+-- 另起一步，进程在两步之间退出、或者申请那一步读失败时，这一段用量只有当天之后的
+-- 结算按累计差额补；跨日之后没有结算再写这一天，用量就收不到了。结算事务里同时写
+-- 下这一天该收的计费 token，每十分钟一次的补查按它重新申请，收齐之后删除。
+CREATE TABLE llm_charge_pending (
+  user_id           TEXT NOT NULL REFERENCES app_user(id) ON DELETE CASCADE,
+  day               DATE NOT NULL,              -- ZHIXIN_TIMEZONE 下的自然日
+  chargeable_tokens BIGINT NOT NULL CHECK (chargeable_tokens > 0),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, day)
+);
+-- 补查按创建时间取最早的一批；行在收齐之后立即删除，正常时这张表接近空的。
+CREATE INDEX llm_charge_pending_created_idx ON llm_charge_pending (created_at);
+
 -- 每条模型路由的每日汇总，与账号额度各自记录。
 --
 -- input_tokens 与 cached_tokens 是合计；first_* 与 failover_* 是同一组数字按
@@ -320,6 +354,12 @@ CREATE TABLE llm_quota (
 -- status 为 failed 的流水不再计入当天已申请量，下一次结算重新算差额。账号删除时
 -- 解除关联而不删行，留作对账。终态行的 updated_at 视为确认时间，副本据此判断哪些
 -- 核销还没有被余额快照反映（ADR-0073）。
+--
+-- claimed_at 是发送核销之前的本地认领时刻（ADR-0088）：同一笔流水可能被请求前的
+-- 补查、十分钟一次的全局补查与写流水之后的入队各排一次，发送之前用
+-- “status 仍是 pending 且认领已过期”的条件把同一时刻的发送收成一次。状态不因此
+-- 改成 processing，因为请求可能根本没有发出去，标成 processing 之后只能按请求号
+-- 查结果，查不到就一直停在那里。
 CREATE TABLE nowpay_charge (
   id            TEXT PRIMARY KEY,
   user_id       TEXT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -330,7 +370,8 @@ CREATE TABLE nowpay_charge (
                 CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
   note          TEXT NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  claimed_at    TIMESTAMPTZ
 );
 CREATE INDEX nowpay_charge_user_day_idx ON nowpay_charge (user_id, day);
 CREATE INDEX nowpay_charge_unsettled_idx

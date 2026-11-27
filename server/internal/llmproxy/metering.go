@@ -68,7 +68,19 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 				attempt = attemptOf(!result.success)
 			}
 			billed := p.quotaCost(model.Kind, billedTokens(model.Kind, estimate, result))
-			p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage, attempt)
+			// 结算失败不能让回答失败：内容已经交付。预留的补退与待补偿记录由额度
+			// 实现负责，这里只留下一条能对上请求与用量的日志（ADR-0086）。
+			if err := p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage, attempt); err != nil {
+				p.log.Error("settle llm usage",
+					slog.String("request_id", httpx.RequestIDFrom(r.Context())),
+					slog.String("user_id", userID),
+					slog.String("day", day),
+					slog.String("kind", string(model.Kind)),
+					slog.String("api_key_id", keyID),
+					slog.Int64("reserved_tokens", reserved),
+					slog.Int64("billed_tokens", billed),
+					slog.String("error", err.Error()))
+			}
 			if p.usage == nil || result.notSent {
 				return
 			}
@@ -140,10 +152,12 @@ func (p *Proxy) recordRouteUsage(ctx context.Context, row RouteUsage) {
 // settle 即使客户端断开也结算本次预留。reserved 与 actual 都是计费 token，
 // usage 是来源报告的原始用量，只用于统计缓存命中，不参与扣减；attempt 是这次
 // 尝试与它是否失败，只进 llm_usage 的尝试统计，让后台看得见按 0 结算的调用。
-func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) {
+//
+// 返回的错误由调用方记日志，不能就地丢掉：reserved_tokens 只有结算会减，一次失败
+// 就留下这笔预留一直占着当天的额度，所以失败时额度实现要退回预留或者留下一条待补
+// 偿记录（ADR-0086）。
+func (p *Proxy) settle(r *http.Request, userID, day string, kind Kind, keyID string, reserved, actual int64, usage Usage, attempt SettleAttempt) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 	defer cancel()
-	if err := p.quota.Settle(ctx, userID, day, kind, keyID, reserved, actual, usage, attempt); err != nil {
-		p.log.Error("settle llm usage", slog.String("request_id", httpx.RequestIDFrom(r.Context())), slog.String("error", err.Error()))
-	}
+	return p.quota.Settle(ctx, userID, day, kind, keyID, reserved, actual, usage, attempt)
 }
