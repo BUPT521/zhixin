@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kReleaseMode;
 
 import 'app_composition.dart';
+import 'application/prefetch_results.dart';
 import 'application/prefetch_service.dart';
 import 'application/search_index_service.dart' show IndexStats;
 import 'data/diagnostics/crash_log.dart';
@@ -36,7 +37,7 @@ class AppPrefetchPolicy {
 
   /// 记忆页一屏：从这一栏进入记忆时直接有内容。
   Future<void> _warmMemoryPage() async {
-    await prefetch.warm(
+    await prefetch.warm<MemoryPagePrewarm>(
       PrefetchKey.memory,
       () => _composition.services.memory.edit.watchMemories().first,
     );
@@ -44,7 +45,7 @@ class AppPrefetchPolicy {
 
   /// 数据版本页一屏：读历史、撤销判断、存储占用与恢复点，通常是这几页里最慢的一页。
   Future<void> _warmDataVersionPage() async {
-    await prefetch.warm(
+    await prefetch.warm<DataVersionPrewarm>(
       PrefetchKey.dataVersion,
       () => _composition.services.data.versions.watchOverview().first,
     );
@@ -52,18 +53,21 @@ class AppPrefetchPolicy {
 
   /// 记录查找的范围选项：目标与材料，查找页打开时不再等这两项。
   Future<void> _warmRecordsSearchOptions() async {
-    await prefetch.warm(PrefetchKey.recordsSearchOptions, () async {
-      final (goals, materials) = await (
-        _composition.services.study.plan.activeGoals(),
-        _composition.services.library.material.list(),
-      ).wait;
-      return (goals: goals, materials: materials);
-    });
+    await prefetch.warm<RecordsSearchOptionsPrewarm>(
+      PrefetchKey.recordsSearchOptions,
+      () async {
+        final (goals, materials) = await (
+          _composition.services.study.plan.activeGoals(),
+          _composition.services.library.material.list(),
+        ).wait;
+        return (goals: goals, materials: materials);
+      },
+    );
   }
 
   /// 安排查找的目标选项。
   Future<void> _warmPlanSearchOptions() async {
-    await prefetch.warm(
+    await prefetch.warm<PlanSearchGoalsPrewarm>(
       PrefetchKey.planSearchGoals,
       _composition.services.study.plan.goals,
     );
@@ -73,7 +77,7 @@ class AppPrefetchPolicy {
   ///
   /// 网络读取失败只留空，与设置页自己读到失败时的处理一致，不影响本机配置。
   Future<void> _warmSettingsPage() async {
-    await prefetch.warm(PrefetchKey.settings, () async {
+    await prefetch.warm<SettingsPagePrewarm>(PrefetchKey.settings, () async {
       final services = _composition.services;
       final config = await services.settings.edit.config();
       final account = services.account.account;
@@ -110,7 +114,7 @@ class AppPrefetchPolicy {
   Future<void> _warmCloudBackups() async {
     final services = _composition.services;
     if (!(await services.account.account.snapshot()).signedIn) return;
-    await prefetch.warm(
+    await prefetch.warm<CloudBackupsPrewarm>(
       PrefetchKey.cloudBackups,
       services.account.backups.list,
     );
@@ -118,34 +122,40 @@ class AppPrefetchPolicy {
 
   /// 人格与插件页读的 `app_meta`：运行时提前加载一次，两页打开时不再摆骨架。
   Future<void> _warmPluginSettings() async {
-    await prefetch.warm(PrefetchKey.pluginSettings, () async {
-      await _composition.services.plugins.runtime.load();
-      return true;
-    });
+    await prefetch.warm<PluginSettingsPrewarm>(
+      PrefetchKey.pluginSettings,
+      () async {
+        await _composition.services.plugins.runtime.load();
+        return true;
+      },
+    );
   }
 
   /// 语义索引设置页的一组结果：配置、材料、登录状态与索引状态。
   Future<void> _warmEmbeddingSettings() async {
-    await prefetch.warm(PrefetchKey.embeddingSettings, () async {
-      final services = _composition.services;
-      final embedding = services.settings.embedding;
-      final config = await embedding.read();
-      final materials = await services.library.material.list();
-      final signedIn = (await services.account.account.snapshot()).signedIn;
-      IndexStats? stats;
-      if (embedding.configured) {
-        try {
-          stats = await services.library.searchIndex.stats();
-        } catch (_) {
-          // 索引状态读不出来时页面自己读会给出同样的说明，这里只留空。
+    await prefetch.warm<EmbeddingSettingsPrewarm>(
+      PrefetchKey.embeddingSettings,
+      () async {
+        final services = _composition.services;
+        final embedding = services.settings.embedding;
+        final config = await embedding.read();
+        final materials = await services.library.material.list();
+        final signedIn = (await services.account.account.snapshot()).signedIn;
+        IndexStats? stats;
+        if (embedding.configured) {
+          try {
+            stats = await services.library.searchIndex.stats();
+          } catch (_) {
+            // 索引状态读不出来时页面自己读会给出同样的说明，这里只留空。
+          }
         }
-      }
-      return (
-        config: config,
-        materials: materials,
-        signedIn: signedIn,
-        stats: stats,
-      );
-    });
+        return (
+          config: config,
+          materials: materials,
+          signedIn: signedIn,
+          stats: stats,
+        );
+      },
+    );
   }
 }

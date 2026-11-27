@@ -10,10 +10,10 @@ import '../ai/llm_config.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/embedding_settings.dart';
+import '../application/prefetch_results.dart';
 import '../application/prefetch_service.dart';
 import '../application/settings_service.dart';
 import '../application/update_check_service.dart';
-import '../domain/models/result.dart';
 import '../domain/rules/time_policy.dart';
 import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
@@ -30,16 +30,6 @@ import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
-
-/// 一级界面切进来之后预读的设置页首屏；字段与预读任务返回的记录一致。
-typedef _SettingsPrewarm = ({
-  Result<LlmConfig?> config,
-  AccountSnapshot account,
-  List<String> models,
-  EmbeddingSummary embedding,
-  bool reportCrashes,
-  bool reportUsage,
-});
 
 /// 设置：模型、语义索引、学习、外观、诊断与危险操作。
 ///
@@ -97,7 +87,9 @@ class _SettingsPageState extends State<SettingsPage> {
     _themeMode = scope.themeMode.value;
     // 从“我的”打开时，一级界面切进来之后已经在后台读过这一页的首屏；
     // 先填上，再让下面这一次完整读取刷新。
-    final prewarm = scope.prefetch.take<_SettingsPrewarm>(PrefetchKey.settings);
+    final prewarm = scope.prefetch.take<SettingsPagePrewarm>(
+      PrefetchKey.settings,
+    );
     if (prewarm != null) {
       _account = prewarm.account;
       _serverModels = prewarm.models;

@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/account_summary.dart';
+import '../application/prefetch_results.dart';
 import '../application/prefetch_service.dart';
 import '../application/sync_flow.dart';
 import '../application/sync_service.dart';
@@ -139,7 +140,10 @@ class _MinePageState extends State<MinePage> {
       });
       if (!summary.signedIn) {
         // 账号页读的是同一份数据，留给它之后打开直接用。
-        scope.prefetch.put(PrefetchKey.accountPage, summary);
+        scope.prefetch.put<AccountPagePrewarm>(
+          PrefetchKey.accountPage,
+          summary,
+        );
         return;
       }
       final remaining = await reader.readQuota();
@@ -148,7 +152,7 @@ class _MinePageState extends State<MinePage> {
         _quota = remaining;
         _quotaLoading = false;
       });
-      scope.prefetch.put(
+      scope.prefetch.put<AccountPagePrewarm>(
         PrefetchKey.accountPage,
         summary.copyWith(quota: remaining),
       );

@@ -12,6 +12,7 @@ import '../app_scope.dart';
 import '../application/account_actions.dart';
 import '../application/account_service.dart';
 import '../application/account_summary.dart';
+import '../application/prefetch_results.dart';
 import '../application/prefetch_service.dart';
 import '../application/sync_flow.dart';
 import '../application/sync_service.dart';
@@ -116,7 +117,7 @@ class _AccountPageState extends State<AccountPage> {
     );
     // 进入“我的”时已经在后台读过账号、同步状态与额度；先用这一份，
     // 这一次完整读取再把邮箱验证与额度刷新到最新。
-    final prewarm = scope.prefetch.take<AccountSummary>(
+    final prewarm = scope.prefetch.take<AccountPagePrewarm>(
       PrefetchKey.accountPage,
     );
     if (prewarm != null) {
