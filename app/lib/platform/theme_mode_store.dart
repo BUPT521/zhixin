@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:path/path.dart' as p;
 
 import '../data/atomic_file.dart';
@@ -10,8 +8,8 @@ import '../data/atomic_file.dart';
 /// 属于这台手机，不随数据包导出或恢复。文件缺失或读不出来时由调用方退回
 /// 跟随系统。
 ///
-/// 写入先落临时文件再改名，同一文件上的写入排队，连续切换外观时不会读出只写了
-/// 一半的内容。
+/// 读写都走 [AtomicFile]：写入先落临时文件再改名，同一文件上的写入排队，
+/// 连续切换外观时不会读出只写了一半的内容。
 class ThemeModeStore {
   const ThemeModeStore(this.filesDir);
 
@@ -22,14 +20,8 @@ class ThemeModeStore {
   AtomicFile get _file => AtomicFile(path);
 
   Future<String?> read() async {
-    try {
-      final file = File(path);
-      if (!await file.exists()) return null;
-      final value = (await file.readAsString()).trim();
-      return value.isEmpty ? null : value;
-    } on FileSystemException {
-      return null;
-    }
+    final value = (await _file.readText())?.trim();
+    return value == null || value.isEmpty ? null : value;
   }
 
   Future<void> write(String value) => _file.writeText(value);

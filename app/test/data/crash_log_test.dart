@@ -75,7 +75,7 @@ void main() {
     expect(hint.attachments, isEmpty);
   });
 
-  test('崩溃报告开关损坏或无法读取时关闭上报', () async {
+  test('崩溃报告开关损坏或无法读取时按兜底值处理', () async {
     final dir = await Directory.systemTemp.createTemp('zhixin_diagnostics_');
     addTearDown(() => dir.delete(recursive: true));
     final store = DiagnosticsStore(dir.path);
@@ -83,8 +83,11 @@ void main() {
     expect(await store.read(), isTrue);
     await store.write(true);
     expect(await store.read(fallback: false), isTrue);
+    // 读不出来的文件按兜底值处理，与文件不存在时一致；显式给出兜底值时用它。
     await File(store.path).writeAsBytes([255, 255]);
-    expect(await store.read(), isFalse);
+    expect(await store.read(), isTrue);
+    expect(await store.read(fallback: false), isFalse);
+    // 读得出来但不是开关值时按关闭处理。
     await File(store.path).writeAsString('invalid');
     expect(await store.read(), isFalse);
   });

@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:path/path.dart' as p;
 
 import '../data/atomic_file.dart';
@@ -8,8 +6,9 @@ import '../data/atomic_file.dart';
 ///
 /// 关闭后不再把异常交给 Sentry；本机诊断文件仍照常写入，便于离线排查。
 ///
-/// 写入先落临时文件再改名，同一文件上的写入排队，设置页连续切换时不会读出只写了
-/// 一半的内容。
+/// 读写都走 [AtomicFile]：写入先落临时文件再改名，同一文件上的写入排队，设置页
+/// 连续切换时不会读出只写了一半的内容；读不出来时返回 [fallback]，与文件不存在
+/// 时的处理相同。
 class DiagnosticsStore {
   const DiagnosticsStore(this.filesDir);
 
@@ -19,14 +18,11 @@ class DiagnosticsStore {
 
   AtomicFile get _file => AtomicFile(path);
 
+  /// 读开关；文件不存在、内容损坏或读不出来时返回 [fallback]。
   Future<bool> read({bool fallback = true}) async {
-    try {
-      final file = File(path);
-      if (!await file.exists()) return fallback;
-      return (await file.readAsString()).trim() == 'on';
-    } catch (_) {
-      return false;
-    }
+    final value = await _file.readText();
+    if (value == null) return fallback;
+    return value.trim() == 'on';
   }
 
   Future<void> write(bool enabled) => _file.writeText(enabled ? 'on' : 'off');

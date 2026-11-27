@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:path/path.dart' as p;
 
 import '../data/atomic_file.dart';
@@ -9,7 +7,7 @@ import '../data/atomic_file.dart';
 ///
 /// 与 `theme_mode` 分成两个文件，是因为两件事各自保存：换深浅色不影响选中的
 /// 主题色，换主题色也不影响深浅色。文件缺失或读不出来时由调用方回到默认的
-/// 蓝色。
+/// 蓝色；读写都走 [AtomicFile]。
 class ThemeAccentStore {
   const ThemeAccentStore(this.filesDir);
 
@@ -20,14 +18,8 @@ class ThemeAccentStore {
   AtomicFile get _file => AtomicFile(path);
 
   Future<String?> read() async {
-    try {
-      final file = File(path);
-      if (!await file.exists()) return null;
-      final value = (await file.readAsString()).trim();
-      return value.isEmpty ? null : value;
-    } on FileSystemException {
-      return null;
-    }
+    final value = (await _file.readText())?.trim();
+    return value == null || value.isEmpty ? null : value;
   }
 
   Future<void> write(String value) => _file.writeText(value);
