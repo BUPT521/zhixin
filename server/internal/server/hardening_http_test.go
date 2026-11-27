@@ -194,3 +194,11 @@ func TestSlowRequestBodyIsCutByServer(t *testing.T) {
 		t.Fatalf("慢请求体应当读到错误并回 400，得到 %d", resp.StatusCode)
 	}
 }
+
+func TestBackupUploadWithLimitAboveOneGiB(t *testing.T) {
+	h := newHarness(t, map[string]string{"ZHIXIN_MAX_BACKUP_BYTES": "2147483648"})
+	token := h.signUp("large-backup@b.cn")
+	if resp := upload(h, token, []byte("backup data"), ClientSchemaVersion); resp.StatusCode != http.StatusCreated {
+		t.Fatalf("backup upload with a 2 GiB configured limit = %d, want 201", resp.StatusCode)
+	}
+}

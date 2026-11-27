@@ -390,8 +390,8 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		BaseRouter: mux,
 		Middlewares: []api.MiddlewareFunc{
 			cachePublic,
-			syncConcurrency(),
-			temporaryUploadBudget(cfg.MaxBackupBytes, cfg.MaxAttachmentBytes),
+			syncConcurrency(cfg.SyncMaxConcurrent),
+			temporaryUploadBudget(cfg.UploadTempBudgetBytes, cfg.MaxBackupBytes, cfg.MaxAttachmentBytes),
 			cloudOperations(cfg.DatabaseURL != ""),
 			uploadLimit(uploadLimits),
 			func(next http.Handler) http.Handler {
@@ -425,7 +425,7 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 	}
 
 	// 外层顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/404/429
-	// 也因此有编号并进日志），然后统一响应头，再恢复 panic，最后是请求体读空闲
+	// 也因此有编号并进日志），然后统一响应头，再恢复 panic，最后设置请求体读取
 	// 期限。统一响应头在恢复 panic 之外，panic 转成的 500 也带 no-store 与
 	// nosniff；鉴权与限流已经移进生成的中间件链，这里不再包一层。
 	return httpx.Chain(mux,
@@ -433,7 +433,7 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		httpx.AccessLog(log),
 		httpx.SecurityHeaders,
 		httpx.Recover(log),
-		httpx.BodyIdleTimeout(cfg.BodyIdleTimeout),
+		httpx.BodyReadTimeout(cfg.BodyIdleTimeout, cfg.BodyTotalTimeout),
 	), nil
 }
 

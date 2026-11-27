@@ -480,3 +480,52 @@ func TestLoadTokensPerPoint(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadUploadBudgetAndRequestLimits(t *testing.T) {
+	cfg, err := Load(env(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UploadTempBudgetBytes != 1<<30 || cfg.SyncMaxConcurrent != 4 || cfg.BodyTotalTimeout != 30*time.Minute {
+		t.Fatalf("default upload budget, sync concurrency, body timeout = %d, %d, %v", cfg.UploadTempBudgetBytes, cfg.SyncMaxConcurrent, cfg.BodyTotalTimeout)
+	}
+
+	cfg, err = Load(env(map[string]string{
+		"ZHIXIN_MAX_ATTACHMENT_BYTES": "2147483648",
+	}))
+	if err != nil || cfg.UploadTempBudgetBytes != 8<<30 {
+		t.Fatalf("budget derived from the larger attachment limit = %d, err = %v", cfg.UploadTempBudgetBytes, err)
+	}
+
+	cfg, err = Load(env(map[string]string{
+		"ZHIXIN_MAX_BACKUP_BYTES":         "2147483648",
+		"ZHIXIN_UPLOAD_TEMP_BUDGET_BYTES": "2147483648",
+		"ZHIXIN_SYNC_MAX_CONCURRENT":      "2",
+		"ZHIXIN_BODY_TOTAL_TIMEOUT":       "45m",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UploadTempBudgetBytes != 2<<30 || cfg.SyncMaxConcurrent != 2 || cfg.BodyTotalTimeout != 45*time.Minute {
+		t.Fatalf("configured upload budget, sync concurrency, body timeout = %d, %d, %v", cfg.UploadTempBudgetBytes, cfg.SyncMaxConcurrent, cfg.BodyTotalTimeout)
+	}
+}
+
+func TestLoadRejectsInvalidUploadAndBodyLimits(t *testing.T) {
+	for _, tc := range []struct {
+		values map[string]string
+		key    string
+	}{
+		{map[string]string{"ZHIXIN_UPLOAD_TEMP_BUDGET_BYTES": "1"}, "ZHIXIN_UPLOAD_TEMP_BUDGET_BYTES"},
+		{map[string]string{"ZHIXIN_MAX_BACKUP_BYTES": "9223372036854775807"}, "ZHIXIN_UPLOAD_TEMP_BUDGET_BYTES"},
+		{map[string]string{"ZHIXIN_SYNC_MAX_CONCURRENT": "0"}, "ZHIXIN_SYNC_MAX_CONCURRENT"},
+		{map[string]string{"ZHIXIN_BODY_TOTAL_TIMEOUT": "0s"}, "ZHIXIN_BODY_TOTAL_TIMEOUT"},
+	} {
+		t.Run(tc.key, func(t *testing.T) {
+			_, err := Load(env(tc.values))
+			if err == nil || !strings.Contains(err.Error(), tc.key) {
+				t.Fatalf("want error for %s, got %v", tc.key, err)
+			}
+		})
+	}
+}

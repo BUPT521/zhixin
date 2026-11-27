@@ -14,8 +14,8 @@ import (
 
 // temporaryUploadBudget reserves the maximum spool size before reading each
 // upload and holds it until the handler has removed the temporary file.
-func temporaryUploadBudget(backupBytes, attachmentBytes int64) api.MiddlewareFunc {
-	budget := semaphore.NewWeighted(1 << 30)
+func temporaryUploadBudget(budgetBytes, backupBytes, attachmentBytes int64) api.MiddlewareFunc {
+	budget := semaphore.NewWeighted(budgetBytes)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var size int64
@@ -29,12 +29,8 @@ func temporaryUploadBudget(backupBytes, attachmentBytes int64) api.MiddlewareFun
 				next.ServeHTTP(w, r)
 				return
 			}
-			if size <= 0 || size > 1<<30 {
-				httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "upload size is outside the temporary storage budget")
-				return
-			}
 			if !budget.TryAcquire(size) {
-				httpx.TooMany(w, r, 2)
+				httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "temporary upload storage is busy")
 				return
 			}
 			defer budget.Release(size)
@@ -74,19 +70,17 @@ func uploadLimit(limiter *ratelimit.Limiter) api.MiddlewareFunc {
 }
 
 // syncConcurrency limits the total number of pages or pushes held in memory.
-func syncConcurrency() api.MiddlewareFunc {
-	slots := make(chan struct{}, 4)
+func syncConcurrency(maxConcurrent int64) api.MiddlewareFunc {
+	slots := semaphore.NewWeighted(maxConcurrent)
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.Pattern {
 			case "GET /v1/sync/commits", "POST /v1/sync/commits":
-				select {
-				case slots <- struct{}{}:
-					defer func() { <-slots }()
-				default:
-					httpx.TooMany(w, r, 1)
+				if !slots.TryAcquire(1) {
+					httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "sync capacity is busy")
 					return
 				}
+				defer slots.Release(1)
 			}
 			next.ServeHTTP(w, r)
 		})

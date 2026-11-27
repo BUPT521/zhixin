@@ -9,8 +9,8 @@ import (
 	"time"
 )
 
-// BodyIdleTimeout 给带请求体的请求设置读取空闲期限：每次读之前刷新期限，读到
-// EOF、读错、Close 或处理器返回时不再保留“无限等待”的读取。
+// BodyReadTimeout 同时限制请求体的读取间隔和总时长，每次读之前采用两个期限中
+// 较早的一个。总时长从请求进入中间件起算。
 //
 // http.Server 没有设置 ReadTimeout（大文件上传与模型流式响应需要长时间连接），
 // 慢速请求体因此能把连接一直占住。这里只用 ResponseController 设“读”期限，
@@ -22,8 +22,8 @@ import (
 // 不会再把连接挂住；处理器没读完就返回时给收尾读留一个期限，避免 net/http 在
 // 没有期限的连接上一直等客户端把没发完的请求体发完。连接进入空闲后由 net/http
 // 自己重置读期限，不影响下一个请求。
-func BodyIdleTimeout(d time.Duration) func(http.Handler) http.Handler {
-	if d <= 0 {
+func BodyReadTimeout(idle, total time.Duration) func(http.Handler) http.Handler {
+	if idle <= 0 {
 		return func(next http.Handler) http.Handler { return next }
 	}
 	return func(next http.Handler) http.Handler {
@@ -35,8 +35,8 @@ func BodyIdleTimeout(d time.Duration) func(http.Handler) http.Handler {
 			body := &idleBody{
 				ReadCloser: r.Body,
 				controller: http.NewResponseController(w),
-				timeout:    d,
-				expires:    time.Now().Add(10 * time.Minute),
+				timeout:    idle,
+				expires:    time.Now().Add(total),
 			}
 			r.Body = body
 			defer body.finish()
