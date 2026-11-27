@@ -412,8 +412,9 @@ func (s *Store) CreatePurchaseLink(ctx context.Context, userID string, purchase 
 	})
 }
 
-// ReplacePurchaseLink 用新的 out_request_no 替换同一个幂等键的行，回到 creating；失败
-// 或超时的入口由此重新创单，旧的请求号不再使用。
+// ReplacePurchaseLink 替换同一个幂等键的行并回到 creating。创单失败重试时传入行里
+// 已有的 out_request_no，同一个幂等号重试不会在即刻收侧产生第二笔创单；只有链接
+// 过期或更换入口时才用新的 out_request_no。
 func (s *Store) ReplacePurchaseLink(ctx context.Context, userID string, purchase nowpay.Purchase) error {
 	expires, err := pgTime(purchase.ExpiresAt)
 	if err != nil {

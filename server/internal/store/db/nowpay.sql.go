@@ -542,7 +542,8 @@ type ReplacePurchaseLinkParams struct {
 	ClientRequestNo string
 }
 
-// 同一个幂等键重新生成入口：换成新的 out_request_no，回到 creating 等 purchase.create。
+// 同一个幂等键重试：沿用行里已有的 out_request_no 回到 creating 等 purchase.create；
+// out_request_no 是创单的幂等号，失败重试必须保持原值，只有链接过期或换新入口时才换号。
 func (q *Queries) ReplacePurchaseLink(ctx context.Context, arg ReplacePurchaseLinkParams) (int64, error) {
 	result, err := q.db.Exec(ctx, replacePurchaseLink,
 		arg.OutRequestNo,

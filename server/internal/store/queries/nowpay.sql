@@ -162,7 +162,8 @@ VALUES
   (sqlc.arg(out_request_no), sqlc.arg(client_request_no), sqlc.arg(user_id), sqlc.arg(sku_id),
    sqlc.narg(state), sqlc.narg(purchase_url), sqlc.arg(expires_at));
 
--- 同一个幂等键重新生成入口：换成新的 out_request_no，回到 creating 等 purchase.create。
+-- 同一个幂等键重试：沿用行里已有的 out_request_no 回到 creating 等 purchase.create；
+-- out_request_no 是创单的幂等号，失败重试必须保持原值，只有链接过期或换新入口时才换号。
 -- name: ReplacePurchaseLink :execrows
 UPDATE nowpay_purchase
 SET out_request_no = sqlc.arg(out_request_no),
