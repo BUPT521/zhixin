@@ -21,6 +21,7 @@ import 'buddy_flows.dart';
 import 'buddy_timeline.dart';
 import 'capture_entry.dart';
 import 'discussion_activity.dart';
+import 'discussion_attachments.dart';
 import 'discussion_search.dart';
 import 'discussion_search_controller.dart';
 import 'discussion_stream.dart';
@@ -123,7 +124,11 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 首读失败时不再显示骨架屏，改为直接显示可输入的空页面并提示原因。
   bool _readFailed = false;
 
-  List<XFile> _picked = const [];
+  /// 输入区待发送的图片与取图状态。
+  late final DiscussionAttachments _attachments = DiscussionAttachments(
+    onChanged: _onAttachmentsChanged,
+  );
+
   String? _notice;
 
   /// 用户消息已经落库、但这一轮没有保存回答；提示条据此给出重试入口。
@@ -138,9 +143,6 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 模型是否可用（已经登录）：决定本地规则回答下方给登录入口还是重新回答入口。
   bool _configured = false;
 
-  /// 取图与框选是一段异步流程，期间再点一次会同时开两个相机。
-  bool _picking = false;
-
   @override
   void initState() {
     super.initState();
@@ -150,6 +152,11 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   /// 查找状态变了就让页面重建；查找控制器只改自己的字段。
   void _onSearchChanged() {
+    if (mounted) setState(() {});
+  }
+
+  /// 图片列表或取图状态变了就让页面重建。
+  void _onAttachmentsChanged() {
     if (mounted) setState(() {});
   }
 
@@ -164,7 +171,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     _readConfigured();
     if (widget.initialImages.isNotEmpty) {
       // 图片已经在首页取好并框过，这里只摆进输入区；文字与图片由用户确认后再发。
-      _picked = [...widget.initialImages];
+      _attachments.adopt(widget.initialImages);
     } else if (widget.initialText.trim().isNotEmpty) {
       // 首条消息等页面挂上之后再发，输入区与骨架屏已经就位。
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -515,7 +522,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (_reply.sending) return;
     final text = _input.text.trim();
     final submittedDraft = _input.text;
-    if (text.isEmpty && _picked.isEmpty) return;
+    if (text.isEmpty && _attachments.picked.isEmpty) return;
     final cancel = _beginReply(retrying: false);
     String? generatingId;
     void handleUserMessage(ChatMessage message) {
@@ -526,7 +533,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       widget.onSubmitted?.call();
     }
 
-    final picks = _picked;
+    final picks = _attachments.picked;
     AppScopeState? scope;
     var paths = const <String>[];
     var sent = false;
@@ -551,7 +558,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       if (_input.text == submittedDraft) _input.clear();
       setState(() {
         _conversationId = id;
-        _picked = const [];
+        _attachments.clear();
         _stream ??= _createStream();
       });
       // 两条消息先交给页面即时显示；记录、建议与卡片由订阅回填。
@@ -592,43 +599,17 @@ class DiscussionChatState extends State<DiscussionChat> {
   }
 
   Future<List<String>> _persistPicked(AppScopeState scope) async {
-    if (_picked.isEmpty) return const [];
-    final paths = await persistCaptureImages(
-      _picked,
-      scope.paths.imagesDir,
-      prefix: 'm',
-    );
-    if (paths.length < _picked.length && mounted) {
+    final picks = _attachments.picked;
+    if (picks.isEmpty) return const [];
+    final paths = await _attachments.persist(scope);
+    if (paths.length < picks.length && mounted) {
       setState(() => _notice = '图片保存失败，本次已改为发送文字。');
     }
     return paths;
   }
 
-  Future<void> _pick(ImageSource source) async {
-    if (_picking) return;
-    setState(() => _picking = true);
-    try {
-      final picked = await pickCaptureWithinLimit(
-        context,
-        source,
-        current: _picked.length,
-      );
-      if (picked != null && mounted) {
-        setState(() => _picked = [..._picked, picked]);
-      }
-    } finally {
-      if (mounted) setState(() => _picking = false);
-    }
-  }
-
   String _imagePath(String stored) =>
       AppScope.of(context).paths.resolveImage(stored);
-
-  Future<void> _chooseAttachment() async {
-    final source = await chooseCaptureSource(context);
-    if (source == null || !mounted) return;
-    await _pick(source);
-  }
 
   /// 从这条讨论开始作答：以当时最后一条用户消息为原题，作答挂在这条记录上。
   Future<void> _startAnswering() async {
@@ -1343,17 +1324,12 @@ class DiscussionChatState extends State<DiscussionChat> {
                   ],
                 ),
               ),
-            if (_picked.isNotEmpty)
+            if (_attachments.picked.isNotEmpty)
               Padding(
                 padding: EdgeInsets.only(bottom: theme.space.tight),
                 child: CapturePhotoStrip(
-                  photos: _picked,
-                  onRemove: (index) => setState(
-                    () => _picked = [
-                      for (var i = 0; i < _picked.length; i++)
-                        if (i != index) _picked[i],
-                    ],
-                  ),
+                  photos: _attachments.picked,
+                  onRemove: _attachments.removeAt,
                 ),
               ),
             Row(
@@ -1361,9 +1337,9 @@ class DiscussionChatState extends State<DiscussionChat> {
                 ZhixinIconButton(
                   tooltip: '添加图片',
                   variant: forui.FButtonVariant.secondary,
-                  onPressed: _reply.sending || _picking
+                  onPressed: _reply.sending || _attachments.picking
                       ? null
-                      : _chooseAttachment,
+                      : () => _attachments.choose(context),
                   icon: FLucideIcons.imagePlus,
                 ),
                 SizedBox(width: theme.space.sm),
