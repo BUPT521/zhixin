@@ -33,14 +33,6 @@ func (s *Service) SetAccountBytes(limit int64) *Service {
 
 func (s *Service) MaxBytes() int64 { return s.maxBytes }
 
-func (s *Service) Stat(ctx context.Context, userID, sha string) (int64, error) {
-	return s.store.Stat(ctx, userID, sha)
-}
-
-func (s *Service) Open(ctx context.Context, userID, sha string) (io.ReadCloser, int64, error) {
-	return s.store.Open(ctx, userID, sha)
-}
-
 // Put stores one attachment after the caller has verified the content hash and
 // the single-object size limit (SpoolVerified enforces it before the body is
 // handed over).

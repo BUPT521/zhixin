@@ -20,11 +20,11 @@ func TestServicePutStoresBytes(t *testing.T) {
 	if err := svc.Put(ctx, "u1", "sha", 4, bytes.NewReader([]byte("1234"))); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	size, err := svc.Stat(ctx, "u1", "sha")
+	size, err := svc.store.Stat(ctx, "u1", "sha")
 	if err != nil || size != 4 {
 		t.Fatalf("stat = %d, %v", size, err)
 	}
-	rc, size, err := svc.Open(ctx, "u1", "sha")
+	rc, size, err := svc.store.Open(ctx, "u1", "sha")
 	if err != nil || size != 4 {
 		t.Fatalf("open = %d, %v", size, err)
 	}
@@ -33,7 +33,7 @@ func TestServicePutStoresBytes(t *testing.T) {
 	if string(got) != "1234" {
 		t.Fatalf("bytes = %q", got)
 	}
-	if _, err := svc.Stat(ctx, "other", "sha"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.store.Stat(ctx, "other", "sha"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("other account: want ErrNotFound, got %v", err)
 	}
 }
