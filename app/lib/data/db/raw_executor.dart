@@ -8,6 +8,35 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 ///
 /// 只保留执行语句、读回行与开事务三件事；按表名读写由 [sql.dart] 的辅助函数
 /// 组装语句，仓库读写走 drift 生成查询（ADR-0021）。
+/// 原生写语句的类别：语句前缀决定 `execute` 用什么方式执行、返回什么。
+enum SqlStatementKind {
+  /// 插入（含 `INSERT OR REPLACE` 与 `REPLACE`）：返回新行的编号。
+  insert,
+
+  /// 更新：返回受影响的行数。
+  update,
+
+  /// 删除：返回受影响的行数。
+  delete,
+
+  /// 建表、`PRAGMA`、`VACUUM` 等没有行数概念的语句：返回 0。
+  other,
+}
+
+/// 按语句开头的关键字给原生语句分类；前导空白不影响判断。
+///
+/// 两条实现（drift 连接与只读副本用的 `sqlite3`）都按这一个分类分派，
+/// 返回值语义因此只有一份定义。
+SqlStatementKind sqlStatementKind(String sql) {
+  final head = sql.trimLeft().toUpperCase();
+  if (head.startsWith('INSERT') || head.startsWith('REPLACE')) {
+    return SqlStatementKind.insert;
+  }
+  if (head.startsWith('UPDATE')) return SqlStatementKind.update;
+  if (head.startsWith('DELETE')) return SqlStatementKind.delete;
+  return SqlStatementKind.other;
+}
+
 abstract class RawExecutor {
   /// 生成代码使用的 drift 连接；只读副本等实现返回空。
   ///
@@ -15,7 +44,7 @@ abstract class RawExecutor {
   /// 从这里取连接，而不是另开一个 [RawExecutor]（ADR-0011 第 4 条）。
   DatabaseConnectionUser? get driftConnection => null;
 
-  /// 执行一条语句；插入返回新行编号，其他返回受影响的行数。
+  /// 执行一条语句；插入返回新行编号，更新与删除返回受影响的行数，其余返回 0。
   ///
   /// 行号必须在同一条语句之后立刻读回：命令事务在提交收尾时还会写入版本
   /// 明细，晚一步读到的就是明细行的编号。
@@ -82,12 +111,20 @@ class SqliteRawDatabase implements RawDatabase {
     }
   }
 
-  bool _isInsert(String sql) =>
-      sql.trimLeft().toUpperCase().startsWith('INSERT');
-
+  /// 按 [sqlStatementKind] 分派：插入取新行号，更新与删除取受影响行数，其他
+  /// 语句没有行数概念，返回 0。
+  ///
+  /// 受影响行数要在语句执行之后立刻读回，与其他语句的返回路径分开：
+  /// `sqlite3` 的 `updatedRows` 不会在 DDL 之后复位，混用会把上一条语句的
+  /// 行数当成这一条的结果。
   int _runAndReport(String sql, List<Object?>? arguments) {
+    final kind = sqlStatementKind(sql);
     final affected = _run(sql, arguments);
-    return _isInsert(sql) ? _db.lastInsertRowId : affected;
+    return switch (kind) {
+      SqlStatementKind.insert => _db.lastInsertRowId,
+      SqlStatementKind.update || SqlStatementKind.delete => affected,
+      SqlStatementKind.other => 0,
+    };
   }
 
   List<Map<String, Object?>> _select(String sql, List<Object?>? arguments) {

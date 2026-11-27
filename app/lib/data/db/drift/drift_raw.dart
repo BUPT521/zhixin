@@ -70,9 +70,30 @@ class DriftRawExecutor implements RawExecutor {
   DatabaseConnectionUser get driftConnection => _db;
 
   @override
-  /// drift 的 customInsert 在执行完语句后立刻读回行号；其他语句返回受影响行数。
-  Future<int> execute(String sql, [List<Object?>? arguments]) =>
-      _db.customInsert(sql, variables: _variables(arguments));
+  /// 按 [sqlStatementKind] 分派：`customInsert` 在执行完插入后立刻读回新行号，
+  /// `customUpdate` 返回受影响行数，其余语句没有行数概念，返回 0。
+  ///
+  /// 删除与更新一样走 `customUpdate`，只把 `updateKind` 标成删除：drift 没有
+  /// `customDelete`，底层的 `runDelete` 只在它自己的写语句里被调用，事务内直接
+  /// 调用会与外层的串行队列互等；`customUpdate` 落在当前事务上，两条语句的
+  /// 返回值因此都是受影响的行数。
+  Future<int> execute(String sql, [List<Object?>? arguments]) async {
+    switch (sqlStatementKind(sql)) {
+      case SqlStatementKind.insert:
+        return _db.customInsert(sql, variables: _variables(arguments));
+      case SqlStatementKind.update:
+        return _db.customUpdate(sql, variables: _variables(arguments));
+      case SqlStatementKind.delete:
+        return _db.customUpdate(
+          sql,
+          variables: _variables(arguments),
+          updateKind: UpdateKind.delete,
+        );
+      case SqlStatementKind.other:
+        await _db.customStatement(sql, arguments);
+        return 0;
+    }
+  }
 
   @override
   Future<List<Map<String, Object?>>> rawQuery(
