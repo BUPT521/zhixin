@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/payment"
 )
 
 type statusChange struct {
@@ -286,7 +288,7 @@ func TestSucceededChargeSavesTheCopyAtTheResponseSnapshot(t *testing.T) {
 	meter := newTestMeter(t, ledger, caller)
 	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
 	meter.run(context.Background(), job{charge: charge, verify: true})
-	want := time.Date(2026, 11, 25, 10, 0, 0, 0, ChinaTime())
+	want := time.Date(2026, 11, 25, 10, 0, 0, 0, payment.ChinaTime())
 	if !ledger.balanceAsOf["user_1"].Equal(want) {
 		t.Fatalf("副本应按响应的快照时间写入，得到 %v", ledger.balanceAsOf["user_1"])
 	}
@@ -300,7 +302,7 @@ func TestSucceededChargeSavesTheCopyNoEarlierThanTheConfirmation(t *testing.T) {
 		methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","consumed":3,"remaining":97,
 			"as_of_time":"2026-11-25 10:00:00"}`,
 	}}
-	confirmed := time.Date(2026, 11, 25, 10, 0, 1, 0, ChinaTime())
+	confirmed := time.Date(2026, 11, 25, 10, 0, 1, 0, payment.ChinaTime())
 	ledger := &fakeLedger{confirmAt: confirmed}
 	meter := newTestMeter(t, ledger, caller)
 	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
@@ -442,7 +444,7 @@ func TestInsufficientPointsIsMarkedFailedForTheNextSettlement(t *testing.T) {
 	if ledger.balances["user_1"] != 3 {
 		t.Fatalf("应保存查询返回的 3 积分: %+v", ledger.balances)
 	}
-	wantAsOf := time.Date(2026, 11, 25, 9, 30, 0, 0, ChinaTime())
+	wantAsOf := time.Date(2026, 11, 25, 9, 30, 0, 0, payment.ChinaTime())
 	if got := ledger.balanceAsOf["user_1"]; !got.Equal(wantAsOf) {
 		t.Fatalf("应保存余额查询返回的快照时刻，得到 %v", got)
 	}
@@ -472,7 +474,7 @@ func TestRefreshBalanceQueriesTheGatewayAndSavesTheCopy(t *testing.T) {
 	if ledger.balances["user_1"] != 55 {
 		t.Fatalf("查到的余额应写进副本: %+v", ledger.balances)
 	}
-	want := time.Date(2026, 11, 25, 9, 30, 0, 0, ChinaTime())
+	want := time.Date(2026, 11, 25, 9, 30, 0, 0, payment.ChinaTime())
 	if !ledger.balanceAsOf["user_1"].Equal(want) {
 		t.Fatalf("副本应按查询响应的快照时间写入，得到 %v", ledger.balanceAsOf["user_1"])
 	}

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/payment"
 )
 
 // fakeCaller 记录每次调用的 method 与 biz，并返回预先写好的业务对象。
@@ -123,7 +125,7 @@ func TestBalanceRemainingIsKeptSeparateFromTotalMinusUsed(t *testing.T) {
 	if caller.biz[0]["external_buyer_id"] != "user_1" {
 		t.Fatalf("受益人标识应取知新账号: %v", caller.biz[0])
 	}
-	want := time.Date(2026, 11, 25, 10, 0, 0, 0, ChinaTime())
+	want := time.Date(2026, 11, 25, 10, 0, 0, 0, payment.ChinaTime())
 	if !balance.AsOf.Equal(want) {
 		t.Fatalf("快照时间应取响应里的 as_of_time，得到 %v", balance.AsOf)
 	}
@@ -165,7 +167,7 @@ func TestPurchaseSendsSKUAndParsesExpiry(t *testing.T) {
 			t.Errorf("biz_content[%s] = %v，应为 %s", key, caller.biz[0][key], want)
 		}
 	}
-	want := time.Date(2026, 11, 25, 10, 30, 0, 0, ChinaTime())
+	want := time.Date(2026, 11, 25, 10, 30, 0, 0, payment.ChinaTime())
 	if !link.ExpiresAt.Equal(want) {
 		t.Fatalf("链接失效时间按东八区解析错误: %v", link.ExpiresAt)
 	}

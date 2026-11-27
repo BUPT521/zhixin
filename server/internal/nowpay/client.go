@@ -17,6 +17,8 @@ import (
 
 	"strings"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/payment"
 )
 
 // 接口名是支付宝的 method 参数，签名覆盖的 biz_content 由各方法自己给出。
@@ -151,7 +153,6 @@ func (c Consume) Confirmed() bool { return c.Status == ConsumeSucceeded }
 type Client struct {
 	caller    Caller
 	productID string
-	china     *time.Location
 }
 
 // NewClient 绑定一个商品。productID 来自小程序商品详情，不能由应用生成。
@@ -162,21 +163,8 @@ func NewClient(caller Caller, productID string) (*Client, error) {
 	if strings.TrimSpace(productID) == "" {
 		return nil, errors.New("nowpay: 需要即刻收商品 ID")
 	}
-	return &Client{caller: caller, productID: productID, china: chinaTime()}, nil
+	return &Client{caller: caller, productID: productID}, nil
 }
-
-// ChinaTime 返回东八区时间，用于解析即刻收给出的时刻。
-func ChinaTime() *time.Location { return chinaTime() }
-
-var shanghai = func() *time.Location {
-	zone, err := time.LoadLocation("Asia/Shanghai")
-	if err != nil {
-		return time.FixedZone("CST", 8*60*60)
-	}
-	return zone
-}()
-
-func chinaTime() *time.Location { return shanghai }
 
 // Charge 查询商品收费能力与档位。
 func (c *Client) Charge(ctx context.Context) (Capability, error) {
@@ -274,7 +262,7 @@ func (c *Client) Purchase(ctx context.Context, req PurchaseRequest) (Link, error
 	if result.Purchase == "" {
 		return Link{}, &APIError{Method: methodPurchase, Code: "10000", SubMsg: "响应缺少购买链接"}
 	}
-	expires, err := time.ParseInLocation("2006-01-02 15:04:05", result.ExpireTime, c.china)
+	expires, err := time.ParseInLocation(payment.TimeLayout, result.ExpireTime, payment.ChinaTime())
 	if err != nil {
 		return Link{}, &APIError{Method: methodPurchase, Code: "10000", SubMsg: "购买链接缺少有效期"}
 	}
@@ -344,13 +332,13 @@ func (c *Client) consume(ctx context.Context, method string, biz map[string]any)
 	return consume, nil
 }
 
-// parseTime 解析即刻收给出的时刻。格式只有 "2006-01-02 15:04:05" 一种，按东八区
+// parseTime 解析即刻收给出的时刻。格式只有 payment.TimeLayout 一种，按东八区
 // 解释；空值或格式不符时返回 false，由调用方改用发起查询的时刻。
 func (c *Client) parseTime(value string) (time.Time, bool) {
 	if value == "" {
 		return time.Time{}, false
 	}
-	parsed, err := time.ParseInLocation("2006-01-02 15:04:05", value, c.china)
+	parsed, err := time.ParseInLocation(payment.TimeLayout, value, payment.ChinaTime())
 	if err != nil {
 		return time.Time{}, false
 	}
