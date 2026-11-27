@@ -1,9 +1,11 @@
 -- 即刻收积分核销与购买入口（ADR-0067）。
 
--- name: AppliedChargePoints :one
--- 同一个账号同一天已经申请的积分合计；failed 表示确认没有扣减，不计入。
-SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
-WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND status <> 'failed';
+-- name: DailyChargeTotals :one
+-- 余额表尚未建好时，仍可读取当天已经申请和已经成功的积分。
+SELECT COALESCE(SUM(points) FILTER (WHERE status <> 'failed'), 0)::bigint AS applied,
+       COALESCE(SUM(points) FILTER (WHERE status = 'succeeded'), 0)::bigint AS charged
+FROM nowpay_charge
+WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date;
 
 -- name: InsertCharge :exec
 INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens)
@@ -138,28 +140,19 @@ SET remaining_points = GREATEST(sqlc.arg(remaining_points)::bigint, 0),
     synced_at = sqlc.arg(synced_at)
 WHERE nowpay_balance.synced_at <= EXCLUDED.synced_at;
 
--- 预留要用的余额副本；没有行表示这个账号还没有同步过余额。
--- name: BalanceForReserve :one
-SELECT remaining_points, synced_at FROM nowpay_balance WHERE user_id = sqlc.arg(user_id);
-
--- 副本还没有反映的核销积分（ADR-0073）。pending 与 processing 一律计入，因为扣减
--- 还没有确认；succeeded 只有在快照之后才确认的才计入，终态行的 updated_at 视为确认
--- 时间；failed 确认没有扣减，不计入。按确认时间而不是创建时间判断，是因为核销行先
--- 创建、后成功，乱序时旧规则会把已经反映的扣减再算一遍。
--- name: UnreflectedChargePoints :one
-SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
-WHERE user_id = sqlc.arg(user_id)
-  AND (status IN ('pending', 'processing')
-       OR (status = 'succeeded' AND updated_at > sqlc.arg(as_of)));
-
--- 当天已经折算成积分的累计计费量：流水里的 billed_tokens 是当时的当天累计量，
--- 取最大值就是最后一次申请时的累计量。failed 的流水没有扣减，不计入。
--- name: ChargedTokens :one
-SELECT COALESCE(MAX(billed_tokens), 0)::bigint FROM nowpay_charge
-WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND status <> 'failed';
-
--- 当天已经核销成功的积分，账号页用它显示“今天已用积分”。pending 与 processing
--- 还没有确认扣减，failed 确认没有扣减，都不计入。
--- name: ChargedPoints :one
-SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
-WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date AND status = 'succeeded';
+-- name: PointLedgerWithBalance :one
+-- 在同一个查询快照中读余额与流水。余额扣减涵盖所有日期的待确认流水及快照后成功
+-- 的流水，已申请和已成功的积分只统计指定记账日。synced_at 为空表示从未同步。
+SELECT balance.synced_at,
+       COALESCE(balance.remaining_points, 0)::bigint AS balance_points,
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.day = sqlc.arg(day)::date), 0)::bigint AS applied,
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.day = sqlc.arg(day)::date
+           AND charge.status = 'succeeded'), 0)::bigint AS charged,
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.status IN ('pending', 'processing')
+           OR (charge.status = 'succeeded' AND charge.updated_at > balance.synced_at)), 0)::bigint AS unreflected
+FROM (SELECT sqlc.arg(user_id)::text AS user_id) account
+LEFT JOIN nowpay_balance AS balance USING (user_id)
+LEFT JOIN nowpay_charge AS charge ON charge.user_id = account.user_id AND charge.status <> 'failed'
+  AND (charge.day = sqlc.arg(day)::date OR charge.status IN ('pending', 'processing')
+       OR (charge.status = 'succeeded' AND charge.updated_at > balance.synced_at))
+GROUP BY balance.synced_at, balance.remaining_points;

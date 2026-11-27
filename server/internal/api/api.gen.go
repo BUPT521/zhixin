@@ -463,7 +463,7 @@ type AdminAccountPoints struct {
 	// Enabled 这个实例是否开通了积分收款
 	Enabled bool `json:"enabled"`
 
-	// Remaining 可用积分，与额度放行同一口径；余额副本不可用或还没有同步时省略
+	// Remaining 余额中尚未占用的整积分，与账号页同一口径；余额副本不可用或还没有同步时省略
 	Remaining *int64 `json:"remaining,omitempty"`
 
 	// SyncedAt 余额副本的快照时刻；没有副本时省略
@@ -1209,9 +1209,9 @@ type LLMQuota struct {
 	// EmbeddingUsedTokens 嵌入当天已结算的计费 token
 	EmbeddingUsedTokens int64 `json:"embedding_used_tokens"`
 
-	// RemainingPoints 可用积分：余额副本减去还没有反映的核销，再减去当天已经占用（已结算与在途预留）、
-	// 还没有记进流水的计费量折成的积分（向下取整）；与额度放行共用同一个入参，账号页
-	// 显示的数不会大于实际能放行的量。没有开通收款或还没有余额副本时为 null，见 ADR-0073。
+	// RemainingPoints 余额中尚未占用的整积分。服务端先按流水调整余额副本，再扣除当天已结算用量和在途
+	// 预留中仍需由余额覆盖的部分。额度放行会计入不足一分的剩余计费 token。没有开通收款
+	// 或还没有余额副本时为 null，见 ADR-0073。
 	RemainingPoints *int64 `json:"remaining_points,omitempty"`
 
 	// TokensPerPoint 一个积分覆盖的计费 token 数；客户端把上面四个 token 数换算成积分展示，见 ADR-0068

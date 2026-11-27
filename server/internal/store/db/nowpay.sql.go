@@ -11,43 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const appliedChargePoints = `-- name: AppliedChargePoints :one
-
-SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
-WHERE user_id = $1 AND day = $2::date AND status <> 'failed'
-`
-
-type AppliedChargePointsParams struct {
-	UserID pgtype.Text
-	Day    pgtype.Date
-}
-
-// 即刻收积分核销与购买入口（ADR-0067）。
-// 同一个账号同一天已经申请的积分合计；failed 表示确认没有扣减，不计入。
-func (q *Queries) AppliedChargePoints(ctx context.Context, arg AppliedChargePointsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, appliedChargePoints, arg.UserID, arg.Day)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const balanceForReserve = `-- name: BalanceForReserve :one
-SELECT remaining_points, synced_at FROM nowpay_balance WHERE user_id = $1
-`
-
-type BalanceForReserveRow struct {
-	RemainingPoints int64
-	SyncedAt        pgtype.Timestamptz
-}
-
-// 预留要用的余额副本；没有行表示这个账号还没有同步过余额。
-func (q *Queries) BalanceForReserve(ctx context.Context, userID string) (BalanceForReserveRow, error) {
-	row := q.db.QueryRow(ctx, balanceForReserve, userID)
-	var i BalanceForReserveRow
-	err := row.Scan(&i.RemainingPoints, &i.SyncedAt)
-	return i, err
-}
-
 const chargeStatusCounts = `-- name: ChargeStatusCounts :many
 SELECT status, count(*)::bigint AS count FROM nowpay_charge GROUP BY status ORDER BY status
 `
@@ -78,42 +41,31 @@ func (q *Queries) ChargeStatusCounts(ctx context.Context) ([]ChargeStatusCountsR
 	return items, nil
 }
 
-const chargedPoints = `-- name: ChargedPoints :one
-SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
-WHERE user_id = $1 AND day = $2::date AND status = 'succeeded'
+const dailyChargeTotals = `-- name: DailyChargeTotals :one
+
+SELECT COALESCE(SUM(points) FILTER (WHERE status <> 'failed'), 0)::bigint AS applied,
+       COALESCE(SUM(points) FILTER (WHERE status = 'succeeded'), 0)::bigint AS charged
+FROM nowpay_charge
+WHERE user_id = $1 AND day = $2::date
 `
 
-type ChargedPointsParams struct {
+type DailyChargeTotalsParams struct {
 	UserID pgtype.Text
 	Day    pgtype.Date
 }
 
-// 当天已经核销成功的积分，账号页用它显示“今天已用积分”。pending 与 processing
-// 还没有确认扣减，failed 确认没有扣减，都不计入。
-func (q *Queries) ChargedPoints(ctx context.Context, arg ChargedPointsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, chargedPoints, arg.UserID, arg.Day)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
+type DailyChargeTotalsRow struct {
+	Applied int64
+	Charged int64
 }
 
-const chargedTokens = `-- name: ChargedTokens :one
-SELECT COALESCE(MAX(billed_tokens), 0)::bigint FROM nowpay_charge
-WHERE user_id = $1 AND day = $2::date AND status <> 'failed'
-`
-
-type ChargedTokensParams struct {
-	UserID pgtype.Text
-	Day    pgtype.Date
-}
-
-// 当天已经折算成积分的累计计费量：流水里的 billed_tokens 是当时的当天累计量，
-// 取最大值就是最后一次申请时的累计量。failed 的流水没有扣减，不计入。
-func (q *Queries) ChargedTokens(ctx context.Context, arg ChargedTokensParams) (int64, error) {
-	row := q.db.QueryRow(ctx, chargedTokens, arg.UserID, arg.Day)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
+// 即刻收积分核销与购买入口（ADR-0067）。
+// 余额表尚未建好时，仍可读取当天已经申请和已经成功的积分。
+func (q *Queries) DailyChargeTotals(ctx context.Context, arg DailyChargeTotalsParams) (DailyChargeTotalsRow, error) {
+	row := q.db.QueryRow(ctx, dailyChargeTotals, arg.UserID, arg.Day)
+	var i DailyChargeTotalsRow
+	err := row.Scan(&i.Applied, &i.Charged)
+	return i, err
 }
 
 const deleteExpiredPurchases = `-- name: DeleteExpiredPurchases :execrows
@@ -286,6 +238,50 @@ func (q *Queries) LatestPurchaseLink(ctx context.Context, arg LatestPurchaseLink
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const pointLedgerWithBalance = `-- name: PointLedgerWithBalance :one
+SELECT balance.synced_at,
+       COALESCE(balance.remaining_points, 0)::bigint AS balance_points,
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.day = $1::date), 0)::bigint AS applied,
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.day = $1::date
+           AND charge.status = 'succeeded'), 0)::bigint AS charged,
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.status IN ('pending', 'processing')
+           OR (charge.status = 'succeeded' AND charge.updated_at > balance.synced_at)), 0)::bigint AS unreflected
+FROM (SELECT $2::text AS user_id) account
+LEFT JOIN nowpay_balance AS balance USING (user_id)
+LEFT JOIN nowpay_charge AS charge ON charge.user_id = account.user_id AND charge.status <> 'failed'
+  AND (charge.day = $1::date OR charge.status IN ('pending', 'processing')
+       OR (charge.status = 'succeeded' AND charge.updated_at > balance.synced_at))
+GROUP BY balance.synced_at, balance.remaining_points
+`
+
+type PointLedgerWithBalanceParams struct {
+	Day    pgtype.Date
+	UserID string
+}
+
+type PointLedgerWithBalanceRow struct {
+	SyncedAt      pgtype.Timestamptz
+	BalancePoints int64
+	Applied       int64
+	Charged       int64
+	Unreflected   int64
+}
+
+// 在同一个查询快照中读余额与流水。余额扣减涵盖所有日期的待确认流水及快照后成功
+// 的流水，已申请和已成功的积分只统计指定记账日。synced_at 为空表示从未同步。
+func (q *Queries) PointLedgerWithBalance(ctx context.Context, arg PointLedgerWithBalanceParams) (PointLedgerWithBalanceRow, error) {
+	row := q.db.QueryRow(ctx, pointLedgerWithBalance, arg.Day, arg.UserID)
+	var i PointLedgerWithBalanceRow
+	err := row.Scan(
+		&i.SyncedAt,
+		&i.BalancePoints,
+		&i.Applied,
+		&i.Charged,
+		&i.Unreflected,
 	)
 	return i, err
 }
@@ -467,29 +463,6 @@ func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams
 	var updated_at pgtype.Timestamptz
 	err := row.Scan(&updated_at)
 	return updated_at, err
-}
-
-const unreflectedChargePoints = `-- name: UnreflectedChargePoints :one
-SELECT COALESCE(SUM(points), 0)::bigint FROM nowpay_charge
-WHERE user_id = $1
-  AND (status IN ('pending', 'processing')
-       OR (status = 'succeeded' AND updated_at > $2))
-`
-
-type UnreflectedChargePointsParams struct {
-	UserID pgtype.Text
-	AsOf   pgtype.Timestamptz
-}
-
-// 副本还没有反映的核销积分（ADR-0073）。pending 与 processing 一律计入，因为扣减
-// 还没有确认；succeeded 只有在快照之后才确认的才计入，终态行的 updated_at 视为确认
-// 时间；failed 确认没有扣减，不计入。按确认时间而不是创建时间判断，是因为核销行先
-// 创建、后成功，乱序时旧规则会把已经反映的扣减再算一遍。
-func (q *Queries) UnreflectedChargePoints(ctx context.Context, arg UnreflectedChargePointsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, unreflectedChargePoints, arg.UserID, arg.AsOf)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
 }
 
 const unsettledCharges = `-- name: UnsettledCharges :many

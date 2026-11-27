@@ -63,20 +63,17 @@ func (s *Store) Reserve(ctx context.Context, userID, day string, kind llmproxy.K
 	if limited {
 		freeRemaining = max(0, limit-used)
 	}
-	paid := int64(0)
-	hasPoints := false
-	syncing := false
-	if limited {
-		allowed := freeRemaining
-		// 免费额度不够这一次预留时才算余额：额度内的请求不读副本，也不触发查询。
-		if allowed < want && kind == llmproxy.KindChat && s.nowpay != nil {
+	// 免费额度不够这一次预留时才算余额：额度内的请求不读副本，也不触发查询。
+	if paidNeeded := want - freeRemaining; limited && paidNeeded > 0 {
+		var paid int64
+		var hasPoints, syncing bool
+		if kind == llmproxy.KindChat && s.nowpay != nil {
 			paid, hasPoints, syncing, err = s.paidTokens(ctx, q, userID, date, used, limit)
 			if err != nil {
 				return 0, err
 			}
-			allowed += paid
 		}
-		if want > allowed {
+		if paidNeeded > paid {
 			// 余额副本缺失或过期、刷新刚刚入队时，这一轮说不准是不是真的不够，
 			// 回 syncing 让客户端稍后重试；副本新鲜却不够时，有积分是 points，
 			// 没有积分是 account（ADR-0073）。

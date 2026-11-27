@@ -37,8 +37,7 @@ type Quota interface {
 	// InstanceUsed 返回实例当天的账本用量，用于展示与判断实例预算。账本与账号
 	// 无关，删号不会减少它。
 	InstanceUsed(ctx context.Context, day string) (int64, error)
-	// Points 返回账号的积分视图：当天已经核销成功的积分与可用积分（余额副本减去
-	// 没有反映的核销、再减去当天已占用未记流水的计费量）。两个数各自有一个“已知”
+	// Points 返回账号当天核销成功的积分和余额中尚未占用的整积分。两个数各自有一个“已知”
 	// 标记：没有开通收款时都给不出，余额副本还没建好或账号还没有副本时只给已核销
 	// 积分，接口据此分别决定哪个字段回 null，见 ADR-0073。
 	Points(ctx context.Context, userID, day string) (Points, error)

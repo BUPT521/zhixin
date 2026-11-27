@@ -73,53 +73,6 @@ func (s *Store) SaveBalance(ctx context.Context, userID string, remaining int64,
 	})
 }
 
-// Points 返回账号的积分视图：当天已经核销成功的积分与可用积分。没有配置即刻收时
-// 两个数都不给；配置了收款但余额副本表还没建好、或者账号还没有副本时只给已核销
-// 积分，可用积分等副本可用之后再给，契约里两个字段各按自己的条件给 null。可用积分
-// 与预留放行用同一个口径：副本减去还没有反映的核销，再减去当天已经占用（已结算与
-// 在途预留）、还没有记进流水的计费量折成的积分，账号页显示的数因此不会大于实际能
-// 放行的量（ADR-0073）。
-func (s *Store) Points(ctx context.Context, userID, day string) (llmproxy.Points, error) {
-	if s.nowpay == nil {
-		return llmproxy.Points{}, nil
-	}
-	date, err := pgDate(day)
-	if err != nil {
-		return llmproxy.Points{}, err
-	}
-	charged, err := s.q.ChargedPoints(ctx, db.ChargedPointsParams{UserID: text(userID), Day: date})
-	if err != nil {
-		return llmproxy.Points{}, fmt.Errorf("pg: 读取当天已核销积分失败: %w", err)
-	}
-	// 已核销积分只看 nowpay_charge，副本表没建好也能查；它因此先立住，不被可用积分
-	// 的缺失一起藏掉。
-	points := llmproxy.Points{Charged: charged, ChargedKnown: true}
-	if !s.balanceReady.Load() {
-		return points, nil
-	}
-	limit, limited, err := s.accountLimit(ctx, s.q, userID, llmproxy.KindChat)
-	if err != nil {
-		return llmproxy.Points{}, err
-	}
-	// 与额度放行用同一份入参：已结算量与在途预留之和。只看已结算时，有在途请求
-	// 的账号页会显示比实际还能放行的积分更多的数，用户照它发请求会收到 points
-	// 429（ADR-0073）。
-	used, err := usedTokens(ctx, s.q, userID, date, llmproxy.KindChat)
-	if err != nil {
-		return llmproxy.Points{}, err
-	}
-	view, err := s.balancePoints(ctx, s.q, userID, date, used, limit, limited)
-	if err != nil {
-		return llmproxy.Points{}, err
-	}
-	if !view.known {
-		return points, nil
-	}
-	points.Remaining, points.RemainingKnown = view.points, true
-	points.SyncedAt = view.syncedAt
-	return points, nil
-}
-
 // PointCharges 返回账号最近的核销流水，供管理后台查看。没有开通收款时返回空；
 // 只读，不改变流水状态。删号之后解除关联的行不再属于任何账号，不返回。
 func (s *Store) PointCharges(ctx context.Context, userID string, limit int) ([]llmproxy.PointCharge, error) {
@@ -155,17 +108,15 @@ func (s *Store) RefreshPoints(ctx context.Context, userID string) (bool, error) 
 	return true, nil
 }
 
-// ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。同一天同一账号
-// 的申请用事务级 advisory lock 排队：并发结算是不同请求，行锁管不到还没有的行，
-// 只看一次已申请量会让两笔各自再扣一次。
+// ReservePoints 在一个事务里比较当天已申请的积分再决定写不写流水。账号的积分
+// 余额跨日通用，所以同一账号的核销申请按账号串行，包括跨日结算。
 //
 // 余额副本也在同一个事务与同一把锁里读，按可用积分收口申请量（ADR-0073）：先算当天
 // 还没有申请的差额（累计应扣减去已经申请的积分），再按可用积分截断这个差额。已经申请
 // 的积分有一部分已经成功、体现在副本里，另一部分待确认、计入了可用积分的扣减，所以
 // 截断的对象只能是差额，不能再拿已经申请的量去减一次可用积分。可用积分为零时不写
 // 流水、不调用即刻收；差额大于可用积分时只申请可用积分的那一部分，差额等余额补上之后
-// 的下一次结算再算。副本行不存在、余额表未就绪或读取失败时保持整额申请，一次读取
-// 失败不会少记账。
+// 的下一次结算再算。没有副本时按当天尚未申请的差额核销。
 func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, required int64) (nowpay.Charge, bool, error) {
 	if required <= 0 || charge.UserID == "" || charge.ID == "" {
 		return nowpay.Charge{}, false, nil
@@ -180,37 +131,20 @@ func (s *Store) ReservePoints(ctx context.Context, charge nowpay.Charge, require
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`,
-		"nowpay:"+charge.UserID+":"+charge.Day); err != nil {
-		return nowpay.Charge{}, false, fmt.Errorf("pg: 锁定当日积分核销失败: %w", err)
+		"nowpay:charge:"+charge.UserID); err != nil {
+		return nowpay.Charge{}, false, fmt.Errorf("pg: 锁定账号积分核销失败: %w", err)
 	}
 	q := db.New(tx)
+	ledger, err := s.readPointLedger(ctx, q, charge.UserID, date)
+	if err != nil {
+		return nowpay.Charge{}, false, err
+	}
 	// available 为负表示副本未知，按整额申请处理。
 	available := int64(-1)
-	if s.balanceReady.Load() {
-		balance, err := q.BalanceForReserve(ctx, charge.UserID)
-		switch {
-		case errors.Is(err, pgx.ErrNoRows):
-			// 还没有副本行，按未知处理，保持整额申请。
-		case err != nil:
-			s.log.Error("read the nowpay balance copy for the charge",
-				"user_id", charge.UserID, "error", err)
-		default:
-			unreflected, err := q.UnreflectedChargePoints(ctx, db.UnreflectedChargePointsParams{
-				UserID: text(charge.UserID), AsOf: balance.SyncedAt,
-			})
-			if err != nil {
-				s.log.Error("read the unreflected nowpay charges",
-					"user_id", charge.UserID, "error", err)
-			} else {
-				available = max(balance.RemainingPoints-unreflected, 0)
-			}
-		}
+	if ledger.balanceKnown {
+		available = ledger.balancePoints
 	}
-	applied, err := q.AppliedChargePoints(ctx, db.AppliedChargePointsParams{UserID: text(charge.UserID), Day: date})
-	if err != nil {
-		return nowpay.Charge{}, false, fmt.Errorf("pg: 读取当日已申请积分失败: %w", err)
-	}
-	points := chargeDelta(required, applied, available)
+	points := chargeDelta(required, ledger.applied, available)
 	if points <= 0 {
 		return nowpay.Charge{}, false, nil
 	}
@@ -504,82 +438,4 @@ func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtyp
 // 剩下的才折成积分（ADR-0067）。
 func chargeableTokens(used, limit int64) int64 {
 	return max(0, used-limit)
-}
-
-// paidTokens 返回免费额度之外还可以由积分承担、因此可以放行的计费 token 数，账号
-// 是否有已购积分，以及副本是否刚刚排过刷新。第三个返回值用于区分 429 的原因：
-// 副本缺失或过期、查询刚刚入队时是 syncing，客户端提示稍后重试而不是引导购买；
-// 副本新鲜却不够时才分 points 与 account（ADR-0073）。
-//
-// 余额取本地副本，预留因此不在请求路径上调用即刻收（ADR-0069）。副本缺失或距上次
-// 快照超过 nowpay.BalanceRefreshAfter 时排一次异步查询，并报告这次是否真的入队
-// （同一账号一分钟内只入队一次）；这一轮仍按现有副本判断。
-func (s *Store) paidTokens(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, used, limit int64) (int64, bool, bool, error) {
-	view, err := s.balancePoints(ctx, q, userID, date, used, limit, true)
-	if err != nil {
-		return 0, false, false, err
-	}
-	syncing := false
-	if view.stale {
-		syncing = s.nowpay.RefreshBalance(ctx, userID)
-	}
-	// hasPoints 看扣掉当天未记流水的计费量之前的余额：积分都在在途请求里时，用户
-	// 手上确实还有已购积分，429 按 points 说“不够这一次”，不按 account 说没有积分。
-	return view.points * s.nowpay.TokensPerPoint(), view.raw > 0, syncing, nil
-}
-
-// balanceView 是余额副本的读数。points 是可用积分，raw 是副本减去没有反映的核销、
-// 还没有扣当天未记流水的计费量。
-type balanceView struct {
-	points   int64
-	raw      int64
-	known    bool
-	stale    bool
-	syncedAt time.Time
-}
-
-// balancePoints 读余额副本并算出可用积分：副本减去还没有反映的核销，再减去当天
-// 已经占用（已结算与在途预留）、还没有记进流水的计费量折成的积分（向下取整）。
-// known 为假表示余额表未就绪或账号还没有副本；stale 表示副本缺失或距快照超过需要
-// 重新查询的间隔，调用方据此决定是否排一次刷新。账号页的剩余积分与 paidTokens
-// 共用这一处、也共用同一份入参，显示的数因此不会大于实际能放行的量（ADR-0073）。
-func (s *Store) balancePoints(ctx context.Context, q *db.Queries, userID string, date pgtype.Date, used, limit int64, limited bool) (balanceView, error) {
-	// 副本表还没建好时只放行免费额度，不去查一张不存在的表。
-	if !s.balanceReady.Load() {
-		return balanceView{}, nil
-	}
-	balance, err := q.BalanceForReserve(ctx, userID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return balanceView{stale: true}, nil
-	}
-	if err != nil {
-		return balanceView{}, fmt.Errorf("pg: 读取积分余额副本失败: %w", err)
-	}
-	unreflected, err := q.UnreflectedChargePoints(ctx, db.UnreflectedChargePointsParams{
-		UserID: text(userID), AsOf: balance.SyncedAt,
-	})
-	if err != nil {
-		return balanceView{}, fmt.Errorf("pg: 读取副本没有反映的核销积分失败: %w", err)
-	}
-	charged, err := q.ChargedTokens(ctx, db.ChargedTokensParams{UserID: text(userID), Day: date})
-	if err != nil {
-		return balanceView{}, fmt.Errorf("pg: 读取当天已核销的计费量失败: %w", err)
-	}
-	unbilled := int64(0)
-	if limited {
-		unbilled = max(chargeableTokens(used, limit)-charged, 0)
-	}
-	view := balanceView{
-		raw:      max(balance.RemainingPoints-unreflected, 0),
-		known:    true,
-		stale:    time.Since(balance.SyncedAt.Time) > nowpay.BalanceRefreshAfter,
-		syncedAt: balance.SyncedAt.Time,
-	}
-	view.points = view.raw
-	if unbilled > 0 {
-		if perPoint := s.nowpay.TokensPerPoint(); perPoint > 0 {
-			view.points = max(view.points-unbilled/perPoint, 0)
-		}
-	}
-	return view, nil
 }

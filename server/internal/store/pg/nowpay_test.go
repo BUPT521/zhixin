@@ -7,12 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/nowpay"
-	"github.com/BUPT521/zhixin/server/internal/store/db"
 )
 
 func TestChargeableTokensSubtractsTheFreeAllowance(t *testing.T) {
@@ -395,6 +392,60 @@ func TestPostgresPointsMatchTheAmountThatCanBeReleased(t *testing.T) {
 	}
 }
 
+func TestPostgresPointsAccountForPartialReservationsAndCappedCharges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	const day = "2026-11-25"
+	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
+	st.SetQuotaLimits(100, 0, 0)
+	if err := st.SaveBalance(ctx, "u1", 1, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 500); err != nil || got != 500 {
+		t.Fatalf("应预留免费额度 100 和付费额度 400，得到 %d %v", got, err)
+	}
+	points, err := st.Points(ctx, "u1", day)
+	if err != nil || !points.RemainingKnown || points.Remaining != 0 {
+		t.Fatalf("部分占用的积分不能再作为整积分展示: %+v %v", points, err)
+	}
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 601); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+		t.Fatalf("只能再放行 600 个计费 token，得到 %v", err)
+	}
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 600); err != nil || got != 600 {
+		t.Fatalf("积分覆盖的余量应可以用完，得到 %d %v", got, err)
+	}
+
+	// 结算用量包含一次超出预留的实际用量。余额一分，流水的累计用量仍是 2,400。
+	if err := st.Settle(ctx, "u1", day, llmproxy.KindChat, "", 1100, 2500, llmproxy.Usage{}, llmproxy.SettleAttempt{}); err != nil {
+		t.Fatalf("settle: %v", err)
+	}
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_capped", UserID: "u1", Day: day, Tokens: 2400}, 3)
+	if err != nil || !ok || charge.Points != 1 {
+		t.Fatalf("核销应受余额限制: %+v %v %v", charge, ok, err)
+	}
+	confirmedAt, err := st.SetStatus(ctx, charge.ID, nowpay.StatusSucceeded, "")
+	if err != nil {
+		t.Fatalf("confirm charge: %v", err)
+	}
+	if err := st.SaveBalance(ctx, "u1", 2, confirmedAt); err != nil {
+		t.Fatalf("save replenished balance: %v", err)
+	}
+	points, err = st.Points(ctx, "u1", day)
+	if err != nil || points.Charged != 1 || !points.RemainingKnown || points.Remaining != 0 {
+		t.Fatalf("两分余额已被未覆盖的 1,400 个计费 token 部分占用: %+v %v", points, err)
+	}
+	if _, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 601); !errors.Is(err, llmproxy.ErrQuotaExceeded) {
+		t.Fatalf("截断的流水只覆盖实际申请的一分，得到 %v", err)
+	}
+	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 600); err != nil || got != 600 {
+		t.Fatalf("补充余额后应能预留 600 个计费 token，得到 %d %v", got, err)
+	}
+}
+
 // TestPostgresPointsKeepTheChargedTotalWithoutABalanceCopy 守住副本缺失时已核销积分
 // 照常返回：契约里 charged_points 只在没有开通收款时为 null，账号还没有副本时不该
 // 把已经扣掉的积分一起藏掉（ADR-0071）。
@@ -492,12 +543,12 @@ func TestPostgresSaveBalanceClampsNegative(t *testing.T) {
 	if err := st.SaveBalance(ctx, "u1", -3, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
-	row, err := st.q.BalanceForReserve(ctx, "u1")
-	if err != nil {
+	var remaining int64
+	if err := st.pool.QueryRow(ctx, `SELECT remaining_points FROM nowpay_balance WHERE user_id = 'u1'`).Scan(&remaining); err != nil {
 		t.Fatalf("read balance: %v", err)
 	}
-	if row.RemainingPoints != 0 {
-		t.Fatalf("副本不应是负数，得到 %d", row.RemainingPoints)
+	if remaining != 0 {
+		t.Fatalf("副本不应是负数，得到 %d", remaining)
 	}
 }
 
@@ -524,6 +575,33 @@ func TestPostgresReservePointsCapsAtTheBalanceCopy(t *testing.T) {
 		ID: "nc_2", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
 	}, 20); err != nil || ok {
 		t.Fatalf("副本已被占满时不该再写流水: %v %v", ok, err)
+	}
+}
+
+func TestPostgresReservePointsSharesTheBalanceAcrossDays(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	enablePaidQuota(t, st)
+	if err := st.SaveBalance(ctx, "u1", 1, time.Now()); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	type result struct {
+		points int64
+		err    error
+	}
+	results := make(chan result, 2)
+	for _, day := range []string{"2026-11-25", "2026-11-26"} {
+		go func() {
+			charge, _, err := st.ReservePoints(ctx, nowpay.Charge{ID: "nc_" + day, UserID: "u1", Day: day, Tokens: 1000}, 1)
+			results <- result{points: charge.Points, err: err}
+		}()
+	}
+	first, second := <-results, <-results
+	if total := first.points + second.points; first.err != nil || second.err != nil || total != 1 {
+		t.Fatalf("跨日并发核销合计只能申请余额中的一分，得到 %d %v %v", total, first.err, second.err)
 	}
 }
 
@@ -643,7 +721,7 @@ func TestPostgresReservePointsCapsTheDifferenceNotTheDayTotal(t *testing.T) {
 }
 
 // TestPostgresReservePointsWithoutBalanceCopyChargesInFull 守住读不到副本时不截断：
-// 没有副本行、余额表未就绪或读取失败都按整额申请，一次读取失败不会少记账。
+// 没有副本行或余额表未就绪时按尚未申请的差额核销。
 func TestPostgresReservePointsWithoutBalanceCopyChargesInFull(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -828,23 +906,20 @@ func TestPostgresSaveBalanceKeepsTheNewerSnapshot(t *testing.T) {
 	if err := st.SaveBalance(ctx, "u1", 2, base.Add(-time.Hour)); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
-	row, err := st.q.BalanceForReserve(ctx, "u1")
-	if err != nil {
-		t.Fatalf("read balance: %v", err)
+	checkBalance := func(want int64, wantTime time.Time) {
+		t.Helper()
+		var remaining int64
+		var syncedAt time.Time
+		err := st.pool.QueryRow(ctx, `SELECT remaining_points, synced_at FROM nowpay_balance WHERE user_id = 'u1'`).Scan(&remaining, &syncedAt)
+		if err != nil || remaining != want || !syncedAt.Equal(wantTime) {
+			t.Fatalf("余额应为 %d、快照为 %v，得到 %d %v %v", want, wantTime, remaining, syncedAt, err)
+		}
 	}
-	if row.RemainingPoints != 5 || !row.SyncedAt.Time.Equal(base) {
-		t.Fatalf("旧快照不应覆盖新副本，得到 %d %v", row.RemainingPoints, row.SyncedAt.Time)
-	}
+	checkBalance(5, base)
 	if err := st.SaveBalance(ctx, "u1", 7, base.Add(time.Minute)); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
-	row, err = st.q.BalanceForReserve(ctx, "u1")
-	if err != nil {
-		t.Fatalf("read balance: %v", err)
-	}
-	if row.RemainingPoints != 7 || !row.SyncedAt.Time.Equal(base.Add(time.Minute)) {
-		t.Fatalf("新快照应覆盖副本，得到 %d %v", row.RemainingPoints, row.SyncedAt.Time)
-	}
+	checkBalance(7, base.Add(time.Minute))
 }
 
 // TestPostgresUnreflectedChargesFollowTheSnapshot 守住未反映流水的判断：pending 与
@@ -857,33 +932,37 @@ func TestPostgresUnreflectedChargesFollowTheSnapshot(t *testing.T) {
 	}
 	enablePaidQuota(t, st)
 	asOf := time.Date(2026, 11, 25, 10, 0, 0, 0, time.UTC)
+	if err := st.SaveBalance(ctx, "u1", 10, asOf); err != nil {
+		t.Fatalf("save balance: %v", err)
+	}
+	const day = "2026-11-25"
 	for _, charge := range []struct {
 		id      string
+		day     string
 		status  string
 		points  int64
 		created time.Time
 		updated time.Time
 	}{
-		{"nc_pending_old", nowpay.StatusPending, 1, asOf.Add(-time.Hour), asOf.Add(-time.Hour)},
-		{"nc_succeeded_new", nowpay.StatusSucceeded, 2, asOf.Add(-time.Hour), asOf.Add(time.Minute)},
-		{"nc_succeeded_old", nowpay.StatusSucceeded, 4, asOf.Add(-2 * time.Hour), asOf.Add(-time.Hour)},
-		{"nc_failed_new", nowpay.StatusFailed, 8, asOf.Add(-time.Hour), asOf.Add(time.Minute)},
+		{"nc_pending_old", "2026-11-24", nowpay.StatusPending, 1, asOf.Add(-time.Hour), asOf.Add(-time.Hour)},
+		{"nc_succeeded_new", day, nowpay.StatusSucceeded, 2, asOf.Add(-time.Hour), asOf.Add(time.Minute)},
+		{"nc_succeeded_old", day, nowpay.StatusSucceeded, 4, asOf.Add(-2 * time.Hour), asOf.Add(-time.Hour)},
+		{"nc_failed_new", day, nowpay.StatusFailed, 8, asOf.Add(-time.Hour), asOf.Add(time.Minute)},
 	} {
 		if _, err := st.pool.Exec(ctx,
 			`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
-			 VALUES ($1, 'u1', '2026-11-25'::date, $2, $2, $3, $4, $5)`,
-			charge.id, charge.points, charge.status, charge.created, charge.updated); err != nil {
+			 VALUES ($1, 'u1', $2::date, $3, $3, $4, $5, $6)`,
+			charge.id, charge.day, charge.points, charge.status, charge.created, charge.updated); err != nil {
 			t.Fatalf("insert charge: %v", err)
 		}
 	}
-	got, err := st.q.UnreflectedChargePoints(ctx, db.UnreflectedChargePointsParams{
-		UserID: text("u1"), AsOf: pgtype.Timestamptz{Time: asOf, Valid: true},
-	})
+	date, err := pgDate(day)
 	if err != nil {
-		t.Fatalf("unreflected: %v", err)
+		t.Fatal(err)
 	}
-	if got != 3 {
-		t.Fatalf("未反映的积分应为 pending 1 + 快照后成功的 2 = 3，得到 %d", got)
+	ledger, err := st.readPointLedger(ctx, st.q, "u1", date)
+	if err != nil || ledger.balancePoints != 7 || ledger.applied != 6 || ledger.charged != 6 {
+		t.Fatalf("余额应扣前一天待确认的 1 分和快照后成功的 2 分，当天只计成功的 6 分: %+v %v", ledger, err)
 	}
 }
 
