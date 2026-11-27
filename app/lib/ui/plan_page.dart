@@ -29,16 +29,21 @@ class PlanPage extends StatefulWidget {
     this.tabIndex = 2,
     this.request,
     this.watchOverview,
+    this.itemById,
     this.preload,
   }) : initialItemId = null;
 
   /// 事项详情入口：推入一条事项并展开它的操作面板，不参与底栏切栏。
-  const PlanPage.detail({super.key, required String itemId, this.watchOverview})
-    : initialItemId = itemId,
-      activeTab = null,
-      tabIndex = 2,
-      request = null,
-      preload = null;
+  const PlanPage.detail({
+    super.key,
+    required String itemId,
+    this.watchOverview,
+    this.itemById,
+  }) : initialItemId = itemId,
+       activeTab = null,
+       tabIndex = 2,
+       request = null,
+       preload = null;
 
   /// 详情页要展开的事项；为空时按底栏页处理。
   final String? initialItemId;
@@ -56,14 +61,19 @@ class PlanPage extends StatefulWidget {
 
   final Stream<PlanOverview> Function()? watchOverview;
 
+  /// 按编号补读一条事项；为空时走应用根里的安排服务，测试可以换一份。
+  final Future<PlanItem?> Function(String id)? itemById;
+
   @override
   State<PlanPage> createState() => _PlanPageState();
 }
 
 class _PlanPageState extends State<PlanPage> {
-  PlanOverview? _overview;
   Stream<PlanOverview>? _stream;
   String? _error;
+
+  /// 详情入口补读事项失败时的说明；为空表示没有失败。
+  String? _openFailure;
   bool _openedInitial = false;
   int _tab = 0;
 
@@ -142,12 +152,11 @@ class _PlanPageState extends State<PlanPage> {
     _error = null;
   });
 
+  /// 一屏结果到达：清掉失败说明，再处理详情入口。界面由 `LiveView` 的 builder
+  /// 用传入的 `data` 重建，这里不再另外 setState，一次结果只重建一次。
   void _onOverview(PlanOverview overview) {
-    setState(() {
-      _overview = overview;
-      _error = null;
-    });
-    unawaited(_openInitial());
+    _error = null;
+    unawaited(_openInitial(overview));
   }
 
   void _onReadError(Object error, StackTrace stack) {
@@ -162,13 +171,42 @@ class _PlanPageState extends State<PlanPage> {
     setState(() => _error = message);
   }
 
-  Future<void> _openInitial() async {
+  /// 详情入口：先在这一份数据里找，找不到再补读一条。
+  ///
+  /// 查不到与读失败分开处理：查不到（例如已完成列表里的旧编号）保持现状、不打开
+  /// 任何页面；读失败时记下说明，在详情页里就地显示，不再静默。
+  Future<void> _openInitial(PlanOverview overview) async {
     final itemId = widget.initialItemId;
     if (itemId == null || _openedInitial) return;
     _openedInitial = true;
-    final item = await _itemById(itemId);
+    final PlanItem? item;
+    try {
+      item = await _itemById(overview, itemId);
+    } catch (error, stack) {
+      if (!mounted) return;
+      final message = describeFailure(
+        context,
+        error,
+        stack,
+        action: '读取事项详情',
+        kind: 'plan_item_detail_read',
+        kept: '安排与学习记录没有改动',
+        next: '可以再试一次',
+      );
+      setState(() => _openFailure = message);
+      return;
+    }
     if (!mounted || item == null) return;
-    await _actions().openItem(item);
+    await _actions(overview).openItem(item);
+  }
+
+  /// 补读失败之后重试：重新走一遍详情入口，已经读到的说明先收起。
+  void _retryOpenInitial(PlanOverview overview) {
+    setState(() {
+      _openedInitial = false;
+      _openFailure = null;
+    });
+    unawaited(_openInitial(overview));
   }
 
   void _onActiveChanged() {
@@ -182,38 +220,35 @@ class _PlanPageState extends State<PlanPage> {
   }
 
   /// 已完成列表里可能读到的事项目前不在这一份数据里：先查已读到的，再补读。
-  Future<PlanItem?> _itemById(String id) async {
-    for (final item in _overview?.items ?? const <PlanItem>[]) {
+  ///
+  /// 补读的失败向上抛给 [openInitial]，由它转成说明；这里不把失败吞成“查不到”。
+  Future<PlanItem?> _itemById(PlanOverview overview, String id) async {
+    for (final item in overview.items) {
       if (item.id == id) return item;
     }
-    try {
-      return await AppScope.of(context).study.plan.itemById(id);
-    } catch (_) {
-      return null;
-    }
+    return (widget.itemById ?? AppScope.of(context).study.plan.itemById)(id);
   }
 
   /// 页面的写入动作；每次重建换一份，页签按需调用。
-  PlanActions _actions() => PlanActions(
+  PlanActions _actions(PlanOverview? week) => PlanActions(
     context: context,
-    week: _overview,
+    week: week,
     onReportFailure: _reportFailure,
-    goalName: _goalName,
+    goalName: (goalId) => _goalName(week, goalId),
     openStudy: openPlanItem,
     openDiscussion: openDiscussion,
     openStudyPlan: openStudyPlan,
   );
 
-  String _goalName(String? id) {
+  String _goalName(PlanOverview? week, String? id) {
     if (id == null) return '无归属';
-    final goals = _overview?.goals ?? const <LearningGoal>[];
+    final goals = week?.goals ?? const <LearningGoal>[];
     return goals.where((goal) => goal.id == id).firstOrNull?.title ?? '目标已删除';
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final actions = _actions();
     return TabScaffold(
       header: ZhixinHeader(
         nested: widget.initialItemId != null,
@@ -233,10 +268,10 @@ class _PlanPageState extends State<PlanPage> {
               stream: _stream,
               onData: _onOverview,
               onError: _onReadError,
-              builder: (context, snapshot, loading) {
-                final overview = _overview;
+              builder: (context, overview, loading) {
+                // 只用订阅传进来的这一份数据，不再读页面上的影子字段。
                 if (overview != null) {
-                  return _loadedOverview(theme, overview, actions);
+                  return _loadedOverview(theme, overview);
                 }
                 if (_error == null && loading) return _loadingOverview(theme);
                 return _errorNotice(theme);
@@ -283,48 +318,55 @@ class _PlanPageState extends State<PlanPage> {
     ),
   );
 
-  Widget _loadedOverview(
-    ZhixinTheme theme,
-    PlanOverview overview,
-    PlanActions actions,
-  ) => FadeIn(
-    child: PageWidth(
-      child: Column(
-        children: [
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-            child: _tabBar(theme),
-          ),
-          if (_error != null)
+  Widget _loadedOverview(ZhixinTheme theme, PlanOverview overview) {
+    final actions = _actions(overview);
+    return FadeIn(
+      child: PageWidth(
+        child: Column(
+          children: [
             Padding(
-              padding: theme.space.pageInsets(bottom: theme.space.sm),
-              child: InlineNotice(message: _error!, onRetry: _reload),
+              padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+              child: _tabBar(theme),
             ),
-          Expanded(
-            child: TabSlideStack(
-              index: _tab,
-              children: [
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-                  key: const ValueKey('plan-tab-layer-0'),
-                  child: PlanItemsTab(
-                    week: overview,
-                    actions: actions,
-                    visible: _active && _tab == 0,
+            if (_openFailure case final message?)
+              Padding(
+                padding: theme.space.pageInsets(bottom: theme.space.sm),
+                child: InlineNotice(
+                  message: message,
+                  onRetry: () => _retryOpenInitial(overview),
+                ),
+              ),
+            if (_error != null)
+              Padding(
+                padding: theme.space.pageInsets(bottom: theme.space.sm),
+                child: InlineNotice(message: _error!, onRetry: _reload),
+              ),
+            Expanded(
+              child: TabSlideStack(
+                index: _tab,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                    key: const ValueKey('plan-tab-layer-0'),
+                    child: PlanItemsTab(
+                      week: overview,
+                      actions: actions,
+                      visible: _active && _tab == 0,
+                    ),
                   ),
-                ),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-                  key: const ValueKey('plan-tab-layer-1'),
-                  child: PlanGoalsTab(week: overview, actions: actions),
-                ),
-              ],
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                    key: const ValueKey('plan-tab-layer-1'),
+                    child: PlanGoalsTab(week: overview, actions: actions),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _tabBar(ZhixinTheme theme) => Padding(
     padding: EdgeInsets.only(top: theme.space.xs, bottom: theme.space.sm),

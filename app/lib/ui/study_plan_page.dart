@@ -38,7 +38,13 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   /// 最近一次读回的一屏；动作处理从这里取当前计划。
   StudyPlanScreen? _screen;
   bool _busy = false;
+
+  /// 一次性结果说明：一次动作之后的消息，以及它是不是失败。
+  ///
+  /// 成功与失败都只保存消息与这一个标记，用哪一种是 [ResultNotice] 的事，页面
+  /// 不再每次动作各自拼错误框或一行小字。
   String? _notice;
+  bool _noticeFailed = false;
 
   /// 首读失败过：标题栏照常显示，内容区给说明与重试入口。
   bool _readFailed = false;
@@ -72,6 +78,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     setState(() {
       _readFailed = true;
       _notice = message;
+      _noticeFailed = true;
     });
   }
 
@@ -80,8 +87,17 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     setState(() {
       _readFailed = false;
       _notice = null;
+      _noticeFailed = false;
       _stream = AppScope.of(context).study.systemPlan
           .watchScreen(widget.planId);
+    });
+  }
+
+  /// 记下一条一次性说明；失败的动作与普通说明只差这一个标记。
+  void _setNotice(String message, {required bool failed}) {
+    setState(() {
+      _notice = message;
+      _noticeFailed = failed;
     });
   }
 
@@ -142,8 +158,8 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       }
     } catch (error, stack) {
       if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
+      _setNotice(
+        describeFailure(
           context,
           error,
           stack,
@@ -152,6 +168,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
           kept: '计划没有改动',
           next: '可以再试一次',
         ),
+        failed: true,
       );
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -164,8 +181,8 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
           .setStepStatus(widget.planId, step.id, status);
     } catch (error, stack) {
       if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
+      _setNotice(
+        describeFailure(
           context,
           error,
           stack,
@@ -174,6 +191,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
           kept: '步骤状态没有改动',
           next: '可以再试一次',
         ),
+        failed: true,
       );
     }
   }
@@ -186,8 +204,8 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       await _openDiscussion(id);
     } catch (error, stack) {
       if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
+      _setNotice(
+        describeFailure(
           context,
           error,
           stack,
@@ -196,6 +214,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
           kept: '计划没有改动',
           next: '可以再试一次',
         ),
+        failed: true,
       );
     }
   }
@@ -213,7 +232,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       if (!mounted) return;
       final commitId = result.commitId;
       if (!result.changed || commitId == null) {
-        setState(() => _notice = '计划状态没有变化。');
+        _setNotice('计划状态没有变化。', failed: false);
         return;
       }
       showActionToast(
@@ -224,8 +243,8 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       );
     } catch (error, stack) {
       if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
+      _setNotice(
+        describeFailure(
           context,
           error,
           stack,
@@ -234,6 +253,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
           kept: '计划状态没有改动',
           next: '可以再试一次',
         ),
+        failed: true,
       );
     }
   }
@@ -315,8 +335,9 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
           if (_notice != null)
             Padding(
               padding: EdgeInsets.only(top: theme.space.md),
-              child: InlineNotice(
+              child: ResultNotice(
                 message: _notice!,
+                failed: _noticeFailed,
                 onRetry: _readFailed ? _retryRead : null,
               ),
             ),
