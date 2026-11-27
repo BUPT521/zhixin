@@ -8,7 +8,6 @@ import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
 import '../app_scope.dart';
 import '../application/docx_import.dart';
 import '../application/material_search.dart';
-import '../application/request_gate.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/text.dart';
 import 'docx_review_dialog.dart';
@@ -16,6 +15,7 @@ import 'failure_feedback.dart';
 import 'goal_picker.dart';
 import 'live_view.dart';
 import 'navigation.dart';
+import 'search_state.dart';
 import 'theme.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
@@ -116,19 +116,21 @@ class MaterialListState extends State<MaterialList> {
   /// 读取失败时就地说明；有内容时仍显示上一次读到的列表。
   String? _notice;
 
-  /// 材料查找：输入框、最后一次查询与已经取回的命中。
-  ///
-  /// 查找是本地查询，不调用模型；查询或筛选变化后只显示最后一次请求的结果，
-  /// 旧请求晚到就按编号丢弃（与记录页查找同一套 [RequestGate]）。
+  /// 材料查找：输入框与查找状态。查找是本地查询，不调用模型；查询变化后只
+  /// 显示最后一次请求的结果，翻页按材料标识去重。
   final TextEditingController _searchField = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
-  final RequestGate _requests = RequestGate();
-  Timer? _searchDebounce;
-  MaterialSearchResults? _results;
+  final SearchState<MaterialMatch> _matches = SearchState<MaterialMatch>(
+    key: (match) => match.material.id,
+  );
   String _appliedQuery = '';
-  bool _searching = false;
-  bool _loadingMore = false;
   String? _searchNotice;
+
+  @override
+  void initState() {
+    super.initState();
+    _matches.addListener(_onSearchChanged);
+  }
 
   @override
   void didChangeDependencies() {
@@ -180,101 +182,74 @@ class MaterialListState extends State<MaterialList> {
 
   @override
   void dispose() {
-    _searchDebounce?.cancel();
+    _matches.removeListener(_onSearchChanged);
+    _matches.dispose();
     _searchField.dispose();
     _searchFocus.dispose();
     super.dispose();
   }
 
-  /// 输入停下之后再查一次，免得每敲一个字都读一遍库。
-  void _onQueryChanged(String text) {
-    _searchDebounce?.cancel();
-    // 清除按钮跟着输入框里的字出现，不等这一次查找返回；记录页也据此收起页签。
-    setState(() {});
-    onQueryChanged?.call();
-    _searchDebounce = Timer(const Duration(milliseconds: 250), () {
-      if (mounted) _search(text);
-    });
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
   }
 
-  /// 查询或筛选变化后只显示最后一次请求的结果：旧请求晚到时就地丢弃。
-  Future<void> _search(String text) async {
-    _searchDebounce?.cancel();
-    final query = text.trim();
-    final requestId = _requests.start();
-    if (query.isEmpty) {
-      setState(() {
-        _results = null;
-        _appliedQuery = '';
-        _searching = false;
-        _loadingMore = false;
-        _searchNotice = null;
-      });
-      onQueryChanged?.call();
-      return;
-    }
-    setState(() {
-      _searching = true;
-      _loadingMore = false;
-      _searchNotice = null;
-    });
-    try {
-      final results = await AppScope.of(context).library.materialSearch
-          .searchPage(query);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results;
-        _appliedQuery = query;
-        _searching = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _searching = false;
-        _searchNotice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '查找材料',
-          kind: 'material_search',
-          kept: '已经显示的材料没有改动',
-          next: '可以再查一次',
+  /// 输入停下之后再查一次，免得每敲一个字都读一遍库。
+  void _onQueryChanged(String text) {
+    // 清除按钮跟着输入框里的字出现，不等这一次查找返回；记录页也据此收起页签。
+    setState(() => _appliedQuery = text.trim());
+    onQueryChanged?.call();
+    _searchNotice = null;
+    final query = _appliedQuery;
+    _matches.onQueryChanged(
+      active: query.isNotEmpty,
+      fetch: _pageFetcher(query),
+    );
+  }
+
+  /// 按一个查询取一页：把服务返回值换成 [PagedResult]，失败说明在这里生成。
+  SearchPage<MaterialMatch> _pageFetcher(String query) {
+    return (offset) async {
+      final loadingMore = _matches.loadingMore;
+      try {
+        final results = await AppScope.of(context).library.materialSearch
+            .searchPage(query, offset: offset, pageSize: kSearchPageSize);
+        return PagedResult<MaterialMatch>(
+          items: results.matches,
+          hasMore: results.hasMore,
+          nextOffset: results.nextOffset,
         );
-      });
-    }
+      } catch (error, stack) {
+        if (mounted) {
+          _searchNotice = describeFailure(
+            context,
+            error,
+            stack,
+            action: loadingMore ? '继续读取材料查找结果' : '查找材料',
+            kind: loadingMore ? 'material_search_page' : 'material_search',
+            kept: loadingMore ? '已经显示的结果没有改动' : '已经显示的材料没有改动',
+            next: loadingMore ? '可以再点一次“加载更多结果”' : '可以再查一次',
+          );
+        }
+        rethrow;
+      }
+    };
+  }
+
+  /// 立即按当前条件重取第一页：提交、清除与重试都走这里。
+  void _search(String text) {
+    final query = text.trim();
+    setState(() => _appliedQuery = query);
+    onQueryChanged?.call();
+    _searchNotice = null;
+    unawaited(
+      _matches.refresh(active: query.isNotEmpty, fetch: _pageFetcher(query)),
+    );
   }
 
   /// 继续向后取一页命中；排序与去重已经在前一页完成，这里只追加。
   Future<void> _loadMore() async {
-    final results = _results;
-    if (results == null || !results.hasMore || _loadingMore || _searching) {
-      return;
-    }
-    final requestId = _requests.start();
-    setState(() => _loadingMore = true);
-    try {
-      final next = await AppScope.of(context).library.materialSearch
-          .searchPage(_appliedQuery, offset: results.nextOffset);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results.append(next);
-        _loadingMore = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loadingMore = false;
-        _searchNotice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '继续读取材料查找结果',
-          kind: 'material_search_page',
-          kept: '已经显示的结果没有改动',
-          next: '可以再点一次“加载更多结果”',
-        );
-      });
-    }
+    _searchNotice = null;
+    await _matches.loadMore();
   }
 
   /// 清空查询，回到原来的材料列表。
@@ -325,9 +300,7 @@ class MaterialListState extends State<MaterialList> {
 
   /// 是否正在查找：有查询词或还在取结果时记录页收起页签，结束查找再放回。
   bool get isSearching =>
-      _searching ||
-      _appliedQuery.isNotEmpty ||
-      _searchField.text.trim().isNotEmpty;
+      _searchField.text.trim().isNotEmpty || _matches.phase != SearchPhase.idle;
 
   /// 搜索框的焦点：记录页在材料页签上点搜索入口时把键盘切到这里。
   FocusNode get searchFocus => _searchFocus;
@@ -484,11 +457,11 @@ class MaterialListState extends State<MaterialList> {
         final list = materials ?? const <Material>[];
         final canImport = !loading && !_importingWord && !_importingPaste;
         final showResults =
-            _results != null || _searching || _appliedQuery.isNotEmpty;
+            _appliedQuery.isNotEmpty || _matches.phase != SearchPhase.idle;
         return Column(
           children: [
             if (_importingWord || _importingPaste) const forui.FProgress(),
-            if (_searching) const forui.FProgress(),
+            if (_matches.isLoading) const forui.FProgress(),
             if (_notice != null)
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: theme.space.page),
@@ -567,17 +540,17 @@ class MaterialListState extends State<MaterialList> {
 
   /// 查找结果：命中的材料按列表顺序排列，写清命中原因与片段，底部继续加载。
   Widget _searchArea(ZhixinTheme theme) {
-    final results = _results;
-    if (results == null) {
+    final page = _matches.page;
+    if (page == null) {
       return SingleChildScrollView(
         child: ListSkeleton(rowHeight: 73, padding: theme.space.pageInsets()),
       );
     }
-    if (results.isEmpty) {
+    if (page.isEmpty) {
       return SingleChildScrollView(
         child: EmptyState(
           icon: FLucideIcons.searchX,
-          title: '没有找到「${results.query}」',
+          title: '没有找到「$_appliedQuery」',
           description: '可以换一个标题、来源、页标签或正文片段再试。',
           action: forui.FButton(
             variant: forui.FButtonVariant.outline,
@@ -588,17 +561,15 @@ class MaterialListState extends State<MaterialList> {
         ),
       );
     }
-    final showEnd =
-        !results.hasMore &&
-        results.matches.length >= MaterialSearchService.pageSize;
+    final showEnd = !page.hasMore && page.length >= kSearchPageSize;
     return ListView(
       padding: theme.space.pageInsets(),
       children: [
-        for (final match in results.matches) _searchResultTile(theme, match),
-        if (results.hasMore)
+        for (final match in page.items) _searchResultTile(theme, match),
+        if (page.hasMore)
           LoadMoreFooter(
             label: '加载更多结果',
-            loading: _loadingMore,
+            loading: _matches.loadingMore,
             onPressed: _loadMore,
           )
         else if (showEnd)

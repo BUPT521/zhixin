@@ -8,9 +8,9 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/material_search.dart';
-import '../application/request_gate.dart';
 import '../domain/models/material.dart';
 import 'failure_feedback.dart';
+import 'search_state.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_sheet.dart';
@@ -169,104 +169,91 @@ class MaterialPicker extends StatefulWidget {
 
 class _MaterialPickerState extends State<MaterialPicker> {
   final TextEditingController _query = TextEditingController();
-  final RequestGate _requests = RequestGate();
-  Timer? _debounce;
-  MaterialSearchResults? _results;
+
+  /// 候选材料的查找状态：输入防抖、请求序号与分页都在这一份里，翻页时按
+  /// 材料标识去重。
+  final SearchState<MaterialMatch> _matches = SearchState<MaterialMatch>(
+    key: (match) => match.material.id,
+  );
+
+  /// 已经应用的查询词；空串表示按打开面板时读到的全部材料显示。
   String _appliedQuery = '';
-  bool _searching = false;
-  bool _loadingMore = false;
+
+  /// 查找失败的就地说明。
   String? _notice;
 
   @override
+  void initState() {
+    super.initState();
+    _matches.addListener(_onSearchChanged);
+  }
+
+  @override
   void dispose() {
-    _debounce?.cancel();
+    _matches.removeListener(_onSearchChanged);
+    _matches.dispose();
     _query.dispose();
     super.dispose();
   }
 
-  void _onChanged(String text) {
-    _debounce?.cancel();
-    setState(() {});
-    _debounce = Timer(const Duration(milliseconds: 250), () {
-      if (mounted) _search(text);
-    });
+  void _onSearchChanged() {
+    if (mounted) setState(() {});
   }
 
-  Future<void> _search(String text) async {
-    _debounce?.cancel();
-    final query = text.trim();
-    final requestId = _requests.start();
-    if (query.isEmpty) {
-      setState(() {
-        _results = null;
-        _appliedQuery = '';
-        _searching = false;
-        _loadingMore = false;
-        _notice = null;
-      });
-      return;
-    }
-    setState(() {
-      _searching = true;
-      _loadingMore = false;
-      _notice = null;
-    });
-    try {
-      final results = await AppScope.of(context).library.materialSearch
-          .searchPage(query);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results;
-        _appliedQuery = query;
-        _searching = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _searching = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '查找材料',
-          kind: 'material_picker_search',
-          kept: '材料没有改动',
-          next: '可以再查一次',
+  void _onChanged(String text) {
+    // 清除按钮跟着输入框里的字出现，不等这一次查找返回。
+    setState(() => _appliedQuery = text.trim());
+    _notice = null;
+    final query = _appliedQuery;
+    _matches.onQueryChanged(
+      active: query.isNotEmpty,
+      fetch: _pageFetcher(query),
+    );
+  }
+
+  /// 按一个查询取一页：把服务返回值换成 [PagedResult]，失败说明在这里生成。
+  SearchPage<MaterialMatch> _pageFetcher(String query) {
+    return (offset) async {
+      final loadingMore = _matches.loadingMore;
+      try {
+        final results = await AppScope.of(context).library.materialSearch
+            .searchPage(query, offset: offset, pageSize: kSearchPageSize);
+        return PagedResult<MaterialMatch>(
+          items: results.matches,
+          hasMore: results.hasMore,
+          nextOffset: results.nextOffset,
         );
-      });
-    }
+      } catch (error, stack) {
+        if (mounted) {
+          _notice = describeFailure(
+            context,
+            error,
+            stack,
+            action: loadingMore ? '继续读取材料查找结果' : '查找材料',
+            kind: loadingMore
+                ? 'material_picker_search_page'
+                : 'material_picker_search',
+            kept: loadingMore ? '已经显示的材料没有改动' : '材料没有改动',
+            next: loadingMore ? '可以再点一次“加载更多结果”' : '可以再查一次',
+          );
+        }
+        rethrow;
+      }
+    };
+  }
+
+  void _search(String text) {
+    final query = text.trim();
+    setState(() => _appliedQuery = query);
+    _notice = null;
+    unawaited(
+      _matches.refresh(active: query.isNotEmpty, fetch: _pageFetcher(query)),
+    );
   }
 
   Future<void> _loadMore() async {
-    final results = _results;
-    if (results == null || !results.hasMore || _loadingMore || _searching) {
-      return;
-    }
-    final requestId = _requests.start();
-    setState(() => _loadingMore = true);
-    try {
-      final next = await AppScope.of(context).library.materialSearch
-          .searchPage(_appliedQuery, offset: results.nextOffset);
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _results = results.append(next);
-        _loadingMore = false;
-      });
-    } catch (error, stack) {
-      if (!mounted || !_requests.isCurrent(requestId)) return;
-      setState(() {
-        _loadingMore = false;
-        _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '继续读取材料查找结果',
-          kind: 'material_picker_search_page',
-          kept: '已经显示的材料没有改动',
-          next: '可以再点一次“加载更多结果”',
-        );
-      });
-    }
+    _notice = null;
+    await _matches.loadMore();
   }
 
   void _clear() {
@@ -277,9 +264,8 @@ class _MaterialPickerState extends State<MaterialPicker> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    final results = _results;
     final searching =
-        _results != null || _searching || _appliedQuery.isNotEmpty;
+        _appliedQuery.isNotEmpty || _matches.phase != SearchPhase.idle;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -311,14 +297,14 @@ class _MaterialPickerState extends State<MaterialPicker> {
                 ),
         ),
         SizedBox(height: theme.space.gap),
-        if (_searching) const forui.FProgress(),
+        if (_matches.isLoading) const forui.FProgress(),
         if (_notice != null) InlineNotice(message: _notice!),
         Flexible(
           child: ListView(
             shrinkWrap: true,
             padding: EdgeInsets.zero,
             children: searching
-                ? _searchRows(theme, results)
+                ? _searchRows(theme)
                 : [
                     for (
                       var index = 0;
@@ -342,8 +328,9 @@ class _MaterialPickerState extends State<MaterialPicker> {
   }
 
   /// 查找结果的几行：没有查询、没有命中与有命中各一种状态。
-  List<Widget> _searchRows(ZhixinTheme theme, MaterialSearchResults? results) {
-    if (results == null) {
+  List<Widget> _searchRows(ZhixinTheme theme) {
+    final page = _matches.page;
+    if (page == null) {
       return [
         Padding(
           padding: EdgeInsets.symmetric(vertical: theme.space.lg),
@@ -351,11 +338,11 @@ class _MaterialPickerState extends State<MaterialPicker> {
         ),
       ];
     }
-    if (results.isEmpty) {
+    if (page.isEmpty) {
       return [
         EmptyState(
           icon: FLucideIcons.searchX,
-          title: '没有找到「${results.query}」',
+          title: '没有找到「$_appliedQuery」',
           description: '可以换一个标题、来源或页标签再试。',
           action: forui.FButton(
             variant: forui.FButtonVariant.outline,
@@ -367,20 +354,19 @@ class _MaterialPickerState extends State<MaterialPicker> {
       ];
     }
     return [
-      for (var index = 0; index < results.matches.length; index++) ...[
+      for (var index = 0; index < page.length; index++) ...[
         if (index > 0) SizedBox(height: theme.space.sm),
         _materialTile(
           theme,
-          results.matches[index].material,
-          match: results.matches[index],
-          selected:
-              results.matches[index].material.id == widget.initialMaterialId,
+          page.items[index].material,
+          match: page.items[index],
+          selected: page.items[index].material.id == widget.initialMaterialId,
         ),
       ],
-      if (results.hasMore)
+      if (page.hasMore)
         LoadMoreFooter(
           label: '加载更多结果',
-          loading: _loadingMore,
+          loading: _matches.loadingMore,
           onPressed: _loadMore,
         ),
     ];
