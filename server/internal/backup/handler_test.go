@@ -16,6 +16,7 @@ import (
 
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/devicename"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
@@ -251,6 +252,32 @@ func TestHandlerRejectsOversizeSnapshot(t *testing.T) {
 	p := testutil.ReadProblem(t, upload(t, c, token, data, testSchemaVersion))
 	if p.Status != http.StatusRequestEntityTooLarge || p.Code != string(httpx.CodePayloadTooLarge) {
 		t.Fatalf("oversize: %+v", p)
+	}
+}
+
+// TestHandlerTruncatesLongDeviceName 守住设备名上限：备份与登录入口共用同一个
+// 清洗函数，超过 64 个字符时按字符截断，不整段置空，也不拒绝整份备份。
+func TestHandlerTruncatesLongDeviceName(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "long@b.cn")
+
+	data := []byte("zip")
+	sum := sha256.Sum256(data)
+	resp := c.Do(http.MethodPost, "/v1/backups", token, bytes.NewReader(data), map[string]string{
+		"Content-Type":     "application/zip",
+		"X-Content-SHA256": hex.EncodeToString(sum[:]),
+		"X-Schema-Version": fmt.Sprint(testSchemaVersion),
+		"X-Device-Name":    url.PathEscape(strings.Repeat("备", devicename.MaxLength+6)),
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload: %d", resp.StatusCode)
+	}
+
+	list := listBackups(t, c, token)
+	want := strings.Repeat("备", devicename.MaxLength)
+	if len(list) != 1 || list[0].DeviceName == nil || *list[0].DeviceName != want {
+		t.Fatalf("device name: %+v", list)
 	}
 }
 

@@ -3,10 +3,9 @@ package backup
 import (
 	"context"
 	"io"
-	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/BUPT521/zhixin/server/internal/devicename"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
@@ -58,7 +57,7 @@ func (s *Service) Upload(
 	size int64,
 	data io.Reader,
 ) (Meta, error) {
-	device = cleanDevice(device)
+	device = devicename.Clean(device)
 	meta := Meta{
 		ID:            newID(),
 		SHA256:        sha,
@@ -118,12 +117,4 @@ func validID(id string) bool {
 // 规则留在这里而不是处理器里：账下没有备份时同样成功，存储失败原样上抛。
 func (s *Service) DeleteAll(ctx context.Context, userID string) error {
 	return s.store.DeleteAll(ctx, userID)
-}
-
-func cleanDevice(name string) string {
-	name = strings.TrimSpace(name)
-	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 64 {
-		return ""
-	}
-	return name
 }
