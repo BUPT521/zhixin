@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestServiceUploadValidatesSchemaAndSize(t *testing.T) {
@@ -142,5 +143,19 @@ func TestServiceDeleteAllClearsOnlyThatAccount(t *testing.T) {
 	// 已经空的账号再清一次也成功，客户端重试无需先列表判断。
 	if err := svc.DeleteAll(ctx, "u1"); err != nil {
 		t.Fatalf("second clear: %v", err)
+	}
+}
+
+// TestMemoryStoreRejectsInvalidKeep 守住保留份数的存储边界：keep 小于 1 时两种
+// 实现都返回 ErrKeep 并保持原数据，不把 0 解释成清空、负数解释成不裁剪。
+func TestMemoryStoreRejectsInvalidKeep(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	meta := Meta{ID: newID(), CreatedAt: time.Now().UTC()}
+	if err := store.Put(ctx, "u1", meta, strings.NewReader("x"), 0); !errors.Is(err, ErrKeep) {
+		t.Fatalf("keep=0: want ErrKeep, got %v", err)
+	}
+	if items, err := store.List(ctx, "u1"); err != nil || len(items) != 0 {
+		t.Fatalf("被拒绝的写入不应留下数据: %+v %v", items, err)
 	}
 }

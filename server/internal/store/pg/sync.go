@@ -49,14 +49,16 @@ func snapshotFromRow(seq pgtype.Int8, sha, digest pgtype.Text, createdAt pgtype.
 	}, true
 }
 
-// Append 在一个事务里锁住 sync_state、核对 base 后追加提交。
+// Append 在一个事务里锁住 sync_state、核对 base 后追加提交，并在同一个事务里
+// 更新设备名册。
 //
 // 已经出现过的 uid 不再写入，响应里回它在 sync_commit_seen 记下的序号；整批都是
 // 重放时直接返回当前 head，因为客户端没有收到上一次的响应（与内存实现一致）。
 // 去重只查 sync_commit_seen，sync_commit 不再为 uid 单独建唯一约束（审查 V17）。
 // 追加会让账号超过序列预算时，策略允许删除就先删掉快照位置及之前的全部提交再判断，
-// 仍然超出才返回 ErrStorageFull（ADR-0043、ADR-0047、ADR-0054）。
-func (s *Store) Append(ctx context.Context, userID string, base int64, commits []syncsvc.Commit, policy syncsvc.CompactPolicy) (syncsvc.AppendResult, error) {
+// 仍然超出才返回 ErrStorageFull（ADR-0043、ADR-0047、ADR-0054）。名册更新与提交
+// 同生共死：推送被拒时设备位置不会先走一步（ADR-0048、ADR-0054）。
+func (s *Store) Append(ctx context.Context, userID string, base int64, commits []syncsvc.Commit, policy syncsvc.CompactPolicy, roster syncsvc.DeviceRoster) (syncsvc.AppendResult, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return syncsvc.AppendResult{}, err
@@ -91,6 +93,12 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 		return replayed, err
 	}
 	if plan.AllDuplicates() {
+		if err := applyDeviceRoster(ctx, q, userID, roster, base, head, false); err != nil {
+			return replayed, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return replayed, err
+		}
 		replayed.Seqs = plan.Seqs
 		return replayed, nil
 	}
@@ -163,10 +171,37 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 	if err := q.SetSyncHead(ctx, db.SetSyncHeadParams{UserID: userID, Head: plan.NewHead}); err != nil {
 		return replayed, err
 	}
+	if err := applyDeviceRoster(ctx, q, userID, roster, base, plan.NewHead, true); err != nil {
+		return replayed, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return replayed, err
 	}
-	return syncsvc.AppendResult{Head: plan.NewHead, Seqs: plan.Seqs}, nil
+	return syncsvc.AppendResult{Head: plan.NewHead, Seqs: plan.Seqs, Fresh: true}, nil
+}
+
+// applyDeviceRoster 在 Append 的事务里写设备名册：请求带设备标识时把这一台的
+// 位置推进到 base（有新提交时取新 head），否则按提交里出现的设备标识补行。
+func applyDeviceRoster(ctx context.Context, q *db.Queries, userID string, roster syncsvc.DeviceRoster, base, head int64, fresh bool) error {
+	if roster.Touch != nil {
+		position := base
+		if fresh {
+			position = max(position, head)
+		}
+		return q.TouchSyncDevice(ctx, db.TouchSyncDeviceParams{
+			UserID:          userID,
+			DeviceID:        roster.Touch.DeviceID,
+			SnapshotCapable: roster.Touch.SnapshotCapable,
+			SyncedSeq:       position,
+			Head:            head,
+		})
+	}
+	for _, deviceID := range roster.Ensure {
+		if err := q.EnsureSyncDevice(ctx, db.EnsureSyncDeviceParams{UserID: userID, DeviceID: deviceID}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // optionalText 把可空的文本摘要写成 NULL 或者值。
@@ -255,12 +290,14 @@ func (s *Store) RegisterSnapshot(ctx context.Context, userID string, snap syncsv
 	if hasSnapshot {
 		cur := current
 		out.Snapshot = &cur
-		if snap.Seq < cur.Seq {
-			return out, syncsvc.ErrSnapshotStale
-		}
 	}
+	// 先判位置是否落在 1..head，再判是否比已存指针旧：两个存储按同一顺序检查，
+	// seq=0 这类既越界又可能被看成“旧位置”的输入因此都回 ErrInvalid。
 	if snap.Seq < 1 || snap.Seq > out.Head {
 		return out, syncsvc.ErrInvalid
+	}
+	if hasSnapshot && snap.Seq < current.Seq {
+		return out, syncsvc.ErrSnapshotStale
 	}
 	if snap.CreatedAt.IsZero() {
 		snap.CreatedAt = time.Now().UTC()
@@ -441,22 +478,6 @@ func (s *Store) currentHead(ctx context.Context, userID string) (int64, error) {
 // 原样。
 func (s *Store) EnsureDevice(ctx context.Context, userID, deviceID string) error {
 	return s.q.EnsureSyncDevice(ctx, db.EnsureSyncDeviceParams{UserID: userID, DeviceID: deviceID})
-}
-
-// AdvanceDevice 推进一台已知设备的位置：newCommits 为真时推到当前 head，否则只按
-// base 取较大值；两种情况都不超过 head。
-func (s *Store) AdvanceDevice(ctx context.Context, userID, deviceID string, base int64, newCommits bool) error {
-	head, err := s.currentHead(ctx, userID)
-	if err != nil {
-		return err
-	}
-	return s.q.AdvanceSyncDevice(ctx, db.AdvanceSyncDeviceParams{
-		UserID:   userID,
-		DeviceID: deviceID,
-		BaseSeq:  base,
-		ToHead:   newCommits,
-		Head:     head,
-	})
 }
 
 // Devices 按最近出现时间倒序列出名册，最多 limit 条。

@@ -111,12 +111,7 @@ func (h *Handler) Pull(w http.ResponseWriter, r *http.Request, params api.GetV1S
 		return
 	}
 	if err != nil {
-		if errors.Is(err, ErrPullTooLarge) {
-			httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, err.Error(), map[string]any{"resource": "sync"})
-			return
-		}
-		if errors.Is(err, ErrInvalid) {
-			httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "after must be non-negative and limit between 1 and 1000")
+		if h.writeSyncProblem(w, r, err, "after must be non-negative and limit between 1 and 1000", nil) {
 			return
 		}
 		httpx.WriteInternal(w, r, h.log, err)
@@ -146,45 +141,30 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request, params api.PostV1
 		return
 	}
 	deviceID, capable, hasDevice := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities)
-	result, err := h.svc.Push(r.Context(), p.UserID, in.BaseSeq, in.Commits)
-	if errors.Is(err, ErrStorageFull) {
-		httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodeStorageFull, err.Error(), map[string]any{"resource": "sync"})
-		return
+	roster := DeviceRoster{}
+	if hasDevice {
+		roster.Touch = &DeviceClaim{DeviceID: deviceID, SnapshotCapable: capable}
+	} else {
+		roster.Ensure = commitDevices(in.Commits)
 	}
-	if errors.Is(err, ErrPushTooLarge) {
-		httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, err.Error(), map[string]any{"resource": "sync"})
-		return
-	}
-	if errors.Is(err, ErrHeadMoved) {
-		httpx.WriteProblemExtra(w, r, http.StatusConflict, httpx.CodeConflict,
-			"pull and apply remote commits first", map[string]any{"head": result.Head})
-		return
-	}
-	if errors.Is(err, ErrInvalid) {
-		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"commit failed validation", map[string]any{"schema_version": h.svc.SchemaVersion()})
-		return
-	}
+	result, err := h.svc.Push(r.Context(), p.UserID, in.BaseSeq, in.Commits, roster)
 	if err != nil {
+		extra := map[string]any{}
+		if errors.Is(err, ErrHeadMoved) {
+			extra["head"] = result.Head
+		}
+		if errors.Is(err, ErrInvalid) {
+			extra["schema_version"] = h.svc.SchemaVersion()
+		}
+		if h.writeSyncProblem(w, r, err, "commit failed validation", extra) {
+			return
+		}
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}
-	// 名册在推送成功之后更新：带设备标识的请求按头里的快照能力整组替换、位置按
-	// base 推进，没有头时按提交里出现的设备标识补行（ADR-0048、ADR-0054）。
-	if hasDevice {
-		h.recordDevice(r.Context(), p.UserID, deviceID, capable, in.BaseSeq)
-		// 确有新提交写入时才推进到当前 head：整批重放说明设备没有读到别的设备
-		// 在这期间推的提交，位置只按 base 取较大值。
-		if err := h.svc.AdvanceDevice(r.Context(), p.UserID, deviceID, in.BaseSeq, newCommits(in.Commits, result.Seqs, in.BaseSeq)); err != nil {
-			h.log.Warn("cannot advance a sync device position",
-				slog.String("user_id", p.UserID),
-				slog.String("device_id", deviceID),
-				slog.String("error", err.Error()),
-			)
-		}
-	} else {
-		h.recordCommitDevices(r.Context(), p.UserID, in.Commits)
-	}
+	// 名册已在 Append 的事务里更新：带设备标识时推进这一台的位置，没有标识时
+	// 按提交里出现的设备标识补行。这里不再写第二遍，也不再用序号比较判断有没有
+	// 新提交（ADR-0048、ADR-0054）。
 	seqs := result.Seqs
 	if seqs == nil {
 		seqs = []int64{}
@@ -192,21 +172,10 @@ func (h *Handler) Push(w http.ResponseWriter, r *http.Request, params api.PostV1
 	httpx.WriteJSON(w, http.StatusOK, api.PushResult{Head: result.Head, Seqs: seqs})
 }
 
-// newCommits 报告这批提交里有没有服务端新写入的：序号大于 base 的提交是新分配的，
-// 全部不大于 base 说明整批都是重放（ADR-0054）。
-func newCommits(commits []api.Commit, seqs []int64, base int64) bool {
-	for i := range commits {
-		if i < len(seqs) && seqs[i] > base {
-			return true
-		}
-	}
-	return false
-}
-
 // RegisterSnapshot 登记当前序列位置上的一份快照。位置比已保存的旧时返回 409，
 // extra.snapshot_seq 给出当前位置；位置超出 head、两个哈希不是 64 位小写十六
-// 进制、附件不属于这个账号或大小不合理时返回 400；没有装配附件查询时返回 501
-// （ADR-0043）。
+// 进制或大小不合理时返回 400；附件还没有上传到这个账号时返回 404；没有装配附件
+// 查询时返回 501（ADR-0043）。
 func (h *Handler) RegisterSnapshot(w http.ResponseWriter, r *http.Request, params api.PutV1SyncSnapshotParams) {
 	p := auth.MustPrincipal(r.Context())
 	if id, capable, ok := deviceFromRequest(params.XDeviceId, params.XSyncCapabilities); ok {
@@ -217,28 +186,22 @@ func (h *Handler) RegisterSnapshot(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 	state, err := h.svc.RegisterSnapshot(r.Context(), p.UserID, in)
-	switch {
-	case errors.Is(err, ErrSnapshotStale):
-		extra := map[string]any{"resource": "sync"}
-		if snap := state.Snapshot; snap != nil {
-			extra["snapshot_seq"] = snap.Seq
-			extra["snapshot_sha256"] = snap.SHA256
+	if err != nil {
+		extra := map[string]any{}
+		if errors.Is(err, ErrSnapshotStale) {
+			if snap := state.Snapshot; snap != nil {
+				extra["snapshot_seq"] = snap.Seq
+				extra["snapshot_sha256"] = snap.SHA256
+			}
 		}
-		httpx.WriteProblemExtra(w, r, http.StatusConflict, httpx.CodeConflict,
-			"a snapshot of a newer position is already registered", extra)
-	case errors.Is(err, ErrInvalid):
-		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"snapshot failed validation: seq must be within the current head, hashes must be 64 lowercase hex characters, and the attachment must be stored for this account within the size limit",
-			map[string]any{"resource": "sync"})
-	case errors.Is(err, ErrSnapshotUnsupported):
-		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "snapshot registration is not wired")
-	case errors.Is(err, ErrStorageFull):
-		httpx.WriteProblemExtra(w, r, http.StatusRequestEntityTooLarge, httpx.CodeStorageFull, err.Error(), map[string]any{"resource": "sync"})
-	case err != nil:
+		detail := "snapshot failed validation: seq must be within the current head, hashes must be 64 lowercase hex characters, and the attachment must be within the size limit"
+		if h.writeSyncProblem(w, r, err, detail, extra) {
+			return
+		}
 		httpx.WriteInternal(w, r, h.log, err)
-	default:
-		httpx.WriteJSON(w, http.StatusOK, h.syncHead(state))
+		return
 	}
+	httpx.WriteJSON(w, http.StatusOK, h.syncHead(state))
 }
 
 // Reset 清空当前账号的提交序列、快照指针、设备名册与命名版本并把 head 重置为 0。
@@ -281,17 +244,15 @@ func (h *Handler) RenameDevice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	device, err := h.svc.RenameDevice(r.Context(), p.UserID, in.DeviceId, in.Alias)
-	switch {
-	case errors.Is(err, ErrDeviceNotFound):
-		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "device is not in the roster")
-	case errors.Is(err, ErrInvalid):
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"device_id must be 1 to 64 bytes and alias at most 64 characters after trimming")
-	case err != nil:
+	if err != nil {
+		if h.writeSyncProblem(w, r, err,
+			"device_id must be 1 to 64 bytes and alias at most 64 characters after trimming", nil) {
+			return
+		}
 		httpx.WriteInternal(w, r, h.log, err)
-	default:
-		httpx.WriteJSON(w, http.StatusOK, apiDevice(device))
+		return
 	}
+	httpx.WriteJSON(w, http.StatusOK, apiDevice(device))
 }
 
 // Refs 返回本账号全部命名版本，包括删除之后留下的墓碑（ADR-0054）。
@@ -320,20 +281,19 @@ func (h *Handler) PutRef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ref, err := h.svc.PutRef(r.Context(), p.UserID, in)
-	switch {
-	case errors.Is(err, ErrRefLimit):
-		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"an account holds at most 200 named refs that are not deleted",
-			map[string]any{"resource": "sync", "limit": MaxRefsPerAccount})
-	case errors.Is(err, ErrInvalid):
-		httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-			"a ref needs a name of 1 to 30 characters after NFC normalization, a commit_uid of at most 64 bytes when writing, and no more than 200 characters of note",
-			map[string]any{"resource": "sync"})
-	case err != nil:
+	if err != nil {
+		extra := map[string]any{}
+		if errors.Is(err, ErrRefLimit) {
+			extra["limit"] = MaxRefsPerAccount
+		}
+		if h.writeSyncProblem(w, r, err,
+			"a ref needs a name of 1 to 30 characters after NFC normalization, a commit_uid of at most 64 bytes when writing, and no more than 200 characters of note", extra) {
+			return
+		}
 		httpx.WriteInternal(w, r, h.log, err)
-	default:
-		httpx.WriteJSON(w, http.StatusOK, apiRef(ref))
+		return
 	}
+	httpx.WriteJSON(w, http.StatusOK, apiRef(ref))
 }
 
 // apiRef 把存储层的命名版本转成契约类型；删除时间为零值时省略这个键，客户端据此
@@ -415,24 +375,50 @@ func (h *Handler) recordDevice(ctx context.Context, userID, deviceID string, sna
 	}
 }
 
-// recordCommitDevices 在没有设备标识的推送里按提交出现的设备标识补行，能力与
-// 别名留空，旧版本客户端因此也会出现在名册里（ADR-0048）。
-func (h *Handler) recordCommitDevices(ctx context.Context, userID string, commits []api.Commit) {
-	seen := make(map[string]bool, len(commits))
-	for _, commit := range commits {
-		id := strings.TrimSpace(commit.DeviceId)
-		if id == "" || len(id) > maxDeviceIDBytes || seen[id] {
-			continue
-		}
-		seen[id] = true
-		if err := h.svc.EnsureDevice(ctx, userID, id); err != nil {
-			h.log.Warn("cannot record a sync device from a commit",
-				slog.String("user_id", userID),
-				slog.String("device_id", id),
-				slog.String("error", err.Error()),
-			)
-		}
+// writeSyncProblem 把同步接口的服务错误写成 problem+json，返回是否已经写过。
+// 状态码与 problem code 集中在这一处，五个处理器不再各维护一张 errors.Is 表；
+// invalidDetail 是 ErrInvalid 在当次调用里的具体说明，其余错误用固定说明。
+func (h *Handler) writeSyncProblem(w http.ResponseWriter, r *http.Request, err error, invalidDetail string, extra map[string]any) bool {
+	var (
+		status int
+		code   httpx.Code
+		detail string
+	)
+	switch {
+	case errors.Is(err, ErrInvalid):
+		status, code, detail = http.StatusBadRequest, httpx.CodeInvalidRequest, invalidDetail
+	case errors.Is(err, ErrSnapshotAttachmentMissing):
+		status, code, detail = http.StatusNotFound, httpx.CodeNotFound,
+			"snapshot attachment is not stored for this account; upload it first"
+	case errors.Is(err, ErrSnapshotStale):
+		status, code, detail = http.StatusConflict, httpx.CodeConflict,
+			"a snapshot of a newer position is already registered"
+	case errors.Is(err, ErrHeadMoved):
+		status, code, detail = http.StatusConflict, httpx.CodeConflict,
+			"pull and apply remote commits first"
+	case errors.Is(err, ErrSnapshotUnsupported):
+		status, code, detail = http.StatusNotImplemented, httpx.CodeNotImplemented,
+			"snapshot registration is not wired"
+	case errors.Is(err, ErrStorageFull):
+		status, code, detail = http.StatusRequestEntityTooLarge, httpx.CodeStorageFull, err.Error()
+	case errors.Is(err, ErrPushTooLarge), errors.Is(err, ErrPullTooLarge):
+		status, code, detail = http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, err.Error()
+	case errors.Is(err, ErrDeviceNotFound):
+		status, code, detail = http.StatusNotFound, httpx.CodeNotFound, "device is not in the roster"
+	case errors.Is(err, ErrRefLimit):
+		status, code, detail = http.StatusBadRequest, httpx.CodeInvalidRequest,
+			"an account holds at most 200 named refs that are not deleted"
+	default:
+		return false
 	}
+	if extra == nil {
+		extra = map[string]any{}
+	}
+	if _, ok := extra["resource"]; !ok {
+		extra["resource"] = "sync"
+	}
+	httpx.WriteProblemExtra(w, r, status, code, detail, extra)
+	return true
 }
 
 // apiDevice 把存储层的设备转成契约类型。

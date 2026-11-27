@@ -29,12 +29,19 @@ type Meta struct {
 	CreatedAt     time.Time `json:"created_at"`
 }
 
-var ErrNotFound = errors.New("backup: not found")
+var (
+	ErrNotFound = errors.New("backup: not found")
+	// ErrKeep 表示保留份数小于 1。两种存储都拒绝这个值，不把它解释成“清空”或
+	// “不裁剪”；配置在启动时已经要求正整数，这里是存储层的最后一道校验。
+	ErrKeep = errors.New("backup: keep must be at least 1")
+)
 
 // Store keeps snapshot metadata and bytes. The production implementation
 // keeps metadata in PostgreSQL and bytes in S3-compatible object storage.
 type Store interface {
-	// Put stores a snapshot and keeps at most `keep` newest per account.
+	// Put stores a snapshot and keeps at most `keep` newest per account. A keep
+	// below 1 returns ErrKeep and stores nothing; both implementations treat it
+	// the same way.
 	Put(ctx context.Context, userID string, m Meta, data io.Reader, keep int) error
 	List(ctx context.Context, userID string) ([]Meta, error)
 	Open(ctx context.Context, userID, id string) (Meta, io.ReadCloser, error)
@@ -72,6 +79,9 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore { return &MemoryStore{items: map[string][]memItem{}} }
 
 func (m *MemoryStore) Put(_ context.Context, userID string, meta Meta, data io.Reader, keep int) error {
+	if keep < 1 {
+		return ErrKeep
+	}
 	b, err := io.ReadAll(data)
 	if err != nil {
 		return err

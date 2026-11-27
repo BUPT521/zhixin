@@ -248,16 +248,18 @@ func trimPullBytes(commits []Commit, maxBytes int64) []Commit {
 	return commits
 }
 
-// Push validates one batch and appends it to the account log.
+// Push validates one batch and appends it to the account log together with the
+// device roster update.
 //
 // 返回的 AppendResult 带调用之后的 head 与逐条序号：新提交是服务端分配的序号，
-// 已经接收过的提交回它原来的序号（ADR-0054）。处理器据此把提交写进名册并更新
-// 设备位置。
+// 已经接收过的提交回它原来的序号（ADR-0054）。设备名册随提交在同一事务里更新：
+// roster.Touch 非空时推进这一台设备的位置，否则按 roster.Ensure 里的设备标识补行。
 func (s *Service) Push(
 	ctx context.Context,
 	userID string,
 	base int64,
 	commits []Commit,
+	roster DeviceRoster,
 ) (AppendResult, error) {
 	if len(commits) == 0 || len(commits) > maxPushCommits {
 		return AppendResult{}, ErrInvalid
@@ -285,7 +287,23 @@ func (s *Service) Push(
 	if err != nil {
 		return AppendResult{}, err
 	}
-	return s.store.Append(ctx, userID, base, commits, policy)
+	return s.store.Append(ctx, userID, base, commits, policy, roster)
+}
+
+// commitDevices 返回一批提交里出现的设备标识，按首次出现去重；不合形状的值与
+// 设备头一样跳过，名册因此不会被写乱（ADR-0048）。
+func commitDevices(commits []Commit) []string {
+	out := make([]string, 0, len(commits))
+	seen := make(map[string]bool, len(commits))
+	for _, commit := range commits {
+		id := strings.TrimSpace(commit.DeviceId)
+		if id == "" || len(id) > maxDeviceIDBytes || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // compactPolicy 决定这次登记或推送能不能删除快照覆盖的提交，以及常规压缩不能
@@ -333,25 +351,17 @@ func (s *Service) RegisterSnapshot(
 	if in.Seq < 1 || !httpx.ValidSHA256(in.Sha256) || !httpx.ValidSHA256(in.Digest) {
 		return State{}, ErrInvalid
 	}
-	state, err := s.store.State(ctx, userID)
-	if err != nil {
-		return State{}, err
-	}
-	// 只能登记本账号已经到达的位置：未来的位置没有对应的提交，快照会指向一段
-	// 服务端还没有的序列。
-	if in.Seq > state.Head {
-		return State{}, ErrInvalid
-	}
-	if state.Snapshot != nil && in.Seq < state.Snapshot.Seq {
-		return state, ErrSnapshotStale
-	}
 	size, found, err := s.attachments.Stat(ctx, userID, in.Sha256)
 	if err != nil {
 		return State{}, err
 	}
 	// 附件必须属于这个账号；大小要落在合理区间，快照是整库投影的压缩结果，
-	// 空文件与超过单个附件上限的值都按无效登记处理。
-	if !found || size <= 0 || size > s.snapshotBytes {
+	// 空文件与超过单个附件上限的值都按无效登记处理。附件缺失单独成一个错误，
+	// 客户端据此区分“还没传完”与“传错了”。
+	if !found {
+		return State{}, ErrSnapshotAttachmentMissing
+	}
+	if size <= 0 || size > s.snapshotBytes {
 		return State{}, ErrInvalid
 	}
 	snap := Snapshot{
@@ -364,7 +374,7 @@ func (s *Service) RegisterSnapshot(
 	if err != nil {
 		return State{}, err
 	}
-	state, err = s.store.RegisterSnapshot(ctx, userID, snap, policy)
+	state, err := s.store.RegisterSnapshot(ctx, userID, snap, policy)
 	if err != nil {
 		return state, err
 	}
@@ -423,20 +433,6 @@ func (s *Service) EnsureDevice(ctx context.Context, userID, deviceID string) err
 		return ErrInvalid
 	}
 	return s.store.EnsureDevice(ctx, userID, deviceID)
-}
-
-// AdvanceDevice 在推送成功之后推进名册里这台设备的位置：有提交返回时，整批重放
-// 只按 base 取较大值，确有新提交写入时再推进到当前 head（ADR-0054）。名册里没有
-// 这台设备或位置没有前进时什么都不做。
-func (s *Service) AdvanceDevice(ctx context.Context, userID, deviceID string, base int64, newCommits bool) error {
-	deviceID = strings.TrimSpace(deviceID)
-	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
-		return ErrInvalid
-	}
-	if base < 0 {
-		base = 0
-	}
-	return s.store.AdvanceDevice(ctx, userID, deviceID, base, newCommits)
 }
 
 // Devices 返回账号名册，按最近出现时间倒序，最多 50 条（ADR-0048）。

@@ -34,17 +34,17 @@ func TestServicePushIsLinearAndIdempotent(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
 
-	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)})
+	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}, DeviceRoster{})
 	if err != nil || result.Head != 2 || len(result.Seqs) != 2 || result.Seqs[0] != 1 || result.Seqs[1] != 2 {
 		t.Fatalf("push: %+v, err %v", result, err)
 	}
 	// A retried batch after a lost response is ignored and answers with the
 	// sequence numbers the commits already hold.
-	if result, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}); err != nil || result.Head != 2 || len(result.Seqs) != 1 || result.Seqs[0] != 1 {
+	if result, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}, DeviceRoster{}); err != nil || result.Head != 2 || len(result.Seqs) != 1 || result.Seqs[0] != 1 {
 		t.Fatalf("replay: %+v, err %v", result, err)
 	}
 	// A new commit on a stale base must pull first.
-	if _, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}); !errors.Is(err, ErrHeadMoved) {
+	if _, err = svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}, DeviceRoster{}); !errors.Is(err, ErrHeadMoved) {
 		t.Fatalf("stale push: want ErrHeadMoved, got %v", err)
 	}
 }
@@ -53,13 +53,13 @@ func TestServiceValidatesBatchAndPage(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
 
-	if _, err := svc.Push(ctx, "u1", 0, nil); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.Push(ctx, "u1", 0, nil, DeviceRoster{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty batch: want ErrInvalid, got %v", err)
 	}
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("old", 25)}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("old", 25)}, DeviceRoster{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("old schema: want ErrInvalid, got %v", err)
 	}
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestServicePullStopsAtByteLimit(t *testing.T) {
 	for i := range 5 {
 		batch = append(batch, testCommit(fmt.Sprintf("r%d", i), 27))
 	}
-	if _, err := svc.Push(ctx, "u1", 0, batch); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, batch, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -135,10 +135,10 @@ func TestServiceResetClearsLog(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 27)
 
-	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}); err != nil || r.Head != 2 {
+	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}, DeviceRoster{}); err != nil || r.Head != 2 {
 		t.Fatalf("push u1: %+v, err %v", r, err)
 	}
-	if r, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("other", 27)}); err != nil || r.Head != 1 {
+	if r, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("other", 27)}, DeviceRoster{}); err != nil || r.Head != 1 {
 		t.Fatalf("push u2: %+v, err %v", r, err)
 	}
 
@@ -153,7 +153,7 @@ func TestServiceResetClearsLog(t *testing.T) {
 		t.Fatalf("pull after reset = %+v, %v", page, err)
 	}
 	// 重置之后序号从 1 重新开始。
-	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}); err != nil || r.Head != 1 {
+	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r3", 27)}, DeviceRoster{}); err != nil || r.Head != 1 {
 		t.Fatalf("push after reset: %+v, err %v", r, err)
 	}
 
@@ -176,7 +176,7 @@ func TestServiceKeepsOptionalStateDigest(t *testing.T) {
 	withDigest := testCommit("r2", 27)
 	withDigest.StateDigest = &digest
 
-	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), withDigest})
+	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), withDigest}, DeviceRoster{})
 	if err != nil || result.Head != 2 {
 		t.Fatalf("push: %+v, err %v", result, err)
 	}

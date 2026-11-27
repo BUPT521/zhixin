@@ -53,7 +53,7 @@ func TestRegisterSnapshotValidatesInput(t *testing.T) {
 	}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("空序列上的快照应被拒绝，得到 %v", err)
 	}
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -65,12 +65,17 @@ func TestRegisterSnapshotValidatesInput(t *testing.T) {
 		{"序号为零", api.SnapshotRegistration{Seq: 0, Sha256: snapshotSHA, Digest: snapshotDigest}},
 		{"哈希形状不对", api.SnapshotRegistration{Seq: 1, Sha256: "A" + snapshotSHA[1:], Digest: snapshotDigest}},
 		{"摘要形状不对", api.SnapshotRegistration{Seq: 1, Sha256: snapshotSHA, Digest: strings.Repeat("c", 63)}},
-		{"附件不属于这个账号", api.SnapshotRegistration{Seq: 1, Sha256: strings.Repeat("d", 64), Digest: snapshotDigest}},
 	}
 	for _, tc := range cases {
 		if _, err := svc.RegisterSnapshot(ctx, "u1", tc.in); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%s 应返回 ErrInvalid，得到 %v", tc.name, err)
 		}
+	}
+	// 附件还没有上传到这个账号时单独返回哨兵错误，处理器据此回 404。
+	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{
+		Seq: 1, Sha256: strings.Repeat("d", 64), Digest: snapshotDigest,
+	}); !errors.Is(err, ErrSnapshotAttachmentMissing) {
+		t.Fatalf("附件不属于这个账号应返回 ErrSnapshotAttachmentMissing，得到 %v", err)
 	}
 
 	// 附件大小超过单个快照上限时同样按无效登记处理。
@@ -99,7 +104,7 @@ func TestRegisterSnapshotKeepsNewestOnly(t *testing.T) {
 		testCommit("r1", snapshotTestSchema),
 		testCommit("r2", snapshotTestSchema),
 		testCommit("r3", snapshotTestSchema),
-	}); err != nil {
+	}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -135,7 +140,7 @@ func TestPullRejectsCompactedRange(t *testing.T) {
 		SetCompactKeep(time.Hour)
 	for i := range 4 {
 		id := []string{"r1", "r2", "r3", "r4"}[i]
-		if _, err := svc.Push(ctx, "u1", int64(i), []Commit{testCommit(id, snapshotTestSchema)}); err != nil {
+		if _, err := svc.Push(ctx, "u1", int64(i), []Commit{testCommit(id, snapshotTestSchema)}, DeviceRoster{}); err != nil {
 			t.Fatalf("push %s: %v", id, err)
 		}
 	}
@@ -178,7 +183,7 @@ func TestPullRejectsCompactedRange(t *testing.T) {
 	}
 
 	// 压缩之后的新提交照常拉取，保留下界不再变化。
-	if r, err := svc.Push(ctx, "u1", 4, []Commit{testCommit("r5", snapshotTestSchema)}); err != nil || r.Head != 5 || r.Seqs[0] != 5 {
+	if r, err := svc.Push(ctx, "u1", 4, []Commit{testCommit("r5", snapshotTestSchema)}, DeviceRoster{}); err != nil || r.Head != 5 || r.Seqs[0] != 5 {
 		t.Fatalf("压缩之后推送: %+v, %v", r, err)
 	}
 	page, err = svc.Pull(ctx, "u1", &after, nil)
@@ -196,11 +201,11 @@ func TestPushCompactsInsteadOfFailingAtBudget(t *testing.T) {
 	store.SetMaxAccountBytes(600)
 	svc := NewService(store, snapshotTestSchema).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
 
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("第一次推送: %v", err)
 	}
 	// 没有快照时压缩无从下手。
-	if _, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r2", snapshotTestSchema)}); !errors.Is(err, ErrStorageFull) {
+	if _, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r2", snapshotTestSchema)}, DeviceRoster{}); !errors.Is(err, ErrStorageFull) {
 		t.Fatalf("没有快照时应返回 ErrStorageFull，得到 %v", err)
 	}
 
@@ -208,7 +213,7 @@ func TestPushCompactsInsteadOfFailingAtBudget(t *testing.T) {
 	store.mu.Lock()
 	store.logs["u1"].snapshot = &Snapshot{Seq: 1, SHA256: snapshotSHA, Digest: snapshotDigest, CreatedAt: time.Now().UTC()}
 	store.mu.Unlock()
-	result, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r2", snapshotTestSchema)})
+	result, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r2", snapshotTestSchema)}, DeviceRoster{})
 	if err != nil || result.Head != 2 {
 		t.Fatalf("压缩之后应能继续推送: %+v, %v", result, err)
 	}
@@ -218,13 +223,39 @@ func TestPushCompactsInsteadOfFailingAtBudget(t *testing.T) {
 	}
 }
 
+// TestRejectedPushDoesNotCompact 守住预算拒绝的原子性：压缩之后仍然装不下时，
+// 这次推送整体不生效，EarliestSeq 不能被被拒绝的请求推进（与 PostgreSQL 在
+// 同一事务里回滚一致）。
+func TestRejectedPushDoesNotCompact(t *testing.T) {
+	ctx := context.Background()
+	store, _ := newSnapshotStore()
+	store.SetMaxAccountBytes(600)
+	svc := NewService(store, snapshotTestSchema).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
+
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
+		t.Fatalf("第一次推送: %v", err)
+	}
+	store.mu.Lock()
+	store.logs["u1"].snapshot = &Snapshot{Seq: 1, SHA256: snapshotSHA, Digest: snapshotDigest, CreatedAt: time.Now().UTC()}
+	store.mu.Unlock()
+	// 第二条提交单独就超过预算，压缩掉第一条也装不下。
+	store.SetMaxAccountBytes(1)
+	if _, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r2", snapshotTestSchema)}, DeviceRoster{}); !errors.Is(err, ErrStorageFull) {
+		t.Fatalf("装不下时应返回 ErrStorageFull，得到 %v", err)
+	}
+	state, err := svc.State(ctx, "u1")
+	if err != nil || state.EarliestSeq != 1 || state.Head != 1 {
+		t.Fatalf("被拒绝的推送不应推进保留下界: %+v, %v", state, err)
+	}
+}
+
 // TestSeenIDsSurviveCompaction 守住压缩之后的去重：已经接收过的提交身份仍然被
 // 跳过，重放不会因为提交被删除而重新写入。
 func TestSeenIDsSurviveCompaction(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newSnapshotStore()
 	svc := NewService(store, snapshotTestSchema)
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	// 直接压缩到 head，提交全部删除。
@@ -237,11 +268,11 @@ func TestSeenIDsSurviveCompaction(t *testing.T) {
 		t.Fatalf("压缩之后的状态: %+v, %v", state, err)
 	}
 	// 重放已经接收过的提交：按身份跳过，head 不变。
-	if r, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil || r.Head != 2 || r.Seqs[0] != 1 {
+	if r, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil || r.Head != 2 || r.Seqs[0] != 1 {
 		t.Fatalf("重放应被跳过并回原序号: %+v, %v", r, err)
 	}
 	// 新的提交照常追加。
-	if r, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}); err != nil || r.Head != 3 {
+	if r, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}, DeviceRoster{}); err != nil || r.Head != 3 {
 		t.Fatalf("新提交: %+v, %v", r, err)
 	}
 	if page, err := svc.Pull(ctx, "u1", pointer(int64(2)), nil); err != nil || len(page.Commits) != 1 || *page.Commits[0].Seq != 3 {
@@ -255,7 +286,7 @@ func TestResetClearsSnapshotAndSeen(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newSnapshotStore()
 	svc := NewService(store, snapshotTestSchema).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{Seq: 1, Sha256: snapshotSHA, Digest: snapshotDigest}); err != nil {
@@ -273,7 +304,7 @@ func TestResetClearsSnapshotAndSeen(t *testing.T) {
 		t.Fatalf("清空之后的状态: %+v, %v", state, err)
 	}
 	// 去重身份也清掉了：同一编号重新推送会被当成新提交。
-	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil || r.Head != 1 {
+	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil || r.Head != 1 {
 		t.Fatalf("清空之后重新推送: %+v, %v", r, err)
 	}
 }
@@ -313,7 +344,7 @@ func TestRegisterSnapshotRecordsOrphans(t *testing.T) {
 	svc := newSnapshotService(store, clock).
 		SetAttachments(fakeAttachments{shaA: 4096, shaB: 4096}).
 		SetSnapshotGrace(time.Hour)
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -379,7 +410,7 @@ func TestReclaimSnapshotOrphansAfterGrace(t *testing.T) {
 	svc := newSnapshotService(store, clock).
 		SetAttachments(fakeAttachments{shaA: 4096, shaB: 4096}).
 		SetSnapshotGrace(time.Hour)
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{Seq: 1, Sha256: shaA, Digest: snapshotDigest}); err != nil {
@@ -457,7 +488,7 @@ func TestReclaimSkipsCurrentPointer(t *testing.T) {
 	svc.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	svc.SetAttachments(fakeAttachments{shaA: 4096, shaB: 4096}).SetSnapshotGrace(time.Hour)
 
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{Seq: 1, Sha256: shaA, Digest: snapshotDigest}); err != nil {
@@ -488,7 +519,7 @@ func TestCompactionOffOnlyWritesPointer(t *testing.T) {
 		testCommit("r1", snapshotTestSchema),
 		testCommit("r2", snapshotTestSchema),
 		testCommit("r3", snapshotTestSchema),
-	}); err != nil {
+	}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 
@@ -499,7 +530,7 @@ func TestCompactionOffOnlyWritesPointer(t *testing.T) {
 	}
 
 	store.SetMaxAccountBytes(600)
-	if _, err := svc.Push(ctx, "u1", 3, []Commit{testCommit("r4", snapshotTestSchema)}); !errors.Is(err, ErrStorageFull) {
+	if _, err := svc.Push(ctx, "u1", 3, []Commit{testCommit("r4", snapshotTestSchema)}, DeviceRoster{}); !errors.Is(err, ErrStorageFull) {
 		t.Fatalf("压缩关闭时预算压力应返回 ErrStorageFull，得到 %v", err)
 	}
 }
@@ -520,7 +551,7 @@ func TestCompactionGateFollowsDeviceCapabilities(t *testing.T) {
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{
 		testCommit("r1", snapshotTestSchema),
 		testCommit("r2", snapshotTestSchema),
-	}); err != nil {
+	}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	// 一台旧设备没有声明 snapshot 能力：登记照常成功，但不删提交。
@@ -535,7 +566,7 @@ func TestCompactionGateFollowsDeviceCapabilities(t *testing.T) {
 
 	// 预算压力路径也不删：预算压到一条多一点，后续推送只能返回 ErrStorageFull。
 	store.SetMaxAccountBytes(600)
-	if _, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}); !errors.Is(err, ErrStorageFull) {
+	if _, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}, DeviceRoster{}); !errors.Is(err, ErrStorageFull) {
 		t.Fatalf("有设备缺能力时预算压力应返回 ErrStorageFull，得到 %v", err)
 	}
 
@@ -549,7 +580,7 @@ func TestCompactionGateFollowsDeviceCapabilities(t *testing.T) {
 	}
 
 	// 预算压力路径同样照常删：另一个账号只用来单独观察压缩点。
-	if _, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("s1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u2", 0, []Commit{testCommit("s1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push u2: %v", err)
 	}
 	if err := svc.TouchDevice(ctx, "u2", "device-a", true, 0); err != nil {
@@ -559,7 +590,7 @@ func TestCompactionGateFollowsDeviceCapabilities(t *testing.T) {
 		t.Fatalf("登记 u2: %v", err)
 	}
 	store.SetMaxAccountBytes(600)
-	result, err := svc.Push(ctx, "u2", 1, []Commit{testCommit("s2", snapshotTestSchema)})
+	result, err := svc.Push(ctx, "u2", 1, []Commit{testCommit("s2", snapshotTestSchema)}, DeviceRoster{})
 	if err != nil || result.Head != 2 {
 		t.Fatalf("设备都声明能力之后预算压力应能继续推送: %+v, %v", result, err)
 	}
@@ -583,7 +614,7 @@ func TestCompactionGateBlocksEmptyCapabilities(t *testing.T) {
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{
 		testCommit("r1", snapshotTestSchema),
 		testCommit("r2", snapshotTestSchema),
-	}); err != nil {
+	}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	// 能力声明传空串：服务层归一化之后名册里就是空能力列表。
@@ -604,7 +635,7 @@ func TestCompactionGateBlocksEmptyCapabilities(t *testing.T) {
 
 	// 预算压力路径同样不许删，仍然超限只返回 ErrStorageFull。
 	store.SetMaxAccountBytes(600)
-	if _, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}); !errors.Is(err, ErrStorageFull) {
+	if _, err := svc.Push(ctx, "u1", 2, []Commit{testCommit("r3", snapshotTestSchema)}, DeviceRoster{}); !errors.Is(err, ErrStorageFull) {
 		t.Fatalf("空能力设备应挡住预算路径的删除，得到 %v", err)
 	}
 }
@@ -618,7 +649,7 @@ func TestResetClearsOrphansAndDevices(t *testing.T) {
 	shaB := strings.Repeat("b", 64)
 	svc := newSnapshotService(store, clock).
 		SetAttachments(fakeAttachments{shaA: 4096, shaB: 4096})
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{Seq: 1, Sha256: shaA, Digest: snapshotDigest}); err != nil {

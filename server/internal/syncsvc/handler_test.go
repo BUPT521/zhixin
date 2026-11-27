@@ -363,12 +363,16 @@ func TestHandlerSnapshotRegistration(t *testing.T) {
 		{"序号为零", snapshotBody(0, snapshotSHA)},
 		{"哈希形状不对", snapshotBody(1, "not-a-hash")},
 		{"摘要形状不对", map[string]any{"seq": 1, "sha256": snapshotSHA, "digest": strings.Repeat("c", 63)}},
-		{"附件不属于这个账号", snapshotBody(1, strings.Repeat("d", 64))},
 	}
 	for _, tc := range bad {
 		if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, tc.body, &p); code != http.StatusBadRequest || p.Code != string(httpx.CodeInvalidRequest) {
 			t.Fatalf("%s: %d %+v", tc.name, code, p)
 		}
+	}
+	// 附件还没有上传到这个账号时单独回 404，客户端据此知道先传附件而不是改哈希。
+	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token,
+		snapshotBody(1, strings.Repeat("d", 64)), &p); code != http.StatusNotFound || p.Code != string(httpx.CodeNotFound) {
+		t.Fatalf("附件缺失: %d %+v", code, p)
 	}
 	if code := h.client.JSON(http.MethodPut, "/v1/sync/snapshot", token, map[string]any{"seq": 1}, &p); code != http.StatusBadRequest {
 		t.Fatalf("缺字段: %d %+v", code, p)

@@ -29,18 +29,18 @@ func TestPostgresAppendReturnsSeqs(t *testing.T) {
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	first, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("a"), mk("b"), mk("c")}, syncsvc.CompactPolicy{})
+	first, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("a"), mk("b"), mk("c")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{})
 	if err != nil || first.Head != 3 || len(first.Seqs) != 3 ||
 		first.Seqs[0] != 1 || first.Seqs[1] != 2 || first.Seqs[2] != 3 {
 		t.Fatalf("新提交的逐条序号: %+v %v", first, err)
 	}
 	// 第二批里混一条重复的提交。
-	second, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("b"), mk("d")}, syncsvc.CompactPolicy{})
+	second, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("b"), mk("d")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{})
 	if err != nil || second.Head != 4 || len(second.Seqs) != 2 || second.Seqs[0] != 2 || second.Seqs[1] != 4 {
 		t.Fatalf("重复提交应回原序号: %+v %v", second, err)
 	}
 	// 整批重放：head 不变，逐条序号都是原来的。
-	replay, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("a"), mk("b"), mk("c")}, syncsvc.CompactPolicy{})
+	replay, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("a"), mk("b"), mk("c")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{})
 	if err != nil || replay.Head != 4 || len(replay.Seqs) != 3 || replay.Seqs[0] != 1 || replay.Seqs[2] != 3 {
 		t.Fatalf("整批重放: %+v %v", replay, err)
 	}
@@ -54,7 +54,7 @@ func TestPostgresAppendReturnsSeqs(t *testing.T) {
 	}, syncsvc.CompactPolicy{Keep: time.Nanosecond, AllowDelete: true}); err != nil {
 		t.Fatalf("登记快照: %v", err)
 	}
-	afterCompact, err := st.Append(ctx, "u1", 4, []syncsvc.Commit{mk("a")}, syncsvc.CompactPolicy{})
+	afterCompact, err := st.Append(ctx, "u1", 4, []syncsvc.Commit{mk("a")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{})
 	if err != nil || afterCompact.Head != 4 || afterCompact.Seqs[0] != 1 {
 		t.Fatalf("压缩之后重放应回原序号: %+v %v", afterCompact, err)
 	}
@@ -86,7 +86,7 @@ func TestPostgresTableDigestsRoundTrip(t *testing.T) {
 			TableDigests: &tables,
 		},
 	}
-	if _, err := st.Append(ctx, "u1", 0, commits, syncsvc.CompactPolicy{}); err != nil {
+	if _, err := st.Append(ctx, "u1", 0, commits, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	pulled, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes)
@@ -122,7 +122,7 @@ func TestPostgresDevicePosition(t *testing.T) {
 			Changes:   []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	if _, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("a"), mk("b"), mk("c")}, syncsvc.CompactPolicy{}); err != nil {
+	if _, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("a"), mk("b"), mk("c")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	// head 是 3，位置写 10 也要减到 3。
@@ -141,18 +141,18 @@ func TestPostgresDevicePosition(t *testing.T) {
 		t.Fatalf("位置不应倒退: %+v %v", devices, err)
 	}
 	// 整批重放：只按 base 取较大值，不跳到 head。
-	if err := st.AdvanceDevice(ctx, "u1", "d1", 1, false); err != nil {
-		t.Fatalf("推进位置: %v", err)
+	claim := &syncsvc.DeviceClaim{DeviceID: "d1", SnapshotCapable: true}
+	if _, err := st.Append(ctx, "u1", 1, []syncsvc.Commit{mk("a"), mk("b"), mk("c")},
+		syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{Touch: claim}); err != nil {
+		t.Fatalf("重放: %v", err)
 	}
 	if devices, err = st.Devices(ctx, "u1", 50); err != nil || devices[0].SyncedSeq != 3 {
 		t.Fatalf("整批重放不应改变位置: %+v %v", devices, err)
 	}
-	// 有新提交时推进到当前 head。
-	if _, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("d")}, syncsvc.CompactPolicy{}); err != nil {
+	// 有新提交时随 Append 一起推进到当前 head。
+	if _, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("d")},
+		syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{Touch: claim}); err != nil {
 		t.Fatalf("append: %v", err)
-	}
-	if err := st.AdvanceDevice(ctx, "u1", "d1", 3, true); err != nil {
-		t.Fatalf("推进位置: %v", err)
 	}
 	if devices, err = st.Devices(ctx, "u1", 50); err != nil || devices[0].SyncedSeq != 4 {
 		t.Fatalf("有新提交时应推进到 head: %+v %v", devices, err)

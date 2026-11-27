@@ -54,6 +54,9 @@ var (
 	ErrSnapshotStale = errors.New("sync: snapshot is older than the stored one")
 	// ErrSnapshotUnsupported 表示装配没有注入附件查询，无法核对快照归属。
 	ErrSnapshotUnsupported = errors.New("sync: snapshot attachments are not wired")
+	// ErrSnapshotAttachmentMissing 表示登记的快照附件不在这个账号名下：客户端可能
+	// 还没传完，或者哈希传错了。处理器按 404 返回，与附件接口的“没有这份内容”一致。
+	ErrSnapshotAttachmentMissing = errors.New("sync: snapshot attachment is not stored for the account")
 	// ErrHistoryCompacted 表示客户端的位置落在已经删除的区间，需要按快照重新克隆
 	// （ADR-0043）。具体位置由 *CompactedError 带上。
 	ErrHistoryCompacted = errors.New("sync: history was compacted")
@@ -173,15 +176,19 @@ type Store interface {
 	// duplicate gets the number it was stored with. When the account budget
 	// would be exceeded, the commits the snapshot covers are deleted first if
 	// policy allows it; ErrStorageFull is returned when that is not enough.
-	Append(ctx context.Context, userID string, base int64, commits []Commit, policy CompactPolicy) (AppendResult, error)
+	// The device roster is updated in the same transaction: a claim advances
+	// that device's position, otherwise every device named by a commit is
+	// ensured. A rejected push leaves the roster untouched.
+	Append(ctx context.Context, userID string, base int64, commits []Commit, policy CompactPolicy, roster DeviceRoster) (AppendResult, error)
 	// After bounds the page before loading commit contents.
 	After(ctx context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error)
 	// RegisterSnapshot stores the newest snapshot pointer, marks the old
 	// attachment as orphaned when the pointer moves to another hash, and, when
 	// policy allows it, compacts commits the snapshot makes unnecessary without
-	// passing the position of a recently active device. It returns
-	// ErrSnapshotStale when seq is older than the stored pointer and ErrInvalid
-	// when seq is outside the log.
+	// passing the position of a recently active device. The position is checked
+	// while the account state is locked, in this order: a seq outside 1..head is
+	// ErrInvalid, then a seq older than the stored pointer is ErrSnapshotStale.
+	// Both stores keep that order so a direct call answers seq=0 the same way.
 	RegisterSnapshot(ctx context.Context, userID string, snap Snapshot, policy CompactPolicy) (State, error)
 	// Reset deletes every commit, the dedup rows, the snapshot pointer, the
 	// device roster and the named refs of the account, sets the head back to 0
@@ -205,10 +212,6 @@ type Store interface {
 	// existing row keeps its alias, capability and position and only moves
 	// last_seen.
 	EnsureDevice(ctx context.Context, userID, deviceID string) error
-	// AdvanceDevice moves the synced position of a known device to the larger
-	// of the stored one, base and, when toHead is set, the current head; it
-	// never passes the head.
-	AdvanceDevice(ctx context.Context, userID, deviceID string, base int64, toHead bool) error
 	// Devices lists the roster, newest first, at most limit rows.
 	Devices(ctx context.Context, userID string, limit int) ([]Device, error)
 	// RenameDevice changes the alias of a known device and returns the updated
@@ -230,10 +233,27 @@ type Store interface {
 	PutRef(ctx context.Context, userID string, ref Ref) (bool, error)
 }
 
-// AppendResult 是一次推送的结果：调用之后的 head，以及与请求逐条对应的序号。
+// AppendResult 是一次推送的结果：调用之后的 head、与请求逐条对应的序号，以及
+// 这批提交里有没有服务端新写入的。整批重放时 Fresh 为假，设备位置只按 base 推进。
 type AppendResult struct {
-	Head int64
-	Seqs []int64
+	Head  int64
+	Seqs  []int64
+	Fresh bool
+}
+
+// DeviceClaim 是一次推送携带的设备标识与快照能力。请求没有可用的设备标识时不留
+// 这一项，名册只按提交里出现的设备标识补行。
+type DeviceClaim struct {
+	DeviceID        string
+	SnapshotCapable bool
+}
+
+// DeviceRoster 是一次推送成功后要写进设备名册的更新。Touch 非空表示请求带了设备
+// 标识，更新这一台的能力与位置；否则按 Ensure 里的设备标识补行。两种更新都在
+// Append 的事务里完成，名册不会与提交序列各写一半。
+type DeviceRoster struct {
+	Touch  *DeviceClaim
+	Ensure []string
 }
 
 // memoryLog 是一个账号在内存里的序列。
@@ -384,7 +404,7 @@ func PlanAppend(head, base int64, commits []Commit, seen map[string]int64) (Appe
 	return plan, nil
 }
 
-func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commits []Commit, policy CompactPolicy) (AppendResult, error) {
+func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commits []Commit, policy CompactPolicy, roster DeviceRoster) (AppendResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
@@ -394,6 +414,7 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 		return AppendResult{Head: head}, err
 	}
 	if plan.AllDuplicates() {
+		l.applyDeviceRoster(roster, base, head, false, m.now().UTC())
 		return AppendResult{Head: head, Seqs: plan.Seqs}, nil
 	}
 	fresh := plan.Fresh
@@ -408,15 +429,17 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 		added += sizes[i]
 	}
 	if l.bytes+added > m.maxBytes {
-		// 预算不够时先压缩：有快照且策略允许删除就删掉快照位置及之前的全部提交，
-		// 不按保留期与设备位置过滤，再判断是否仍然超限（ADR-0043、ADR-0047、
-		// ADR-0054）。
+		// 预算不够时先算压缩能腾出多少：只有确实能装下才动提交序列，装不下就
+		// 原样返回，与 PostgreSQL 在同一事务里回滚的语义一致，被拒绝的推送不会
+		// 推进 EarliestSeq（ADR-0043、ADR-0047、ADR-0054）。
+		freed := int64(0)
 		if policy.AllowDelete && l.snapshot != nil {
-			l.compactThrough(l.snapshot.Seq)
+			freed = l.bytesThrough(l.snapshot.Seq)
 		}
-		if l.bytes+added > m.maxBytes {
+		if l.bytes-freed+added > m.maxBytes {
 			return AppendResult{Head: head}, ErrStorageFull
 		}
+		l.compactThrough(l.snapshot.Seq)
 	}
 	received := m.now()
 	for i, c := range fresh {
@@ -428,7 +451,10 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 		l.bytes += sizes[i]
 		l.seen[c.Uid] = seq
 	}
-	return AppendResult{Head: l.head(), Seqs: plan.Seqs}, nil
+	// 名册与提交序列在同一次写入里更新：推送成功之后不再单独补写设备行，
+	// 也不再用序号比较猜测有没有新提交（ADR-0048、ADR-0054）。
+	l.applyDeviceRoster(roster, base, l.head(), true, received.UTC())
+	return AppendResult{Head: l.head(), Seqs: plan.Seqs, Fresh: true}, nil
 }
 
 func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error) {
@@ -529,18 +555,23 @@ func (m *MemoryStore) TouchDevice(_ context.Context, userID, deviceID string, sn
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
-	now := m.now().UTC()
+	l.touchDevice(deviceID, snapshotCapable, position, m.now().UTC())
+	return nil
+}
+
+// touchDevice 在已经持有锁的情况下更新一台设备的名册行。
+func (l *memoryLog) touchDevice(deviceID string, snapshotCapable bool, position int64, now time.Time) {
 	head := l.head()
 	position = min(position, head)
 	if d, ok := l.devices[deviceID]; ok {
 		next := max(d.syncedSeq, position)
 		if d.snapshotCapable == snapshotCapable && next == d.syncedSeq {
-			return nil
+			return
 		}
 		d.snapshotCapable = snapshotCapable
 		d.syncedSeq = next
 		d.lastSeen = now
-		return nil
+		return
 	}
 	l.devices[deviceID] = &memoryDevice{
 		snapshotCapable: snapshotCapable,
@@ -548,7 +579,6 @@ func (m *MemoryStore) TouchDevice(_ context.Context, userID, deviceID string, sn
 		firstSeen:       now,
 		lastSeen:        now,
 	}
-	return nil
 }
 
 // EnsureDevice 补一行设备；已有行只更新最近出现时间，能力、位置与别名保持原样。
@@ -556,39 +586,34 @@ func (m *MemoryStore) EnsureDevice(_ context.Context, userID, deviceID string) e
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
-	now := m.now().UTC()
-	if d, ok := l.devices[deviceID]; ok {
-		d.lastSeen = now
-		return nil
-	}
-	l.devices[deviceID] = &memoryDevice{firstSeen: now, lastSeen: now}
+	l.ensureDevice(deviceID, m.now().UTC())
 	return nil
 }
 
-// AdvanceDevice 推进一台已知设备的位置：new 为真时推到当前 head，否则只按 base
-// 取较大值；两种情况都不超过 head。位置没有前进时不写这一行（ADR-0048）。
-func (m *MemoryStore) AdvanceDevice(_ context.Context, userID, deviceID string, base int64, toHead bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	l := m.logs[userID]
-	if l == nil {
-		return nil
+// ensureDevice 在已经持有锁的情况下补一行设备。
+func (l *memoryLog) ensureDevice(deviceID string, now time.Time) {
+	if d, ok := l.devices[deviceID]; ok {
+		d.lastSeen = now
+		return
 	}
-	d, ok := l.devices[deviceID]
-	if !ok {
-		return nil
+	l.devices[deviceID] = &memoryDevice{firstSeen: now, lastSeen: now}
+}
+
+// applyDeviceRoster 把一次推送的设备更新写进名册。带设备标识时把位置推进到
+// base（有新提交时取新 head），否则按提交里出现的设备标识补行；两种写入都在
+// Append 的锁或事务里完成。
+func (l *memoryLog) applyDeviceRoster(roster DeviceRoster, base, head int64, fresh bool, now time.Time) {
+	if roster.Touch != nil {
+		position := base
+		if fresh {
+			position = max(position, head)
+		}
+		l.touchDevice(roster.Touch.DeviceID, roster.Touch.SnapshotCapable, position, now)
+		return
 	}
-	target := base
-	if toHead {
-		target = max(target, l.head())
+	for _, deviceID := range roster.Ensure {
+		l.ensureDevice(deviceID, now)
 	}
-	next := min(max(d.syncedSeq, target), l.head())
-	if next == d.syncedSeq {
-		return nil
-	}
-	d.syncedSeq = next
-	d.lastSeen = m.now().UTC()
-	return nil
 }
 
 // Devices 按最近出现时间倒序列出名册，最多 limit 条。
@@ -753,6 +778,17 @@ func SplitCapabilities(raw string) []string {
 
 // JoinCapabilities 与 SplitCapabilities 相反，写成逗号分隔的形式。
 func JoinCapabilities(names []string) string { return strings.Join(names, ",") }
+
+// bytesThrough 返回序号不大于 through 的提交占用的字节数，用于判断预算压力下的
+// 压缩是否真的能把待写入的提交装下。
+func (l *memoryLog) bytesThrough(through int64) int64 {
+	n := min(max(0, through-l.trimmedThrough), int64(len(l.sizes)))
+	var total int64
+	for _, size := range l.sizes[:n] {
+		total += size
+	}
+	return total
+}
 
 // compactThrough 删除序号不大于 through 的提交前缀，用于预算压力下的压缩。
 func (l *memoryLog) compactThrough(through int64) {

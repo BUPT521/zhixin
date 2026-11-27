@@ -543,10 +543,10 @@ func TestPostgresClearAccountData(t *testing.T) {
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 2 {
+	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 2 {
 		t.Fatalf("append u1: %+v, err %v", r, err)
 	}
-	if r, err := st.Append(ctx, "u2", 0, []syncsvc.Commit{mk("other")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 1 {
+	if r, err := st.Append(ctx, "u2", 0, []syncsvc.Commit{mk("other")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 1 {
 		t.Fatalf("append u2: %+v, err %v", r, err)
 	}
 
@@ -560,7 +560,7 @@ func TestPostgresClearAccountData(t *testing.T) {
 		t.Fatalf("commits after reset = %+v, %v", commits, err)
 	}
 	// 重置之后从 0 重新推送，序号重新从 1 开始。
-	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r3")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 1 {
+	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r3")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 1 {
 		t.Fatalf("append after reset: %+v, err %v", r, err)
 	}
 	if state, err := st.State(ctx, "u2"); err != nil || state.Head != 1 {
@@ -834,17 +834,17 @@ func TestPostgresSyncSequence(t *testing.T) {
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	result, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}, syncsvc.CompactPolicy{})
+	result, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{})
 	if err != nil || result.Head != 2 || len(result.Seqs) != 2 || result.Seqs[0] != 1 || result.Seqs[1] != 2 {
 		t.Fatalf("追加两条后 head 应为 2、逐条序号为 1、2，得到 %+v %v", result, err)
 	}
 
 	// 完全重放：base 不对也算成功，因为客户端没收到上一次响应；重复的提交回它
 	// 原来的序号。
-	if result, err = st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}); err != nil || result.Head != 2 || result.Seqs[0] != 1 {
+	if result, err = st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || result.Head != 2 || result.Seqs[0] != 1 {
 		t.Fatalf("重放应成功并保持 head=2，得到 %+v %v", result, err)
 	}
-	if result, err = st.Append(ctx, "u1", 1, []syncsvc.Commit{mk("r3")}, syncsvc.CompactPolicy{}); err != syncsvc.ErrHeadMoved || result.Head != 2 {
+	if result, err = st.Append(ctx, "u1", 1, []syncsvc.Commit{mk("r3")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != syncsvc.ErrHeadMoved || result.Head != 2 {
 		t.Fatalf("base 落后应返回 ErrHeadMoved，得到 %+v %v", result, err)
 	}
 
@@ -883,7 +883,7 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 	snap := syncsvc.Snapshot{
 		Seq: 3, SHA256: strings.Repeat("a", 64), Digest: strings.Repeat("b", 64),
 	}
-	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 3 {
+	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 3 {
 		t.Fatalf("追加三条: %+v %v", r, err)
 	}
 	state, err := st.State(ctx, "u1")
@@ -922,11 +922,11 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 		t.Fatalf("压缩之后不应再拉到提交: %+v %v", commits, err)
 	}
 	// 去重表保留了接收过的身份：重放旧提交被跳过，head 不变。
-	if r, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 3 || r.Seqs[0] != 1 {
+	if r, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 3 || r.Seqs[0] != 1 {
 		t.Fatalf("压缩之后的重放应回原序号: %+v %v", r, err)
 	}
 	// 新提交照常追加与拉取。
-	if r, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 4 {
+	if r, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 4 {
 		t.Fatalf("压缩之后的追加: %+v %v", r, err)
 	}
 	if commits, err := st.After(ctx, "u1", 3, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 1 || commits[0].Uid != "r4" {
@@ -941,7 +941,7 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 		t.Fatalf("清空之后的状态: %+v %v", state, err)
 	}
 	// 去重身份也清了：同一编号重新写入从 1 开始。
-	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 1 || r.Seqs[0] != 1 {
+	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 1 || r.Seqs[0] != 1 {
 		t.Fatalf("清空之后重新写入: %+v %v", r, err)
 	}
 }
@@ -966,7 +966,7 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 			Changes: []syncsvc.Change{{Table: "memory", RowKey: "1", Op: "insert", After: &after}},
 		}
 	}
-	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}, syncsvc.CompactPolicy{}); err != nil || r.Head != 3 {
+	if r, err := st.Append(ctx, "u1", 0, []syncsvc.Commit{mk("r1"), mk("r2"), mk("r3")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 3 {
 		t.Fatalf("追加三条: %+v %v", r, err)
 	}
 

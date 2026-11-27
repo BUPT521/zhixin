@@ -22,6 +22,9 @@ import (
 // 顺序是有意的：元数据在字节之后写，进程在中间退出时只会留下没有元数据的孤儿
 // 对象，不会出现“列表里有、下载失败”的记录。
 func (s *Store) Put(ctx context.Context, userID string, m backup.Meta, data io.Reader, keep int) error {
+	if keep < 1 {
+		return backup.ErrKeep
+	}
 	// 时间在写字节之前校验：零值直接报错，不留没有元数据的孤儿对象。
 	createdAt, err := pgTime(m.CreatedAt)
 	if err != nil {

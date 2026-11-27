@@ -28,7 +28,7 @@ func TestCompactionStopsAtActiveDevicePosition(t *testing.T) {
 		testCommit("r2", snapshotTestSchema),
 		testCommit("r3", snapshotTestSchema),
 		testCommit("r4", snapshotTestSchema),
-	}); err != nil {
+	}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	// 一台设备只应用了前两条，且仍在活跃窗口之内。
@@ -54,7 +54,7 @@ func TestCompactionStopsAtActiveDevicePosition(t *testing.T) {
 
 	// 预算压力下的压缩不看设备位置：预算压到只放得下快照位置之后的提交。
 	store.SetMaxAccountBytes(1000)
-	if r, err := svc.Push(ctx, "u1", 4, []Commit{testCommit("r5", snapshotTestSchema)}); err != nil || r.Head != 5 {
+	if r, err := svc.Push(ctx, "u1", 4, []Commit{testCommit("r5", snapshotTestSchema)}, DeviceRoster{}); err != nil || r.Head != 5 {
 		t.Fatalf("预算压力下应能继续推送: %+v, %v", r, err)
 	}
 	state, err = svc.State(ctx, "u1")
@@ -85,7 +85,7 @@ func TestOrphanedAttachmentStaysInAccountQuota(t *testing.T) {
 	svc := newSnapshotService(store, clock).
 		SetAttachments(fakeAttachments{shaOld: 4096, shaNew: 4096}).
 		SetSnapshotGrace(time.Hour)
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{Seq: 1, Sha256: shaOld, Digest: snapshotDigest}); err != nil {
@@ -142,7 +142,7 @@ func TestTouchDeviceSkipsUnchangedWrites(t *testing.T) {
 	}
 
 	// 位置前进：更新位置与最近出现时间。
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	*clock = clock.Add(time.Hour)
@@ -166,13 +166,13 @@ func TestTouchDeviceSkipsUnchangedWrites(t *testing.T) {
 	}
 }
 
-// TestAdvanceDeviceNeverPassesHead 守住设备位置的上限：清除云端数据之后别的设备
+// TestPushDeviceNeverPassesHead 守住设备位置的上限：清除云端数据之后别的设备
 // 还会带着旧的大位置来推送，位置不能被推到当前的 head 之外（ADR-0054）。
-func TestAdvanceDeviceNeverPassesHead(t *testing.T) {
+func TestPushDeviceNeverPassesHead(t *testing.T) {
 	ctx := context.Background()
 	store, clock := newSnapshotStore()
 	svc := newSnapshotService(store, clock)
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	if err := svc.TouchDevice(ctx, "u1", "device-a", true, 100); err != nil {
@@ -183,8 +183,10 @@ func TestAdvanceDeviceNeverPassesHead(t *testing.T) {
 		t.Fatalf("位置不应超过 head: %+v, %v", devices, err)
 	}
 	// 整批重放只按 base 取较大值，不推到当前 head。
-	if err := svc.AdvanceDevice(ctx, "u1", "device-a", 1, false); err != nil {
-		t.Fatalf("推进位置: %v", err)
+	claim := &DeviceClaim{DeviceID: "device-a", SnapshotCapable: true}
+	if _, err := svc.Push(ctx, "u1", 1, []Commit{testCommit("r1", snapshotTestSchema)},
+		DeviceRoster{Touch: claim}); err != nil {
+		t.Fatalf("重放: %v", err)
 	}
 	if devices, err = svc.Devices(ctx, "u1"); err != nil || devices[0].SyncedSeq != 2 {
 		t.Fatalf("整批重放不应改变位置: %+v, %v", devices, err)
@@ -193,7 +195,7 @@ func TestAdvanceDeviceNeverPassesHead(t *testing.T) {
 	if err := svc.Reset(ctx, "u1"); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("s1", snapshotTestSchema)}); err != nil {
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("s1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
 	if err := svc.TouchDevice(ctx, "u1", "device-old", true, 500); err != nil {
@@ -202,6 +204,32 @@ func TestAdvanceDeviceNeverPassesHead(t *testing.T) {
 	devices, err = svc.Devices(ctx, "u1")
 	if err != nil || len(devices) != 1 || devices[0].SyncedSeq != 1 {
 		t.Fatalf("旧的大位置不应超过当前 head: %+v, %v", devices, err)
+	}
+}
+
+// TestReplayedPushDoesNotJumpTheDeviceToHead 守住“响应丢失后原样重试”不推进设备
+// 位置：重放的提交序号大于 base，但它不是这次新写入的，设备位置只按 base 取较大值，
+// 不会跟着别的设备推到的 head 前进（ADR-0054）。
+func TestReplayedPushDoesNotJumpTheDeviceToHead(t *testing.T) {
+	ctx := context.Background()
+	store, clock := newSnapshotStore()
+	svc := newSnapshotService(store, clock)
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{
+		testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema),
+	}, DeviceRoster{}); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if err := svc.TouchDevice(ctx, "u1", "device-a", true, 0); err != nil {
+		t.Fatalf("记录设备: %v", err)
+	}
+	claim := &DeviceClaim{DeviceID: "device-a", SnapshotCapable: true}
+	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)},
+		DeviceRoster{Touch: claim}); err != nil {
+		t.Fatalf("重放: %v", err)
+	}
+	devices, err := svc.Devices(ctx, "u1")
+	if err != nil || len(devices) != 1 || devices[0].SyncedSeq != 0 {
+		t.Fatalf("重放不应把设备位置推到 head: %+v, %v", devices, err)
 	}
 }
 

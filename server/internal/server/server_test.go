@@ -678,7 +678,7 @@ func (failingSyncStore) State(context.Context, string) (syncsvc.State, error) {
 	return syncsvc.State{}, errors.New("database is down")
 }
 
-func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit, syncsvc.CompactPolicy) (syncsvc.AppendResult, error) {
+func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit, syncsvc.CompactPolicy, syncsvc.DeviceRoster) (syncsvc.AppendResult, error) {
 	return syncsvc.AppendResult{}, errors.New("database is down")
 }
 
@@ -707,10 +707,6 @@ func (failingSyncStore) TouchDevice(context.Context, string, string, bool, int64
 }
 
 func (failingSyncStore) EnsureDevice(context.Context, string, string) error {
-	return errors.New("database is down")
-}
-
-func (failingSyncStore) AdvanceDevice(context.Context, string, string, int64, bool) error {
 	return errors.New("database is down")
 }
 

@@ -37,7 +37,7 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	var p problem
 	if code := h.json("PUT", "/v1/sync/snapshot", token, map[string]any{
 		"seq": 2, "sha256": sha, "digest": digest,
-	}, &p); code != http.StatusBadRequest || p.Code != "invalid_request" {
+	}, &p); code != http.StatusNotFound || p.Code != "not_found" {
 		t.Fatalf("未上传的附件: %d %+v", code, p)
 	}
 
