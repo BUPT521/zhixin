@@ -1021,9 +1021,10 @@ func TestPostgresUnreflectedChargesFollowTheSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	ledger, err := st.readPointLedger(ctx, st.q, "u1", date)
-	if err != nil || ledger.balance != 7 || ledger.applied != 6 || ledger.charged != 6 ||
-		ledger.unsettled != 1 || ledger.succeededAfterSync != 2 || ledger.available() != 4 {
-		t.Fatalf("余额应扣前一天待确认的 1 分和快照后成功的 2 分，当天只计成功的 6 分: %+v %v", ledger, err)
+	if err != nil || ledger.balance != 10 || ledger.applied != 6 || ledger.charged != 6 ||
+		ledger.unsettled != 1 || ledger.succeededAfterSync != 2 || ledger.available() != 7 {
+		t.Fatalf("副本原值十积分，可用积分扣掉前一天待确认的一分与快照之后成功的两分后应为七积分，"+
+			"当天只计成功的六积分: %+v %v", ledger, err)
 	}
 }
 
