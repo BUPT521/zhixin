@@ -188,7 +188,7 @@ func (p *Proxy) embed(ctx context.Context, plan *attemptPlan, fields map[string]
 		outcome := healthOutcome{sourceReached: res.reached}
 		switch {
 		case ctx.Err() != nil:
-			outcome = healthOutcome{reason: "请求已取消或超时"}
+			outcome = healthOutcome{reason: healthReasonCanceled}
 		case res.passthrough != nil:
 			outcome = httpFailure(res.status, res.passthrough.retryAfter)
 		case res.err != nil:
@@ -363,7 +363,6 @@ func (p *Proxy) embedOnce(ctx context.Context, m *liveModel, rt liveRoute, field
 		return res, true
 	}
 	res.usage.success = true
-	res.usage.unknown = res.usage.usage.Total() <= 0
 	res.body, res.dimensions, res.vectors = body, dims, merged
 	return res, false
 }

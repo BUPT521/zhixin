@@ -173,22 +173,6 @@ func (s *Store) Used(ctx context.Context, userID, day string, kind llmproxy.Kind
 	return settledTokens(ctx, s.q, userID, date, kind)
 }
 
-// Add 累加当天某类模型的已结算用量，不归到具体密钥。
-func (s *Store) Add(ctx context.Context, userID, day string, kind llmproxy.Kind, tokens int64) error {
-	date, err := pgDate(day)
-	if err != nil {
-		return err
-	}
-	return s.q.SettleTokens(ctx, db.SettleTokensParams{
-		UserID:             userID,
-		Day:                date,
-		Kind:               string(kind),
-		ApiKeyID:           "",
-		Actual:             tokens,
-		RawEmbeddingTokens: tokens,
-	})
-}
-
 // DailyLimit 返回账号单独调整过的每日共享额度，未设置时由调用方使用默认值。
 func (s *Store) DailyLimit(ctx context.Context, userID string) (int64, bool, error) {
 	return quotaOverride(ctx, s.q, userID)

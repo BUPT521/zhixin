@@ -74,18 +74,6 @@ func encodeVector(v []float32) []byte {
 	return out
 }
 
-// decodeVector 把 FP16 小端序还原成浮点数组；查找接口的测试与排查用它核对往返。
-func decodeVector(b []byte) ([]float32, error) {
-	if len(b)%2 != 0 {
-		return nil, errors.New("llmproxy: FP16 向量长度不是偶数")
-	}
-	out := make([]float32, len(b)/2)
-	for i := range out {
-		out[i] = float16ToFloat32(binary.LittleEndian.Uint16(b[i*2:]))
-	}
-	return out, nil
-}
-
 // float32ToFloat16 按 IEEE 754 把 float32 转成 float16，舍入为就近取偶。溢出按
 // 正负无穷处理，下溢到 0；向量的分量在这个范围内，NaN 只在提供方返回坏数据时
 // 出现，照实写成 NaN，不悄悄换成 0。
@@ -125,29 +113,6 @@ func float32ToFloat16(f float32) uint16 {
 		half++
 	}
 	return sign | half
-}
-
-// float16ToFloat32 把 float16 还原成 float32，供测试核对往返。用浮点运算拼出
-// 数值，省掉逐位移位的规范化，读起来与 IEEE 754 的定义一致。
-func float16ToFloat32(h uint16) float32 {
-	exp := int((h >> 10) & 0x1f)
-	mant := int(h & 0x3ff)
-	var f float64
-	switch exp {
-	case 0:
-		f = math.Ldexp(float64(mant), -24)
-	case 0x1f:
-		if mant != 0 {
-			return math.Float32frombits(uint32(h&0x8000)<<16 | 0x7fc00000)
-		}
-		f = math.Inf(1)
-	default:
-		f = math.Ldexp(1+float64(mant)/1024, exp-15)
-	}
-	if h&0x8000 != 0 {
-		f = -f
-	}
-	return float32(f)
 }
 
 // parseEmbedding 把提供方返回的一条向量解成浮点数。OpenAI 兼容接口默认返回浮点

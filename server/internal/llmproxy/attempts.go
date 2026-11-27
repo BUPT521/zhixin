@@ -110,9 +110,23 @@ type sourceConnectionError struct{ error }
 
 func (e sourceConnectionError) Unwrap() error { return e.error }
 
+// 健康原因里两段跨文件复用的文案：代理的流式收尾、尝试结束与嵌入都会写它们，
+// 会进后台探测的 trace.Error，同一件事只维护一份写法。
+const (
+	healthReasonRoundBudget = "本轮预算用完"
+	healthReasonCanceled    = "请求已取消或超时"
+)
+
+// 两类停止原因的健康状态是固定的：预算用完按到达来源处理，请求取消不算来源
+// 故障。代理收尾与 requestFailure 直接引用，不在每处重写。
+var (
+	roundBudgetHealth = healthOutcome{reason: healthReasonRoundBudget, sourceReached: true}
+	canceledHealth    = healthOutcome{reason: healthReasonCanceled}
+)
+
 func requestFailure(ctx context.Context, err error) healthOutcome {
 	if ctx.Err() != nil {
-		return healthOutcome{reason: "请求已取消或超时"}
+		return canceledHealth
 	}
 	var connection sourceConnectionError
 	if errors.As(err, &connection) {

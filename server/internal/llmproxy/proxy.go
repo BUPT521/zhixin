@@ -514,7 +514,7 @@ func (p *Proxy) Responses(w http.ResponseWriter, r *http.Request, opts RequestOp
 		result.clientCanceled = true
 	case guard.fromBudget && guard.expired.Load():
 		// 本轮预算在服务端这一侧用完：不是来源的故障，按取消计，不增加失败数。
-		outcome = healthOutcome{reason: "本轮预算用完"}
+		outcome = healthOutcome{reason: healthReasonRoundBudget}
 		result.clientCanceled = true
 	case errors.Is(streamErr, errResponseTooLarge):
 		// 实例的响应字节上限到了：来源已经把这段回答生成并转出，是代理自己停下
@@ -695,15 +695,6 @@ func isJSONString(raw json.RawMessage) bool {
 	return json.Unmarshal(raw, &s) == nil
 }
 
-func rejectedUsage(status int) int64 {
-	switch status {
-	case 400, 401, 403, 404, 413, 422, 429:
-		return 0
-	default:
-		return -1
-	}
-}
-
 // writeUpstreamStatus 把最后一次上游拒绝转给客户端。上游限流单独用
 // `rate_limited` 与 `Retry-After` 表示：客户端据此提示稍后重试，与账号当天
 // 额度用完（`quota_exceeded`）区分开。
@@ -865,14 +856,18 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				// 最后一次尝试的首字时限就是这一轮剩下的时间，它到点说明预算用完；
 				// 本轮总时限的计时器与首字时限的计时器可能同时到点，谁先触发都按
 				// 预算用完结束，不算来源故障，也不让客户端收到 candidates_exhausted。
-				p.finishAttempt(plan, attempt, attemptResult{unknown: true, clientCanceled: true}, 0,
-					healthOutcome{reason: "本轮预算用完", sourceReached: true})
+				p.finishAttemptStopped(plan, attempt, 0, Usage{}, true, roundBudgetHealth)
 				return reply, context.DeadlineExceeded
 			}
 			// 连接都没有建立时上游不可能计费，记 0；已经连上之后超时或被取消
 			// 的尝试按输入估算结算，见 billedTokens。
 			var connection sourceConnectionError
-			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: errors.As(err, &connection)}, 0, requestFailure(ctx, err))
+			outcome := requestFailure(ctx, err)
+			if errors.As(err, &connection) {
+				p.finishAttemptUnbilled(plan, attempt, 0, Usage{}, outcome)
+			} else {
+				p.finishAttemptFailed(plan, attempt, 0, Usage{}, 0, outcome)
+			}
 			if ctx.Err() != nil {
 				return reply, ctx.Err()
 			}
@@ -890,7 +885,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			outcome.reason, outcome.scope = "响应类型不可用", routeFailure
 			// 页面与 problem 里没有可核对的上游用量，来源多半没有计费，按没有产生
 			// 上游费用记 0；非 2xx 是明确拒绝，同样记 0（ADR-0070）。
-			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status, outcome)
+			p.finishAttemptUnbilled(plan, attempt, reply.status, Usage{}, outcome)
 			lastErr = errors.New("provider did not return a usable response")
 			continue
 		}
@@ -908,8 +903,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				slog.Int("status", reply.status),
 				slog.String("error", snippet),
 			)
-			p.finishAttempt(plan, attempt, attemptResult{unknown: rejectedUsage(reply.status) < 0, unbilled: true}, reply.status,
-				httpFailure(reply.status, reply.retryAfter))
+			p.finishAttemptUnbilled(plan, attempt, reply.status, Usage{}, httpFailure(reply.status, reply.retryAfter))
 			if retryable(reply.status) {
 				lastErr = nil
 				continue
@@ -923,10 +917,12 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				// 能解析成 Responses 响应对象就按正文估算输出，两者都拿不到时才按
 				// 没有产生上游费用记 0（ADR-0070）。正文不转给客户端，换下一个来源。
 				amount, output := p.discardedUsage(resp.Body, mediaType)
-				result := attemptResult{usage: amount, unknown: amount.Total() <= 0, outputEstimate: output}
-				result.unbilled = amount.Total() <= 0 && output <= 0
-				p.finishAttempt(plan, attempt, result, reply.status,
-					healthOutcome{reason: "流式响应类型不可用", scope: routeFailure, sourceReached: true})
+				outcome := healthOutcome{reason: "流式响应类型不可用", scope: routeFailure, sourceReached: true}
+				if amount.Total() <= 0 && output <= 0 {
+					p.finishAttemptUnbilled(plan, attempt, reply.status, amount, outcome)
+				} else {
+					p.finishAttemptFailed(plan, attempt, reply.status, amount, output, outcome)
+				}
 				lastErr = errors.New("provider did not return a chat stream")
 				continue
 			}
@@ -946,11 +942,10 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 				resp.Body.Close()
 				// 首字时限来自本轮预算时，是这一轮没有时间了，不算来源故障。
 				if !deadline.IsZero() && !p.now().Before(deadline) {
-					p.finishAttempt(plan, attempt, attemptResult{unknown: true, clientCanceled: true}, reply.status,
-						healthOutcome{reason: "本轮预算用完", sourceReached: true})
+					p.finishAttemptStopped(plan, attempt, reply.status, Usage{}, true, roundBudgetHealth)
 					return reply, context.DeadlineExceeded
 				}
-				p.finishAttempt(plan, attempt, attemptResult{unknown: true}, reply.status,
+				p.finishAttemptFailed(plan, attempt, reply.status, Usage{}, 0,
 					healthOutcome{reason: "首个有效输出超时", scope: routeFailure, sourceReached: true})
 				lastErr = errors.New("model source did not deliver output in time")
 				continue
@@ -958,15 +953,14 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			if gate.err != nil {
 				resp.Body.Close()
 				if ctx.Err() != nil {
-					p.finishAttempt(plan, attempt, attemptResult{unknown: true}, reply.status,
-						healthOutcome{reason: "请求已取消或超时"})
+					p.finishAttemptStopped(plan, attempt, reply.status, Usage{}, false, canceledHealth)
 					return reply, ctx.Err()
 				}
 				reason := "首个有效输出之前中断"
 				if errors.Is(gate.err, errPreludeTooLarge) {
 					reason = errPreludeTooLarge.Error()
 				}
-				p.finishAttempt(plan, attempt, attemptResult{unknown: true}, reply.status,
+				p.finishAttemptFailed(plan, attempt, reply.status, Usage{}, 0,
 					healthOutcome{reason: reason, scope: routeFailure, sourceReached: true})
 				lastErr = gate.err
 				continue
@@ -974,10 +968,13 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			if gate.failure != nil {
 				resp.Body.Close()
 				result, status, outcome := preludeFailure(gate.failure, resp.Header.Get("Retry-After"))
-				// 首个有效输出之前收到终止事件，且事件里没有用量：来源明确报告
-				// 这次失败，按没有产生计费结算。
-				result.unbilled = result.unknown
-				p.finishAttempt(plan, attempt, result, reply.status, outcome)
+				// 首个有效输出之前收到终止事件：事件里没有用量时来源明确报告这次
+				// 失败，按没有产生计费结算；带用量时按用量结算。
+				if result.usage.Total() <= 0 {
+					p.finishAttemptUnbilled(plan, attempt, reply.status, result.usage, outcome)
+				} else {
+					p.finishAttemptFailed(plan, attempt, reply.status, result.usage, 0, outcome)
+				}
 				lastErr = errors.New(outcome.reason)
 				if status != 0 {
 					reply.status, reply.retryAfter = status, outcome.retryAfter
@@ -995,7 +992,7 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 			// 来源已经用 2xx 回了响应，可能已经计费，但正文被直接关掉、拿不到
 			// 任何用量；客户端收到 429 会重试，这次不向账号结算，成本由实例承担。
 			resp.Body.Close()
-			p.finishAttempt(plan, attempt, attemptResult{unknown: true, unbilled: true}, reply.status,
+			p.finishAttemptUnbilled(plan, attempt, reply.status, Usage{},
 				healthOutcome{reason: "服务端响应预算不足", sourceReached: true})
 			return reply, errInstanceBusy
 		}
@@ -1010,22 +1007,19 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		if err != nil {
 			outcome := healthOutcome{reason: "聊天响应不可用", scope: routeFailure, sourceReached: true}
 			if ctx.Err() != nil {
-				p.finishAttempt(plan, attempt, attemptResult{usage: amount, unknown: amount.Total() <= 0}, reply.status,
-					healthOutcome{reason: "请求已取消或超时"})
+				p.finishAttemptStopped(plan, attempt, reply.status, amount, false, canceledHealth)
 				return reply, ctx.Err()
 			}
-			p.finishAttempt(plan, attempt, attemptResult{usage: amount, unknown: amount.Total() <= 0}, reply.status, outcome)
+			p.finishAttemptFailed(plan, attempt, reply.status, amount, 0, outcome)
 			lastErr = err
 			continue
 		}
 		end := responseEnd(response.Status, response.IncompleteDetails)
 		outcome := end.outcome()
 		outcome.sourceReached = true
-		p.finishAttempt(plan, attempt, attemptResult{
-			usage: amount, unknown: amount.Total() <= 0,
-			outputEstimate: estimateResponseOutput(response.Output),
-			success:        end == responseCompleted, outputLimited: end == responseOutputLimit,
-		}, reply.status, outcome)
+		p.finishAttemptCompleted(plan, attempt, reply.status, amount,
+			estimateResponseOutput(response.Output),
+			end == responseCompleted, end == responseOutputLimit, outcome)
 		if outcome.scope == routeFailure {
 			lastErr = errors.New(outcome.reason)
 			continue
@@ -1034,6 +1028,38 @@ func (p *Proxy) dispatch(ctx context.Context, plan *attemptPlan, fields map[stri
 		return reply, nil
 	}
 	return reply, lastErr
+}
+
+// dispatch 在一次尝试结束时只有四种结果，下面四个函数分别收尾，是否换来源或
+// 返回哪个错误仍留在 dispatch：按 0 结算、按来源用量或估算结算、被取消或预算
+// 用完、拿到完整响应。
+
+// finishAttemptUnbilled 结束一次没有可核对上游用量的尝试：请求没有发出、来源
+// 明确拒绝，或响应正文不可用。usage 只进统计列，结算量固定为 0。
+func (p *Proxy) finishAttemptUnbilled(plan *attemptPlan, attempt routeAttempt, status int, usage Usage, outcome healthOutcome) {
+	p.finishAttempt(plan, attempt, attemptResult{usage: usage, unbilled: true}, status, outcome)
+}
+
+// finishAttemptFailed 结束一次已经到达来源、但失败或响应不可用的尝试：按来源
+// 报告的 usage 结算，没有 usage 时按输出估算与输入估算补齐。
+func (p *Proxy) finishAttemptFailed(plan *attemptPlan, attempt routeAttempt, status int, usage Usage, outputEstimate int64, outcome healthOutcome) {
+	p.finishAttempt(plan, attempt, attemptResult{usage: usage, outputEstimate: outputEstimate}, status, outcome)
+}
+
+// finishAttemptStopped 结束一次被取消或本轮预算用完的尝试。预算用完计入取消数，
+// 请求 context 结束不计入，clientCanceled 沿用原来的判定。
+func (p *Proxy) finishAttemptStopped(plan *attemptPlan, attempt routeAttempt, status int, usage Usage, clientCanceled bool, outcome healthOutcome) {
+	p.finishAttempt(plan, attempt, attemptResult{usage: usage, clientCanceled: clientCanceled}, status, outcome)
+}
+
+// finishAttemptCompleted 结束一次拿到完整响应对象的尝试：success 与 outputLimited
+// 来自响应状态，用量按来源报告的 usage 结算，没有 usage 时按正文估算输出。
+func (p *Proxy) finishAttemptCompleted(plan *attemptPlan, attempt routeAttempt, status int, usage Usage, outputEstimate int64, success, outputLimited bool, outcome healthOutcome) {
+	p.finishAttempt(plan, attempt, attemptResult{
+		usage:          usage,
+		outputEstimate: outputEstimate,
+		success:        success, outputLimited: outputLimited,
+	}, status, outcome)
 }
 
 // firstOutputBudget 给这一次流式尝试分到等待首个有效输出的时间：不超过
@@ -1197,11 +1223,10 @@ func quotaReasonOf(err error) QuotaReason {
 // total_tokens，两种都认，取值以实际出现的字段为准。
 type usageEnvelope struct {
 	Usage *struct {
-		InputTokens      int64 `json:"input_tokens"`
-		OutputTokens     int64 `json:"output_tokens"`
-		PromptTokens     int64 `json:"prompt_tokens"`
-		TotalTokens      int64 `json:"total_tokens"`
-		CompletionTokens int64 `json:"completion_tokens"`
+		InputTokens  int64 `json:"input_tokens"`
+		OutputTokens int64 `json:"output_tokens"`
+		PromptTokens int64 `json:"prompt_tokens"`
+		TotalTokens  int64 `json:"total_tokens"`
 		// InputTokensDetails 是 Responses 在命中上下文缓存时给出的明细，命中量
 		// 读 cached_tokens；没有这个对象表示来源不支持或这次没有命中数据。
 		// 命中量用指针，用来区分“来源报了 0”（这次确实没有命中）与“来源没有
@@ -1505,7 +1530,6 @@ func (l *streamLimit) Read(p []byte) (int, error) {
 func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemptResult, end responseCompletion, streamErr error, clientWriteFailed bool) {
 	flusher, _ := w.(http.Flusher)
 	rd := bufio.NewReaderSize(body, 64*1024)
-	result.unknown = true
 	for {
 		line, err := rd.ReadBytes('\n')
 		if len(line) > 0 {
@@ -1517,7 +1541,7 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader) (result attemp
 				// 没有 usage 时按已经转出的输出估算结算，所以逐条累计增量。
 				result.outputEstimate += streamOutputTokens(data)
 				if used.Total() > 0 {
-					result.usage, result.unknown = used, false
+					result.usage = used
 				}
 			}
 			if _, werr := w.Write(line); werr != nil {

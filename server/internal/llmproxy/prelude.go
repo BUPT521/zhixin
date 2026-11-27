@@ -165,7 +165,7 @@ func firstOutputStreamEvent(data []byte) (ready, failed bool) {
 
 func preludeFailure(data []byte, retryAfter string) (attemptResult, int, healthOutcome) {
 	end, used := streamData(data)
-	result := attemptResult{usage: used, unknown: used.Total() <= 0}
+	result := attemptResult{usage: used}
 	type upstreamError struct {
 		Code string `json:"code"`
 	}

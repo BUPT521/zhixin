@@ -600,7 +600,7 @@ func TestAdminKeyUsageFiltersByExactAccount(t *testing.T) {
 	h := newHarness(t, map[string]string{"ZHIXIN_ADMIN_TOKEN": testAdminToken})
 	today := time.Now().In(h.cfg.Location).Format(time.DateOnly)
 	for _, id := range []string{"account", "account-other"} {
-		if err := h.stores.Quota.Add(t.Context(), id, today, llmproxy.KindChat, 42); err != nil {
+		if err := h.stores.Quota.Settle(t.Context(), id, today, llmproxy.KindChat, "", 0, 42, llmproxy.Usage{}, llmproxy.SettleAttempt{Attempts: 1}); err != nil {
 			t.Fatal(err)
 		}
 	}

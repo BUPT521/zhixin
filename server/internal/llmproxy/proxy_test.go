@@ -1272,7 +1272,7 @@ func TestEmbeddingUsesSharedQuotaAndRate(t *testing.T) {
 	})
 	tokens, _ := env.authSvc.Register(context.Background(), "eq@b.cn", "password1", "")
 	token := tokens.AccessToken
-	if err := env.quota.Add(context.Background(), tokens.UserID, env.proxy.day(), KindChat, 10); err != nil {
+	if err := env.quota.Settle(context.Background(), tokens.UserID, env.proxy.day(), KindChat, "", 0, 10, Usage{}, attemptOf(false)); err != nil {
 		t.Fatal(err)
 	}
 	body := map[string]any{"model": "emb", "input": inputs(2)}
