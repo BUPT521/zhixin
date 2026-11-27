@@ -25,7 +25,6 @@ func newRefHarness(t *testing.T) (*testutil.Client, *auth.Service, *snapshotHarn
 	h := newSnapshotHarness(t)
 	h.client = testutil.NewClient(t, testutil.NewServer(
 		refsAPI{snapshotAPI{testAPI{h: h.handler}}},
-		httpx.RequestID,
 		auth.Middleware(h.authSvc, h.log),
 	))
 	return h.client, h.authSvc, h

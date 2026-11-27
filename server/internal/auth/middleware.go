@@ -28,14 +28,15 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 // 是否要求令牌只由 r.Pattern 决定：生成的路由处理器里，mux 已经把注册模式
 // （例如 "GET /v1/me"）写进 r.Pattern。编码路径先归一再匹配，HEAD 落到 GET
 // 路由时同样带 "GET ..."，所以这里不需要再自己拼路径表，也不会被写法差异绕过。
-// 没有匹配到契约路由的请求不会进入生成的处理器，mux 的兜底处理器直接回 404。
+// 没有匹配到契约路由的请求不会进入生成的处理器，mux 的兜底处理器直接回 404，
+// 这条中间件只在已匹配的路由里运行。
 //
 // 只有 ErrInvalidToken（缺失、过期、已轮换掉、已撤销）回 401；存储不可用等其余
 // 错误走 WriteInternal，回 500 并记日志，不再把数据库故障报成“令牌无效”。
 func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !requiresAuth(r) {
+			if !routepolicy.RequiresAuth(r.Pattern) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -58,7 +59,7 @@ func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler 
 				httpx.WriteProblem(w, r, http.StatusUnauthorized, httpx.CodeUnauthorized, "access token is invalid, expired or revoked")
 			case err != nil:
 				httpx.WriteInternal(w, r, log, err)
-			case p.KeyID != "" && !allowsKey(r):
+			case p.KeyID != "" && !routepolicy.AllowsKey(r.Pattern):
 				// 密钥只做模型调用；数据接口与管理接口都要求登录令牌。
 				httpx.WriteProblem(w, r, http.StatusForbidden, httpx.CodeKeyScopeDenied,
 					"api keys may only call the model endpoints")
@@ -78,37 +79,4 @@ func Middleware(svc *Service, log *slog.Logger) func(http.Handler) http.Handler 
 			}
 		})
 	}
-}
-
-// allowsKey 报告这次请求是否在密钥的作用域内。正常装配下看 r.Pattern；中间件被
-// 装在 mux 外层时（共享测试装配仍是这种位置）r.Pattern 为空，按方法与路径精确
-// 匹配，密钥允许的五条路由都没有路径参数，因此不会误放行带参数的路径。
-func allowsKey(r *http.Request) bool {
-	if r.Pattern != "" {
-		return routepolicy.AllowsKey(r.Pattern)
-	}
-	return routepolicy.AllowsKey(methodPattern(r.Method, r.URL.Path))
-}
-
-// requiresAuth 报告这次请求是否要求 Bearer。
-//
-// 正常装配下中间件在生成路由的中间件链里，mux 已经把注册模式写进 r.Pattern，
-// 判定只看这张表。r.Pattern 为空说明中间件被装在了 mux 外层：共享的测试装配
-// （testutil.NewServer）与旧的装配方式仍是这种位置，此时按 URL.Path 默认拒绝，
-// 只有契约里明确公开的操作按原路径放行，编码路径等写法差异一律要求令牌，宁可
-// 更严也不放行。生产装配里 r.Pattern 恒非空，走不到这一支。
-func requiresAuth(r *http.Request) bool {
-	if r.Pattern != "" {
-		return routepolicy.RequiresAuth(r.Pattern)
-	}
-	return !routepolicy.IsPublic(methodPattern(r.Method, r.URL.Path))
-}
-
-// methodPattern 把方法与被请求的路径拼成契约写法，HEAD 按 GET 判断：标准库的
-// GET 路由也接 HEAD。
-func methodPattern(method, path string) string {
-	if method == http.MethodHead {
-		method = http.MethodGet
-	}
-	return method + " " + path
 }

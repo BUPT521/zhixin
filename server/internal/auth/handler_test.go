@@ -19,7 +19,7 @@ import (
 // testMaxJSON 是契约里普通 JSON 请求体的上限，够本包用例使用。
 const testMaxJSON = 1 << 20
 
-// api 只接本包的路由；其余路由由 testutil.Base 回 404。
+// api 只接本包的路由；其余路由没有覆盖，被调用时会 panic。
 type testAPI struct {
 	testutil.Base
 	h *Handler
@@ -71,7 +71,6 @@ func newTestServerWithMail(t *testing.T) (*testutil.Client, *fakeMailer) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: NewHandler(svc, log, testMaxJSON, nil, nil, nil, httpx.RemoteHost)},
-		httpx.RequestID,
 		Middleware(svc, log),
 	)), mail
 }
@@ -127,7 +126,6 @@ func newTestServerWithLoginLimit(t *testing.T, burst int) *testutil.Client {
 	h.SetLoginFailLimiter(ratelimit.New(rate.Limit(0), burst, 0))
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: h},
-		httpx.RequestID,
 		Middleware(svc, log),
 	))
 }

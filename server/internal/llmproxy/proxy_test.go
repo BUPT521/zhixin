@@ -25,7 +25,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
 
-// testAPI 只接本包的路由；其余路由由 testutil.Base 回 404。
+// testAPI 只接本包的路由；其余路由没有覆盖，被调用时会 panic。
 type testAPI struct {
 	testutil.Base
 	p *Proxy
@@ -86,7 +86,6 @@ func newTestServer(t *testing.T, cfg config.LLMConfig, setup func(*MemoryCatalog
 	proxy := NewRoutedHandler(cfg, router, quota, quota, time.UTC, log)
 	c := testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
-		httpx.RequestID,
 		auth.Middleware(authSvc, log),
 	))
 	return &testEnv{c: c, authSvc: authSvc, quota: quota, catalog: catalog, box: box, proxy: proxy}
@@ -1408,7 +1407,6 @@ func newHardeningTestServer(t *testing.T, cfg config.LLMConfig, upstreamURL stri
 	proxy := NewRoutedHandler(cfg, router, quota, quota, time.UTC, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{p: proxy},
-		httpx.RequestID,
 		auth.Middleware(authSvc, log),
 	)), authSvc, quota, proxy
 }

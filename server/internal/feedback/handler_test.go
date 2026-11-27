@@ -18,7 +18,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// testAPI 只接本包的路由；其余路由由 testutil.Base 回 404。
+// testAPI 只接本包的路由；其余路由没有覆盖，被调用时会 panic。
 type testAPI struct {
 	testutil.Base
 	h *Handler
@@ -30,7 +30,7 @@ func newTestServer(t *testing.T, store Store, limits *ratelimit.Limiter) *testut
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := NewHandler(NewService(store), log, 1<<20, limits, httpx.RemoteHost)
-	return testutil.NewClient(t, testutil.NewServer(testAPI{h: handler}, httpx.RequestID))
+	return testutil.NewClient(t, testutil.NewServer(testAPI{h: handler}))
 }
 
 func submit(t *testing.T, c *testutil.Client, body any) (int, []byte) {
@@ -183,7 +183,7 @@ func newTestServerWithHandler(t *testing.T, store Store) (*testutil.Client, *Han
 	t.Helper()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := NewHandler(NewService(store), log, 1<<20, nil, httpx.RemoteHost)
-	return testutil.NewClient(t, testutil.NewServer(testAPI{h: handler}, httpx.RequestID)), handler
+	return testutil.NewClient(t, testutil.NewServer(testAPI{h: handler})), handler
 }
 
 // failingStore 模拟数据库写入失败，用来核对处理器把存储故障报成 500，而不是

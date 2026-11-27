@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
+	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
 
 // failingStore 让会话查询失败，用来区分“令牌无效”与“存储不可用”。
@@ -27,26 +29,38 @@ type problem struct {
 	RequestID string `json:"request_id"`
 }
 
-// newAuthedHandler 接一条受保护路由与一条公开路由，用来单看中间件的状态码与
-// 响应体；业务处理器的用例由各包自己负责。
+// middlewareAPI 只接中间件用例用到的几条路由，装配顺序与生产一致：鉴权交给
+// 生成代码的中间件链，运行时 r.Pattern 已经写好。其余路由没有覆盖，被调用时
+// 会 panic，提醒补桩。
+type middlewareAPI struct {
+	testutil.Base
+}
+
+func (middlewareAPI) GetHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
+func (middlewareAPI) GetV1AppReleases(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+}
+
+func (middlewareAPI) GetV1Me(w http.ResponseWriter, r *http.Request) {
+	p := MustPrincipal(r.Context())
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"user_id": p.UserID})
+}
+
+func (middlewareAPI) PostV1LlmResponses(w http.ResponseWriter, r *http.Request, _ api.PostV1LlmResponsesParams) {
+	p := MustPrincipal(r.Context())
+	httpx.WriteJSON(w, http.StatusOK, map[string]string{"user_id": p.UserID, "key_id": p.KeyID})
+}
+
+// newAuthedHandler 用生成的契约路由装配中间件，返回的 handler 可以直接发请求；
+// 业务处理器的用例由各包自己负责。
 func newAuthedHandler(t *testing.T, store Store) (http.Handler, *Service) {
 	t.Helper()
 	svc := NewService(store, time.Hour, time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/me", func(w http.ResponseWriter, r *http.Request) {
-		p := MustPrincipal(r.Context())
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"user_id": p.UserID})
-	})
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	// 模型路由用来核对密钥的作用域：密钥只在这里被放行。
-	mux.HandleFunc("POST /v1/llm/responses", func(w http.ResponseWriter, r *http.Request) {
-		p := MustPrincipal(r.Context())
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"user_id": p.UserID, "key_id": p.KeyID})
-	})
-	return httpx.Chain(Middleware(svc, log)(mux), httpx.RequestID), svc
+	return testutil.NewServer(middlewareAPI{}, Middleware(svc, log)), svc
 }
 
 // serve 发一次请求；authorization 为空表示不带 Authorization 头。
@@ -205,17 +219,18 @@ func TestMiddlewareReportsStoreFailureAs500(t *testing.T) {
 	}
 }
 
-// TestRequiresAuthTreatsHeadAsGet 守住 HEAD 不绕过鉴权：标准库的 GET 路由也接
+// TestMiddlewareTreatsHeadAsGet 守住 HEAD 不绕过鉴权：标准库的 GET 路由也接
 // HEAD，以前 HEAD /v1/llm/quota 会跳过令牌校验，落进处理器后 panic 成 500。
-func TestRequiresAuthTreatsHeadAsGet(t *testing.T) {
+func TestMiddlewareTreatsHeadAsGet(t *testing.T) {
+	h, _ := newAuthedHandler(t, NewMemoryStore())
 	for _, path := range []string{"/v1/llm/quota", "/v1/me", "/v1/backups", "/v1/blobs/abc"} {
-		if r := httptest.NewRequest(http.MethodHead, path, nil); !requiresAuth(r) {
-			t.Fatalf("HEAD %s 应当要求令牌", path)
+		if rec := serve(t, h, http.MethodHead, path, ""); rec.Code != http.StatusUnauthorized {
+			t.Fatalf("HEAD %s 应当要求令牌，得到 %d", path, rec.Code)
 		}
 	}
 	for _, path := range []string{"/v1/app/releases", "/healthz"} {
-		if r := httptest.NewRequest(http.MethodHead, path, nil); requiresAuth(r) {
-			t.Fatalf("公开路由的 HEAD %s 不需要令牌", path)
+		if rec := serve(t, h, http.MethodHead, path, ""); rec.Code != http.StatusOK {
+			t.Fatalf("公开路由的 HEAD %s 不需要令牌，得到 %d", path, rec.Code)
 		}
 	}
 }

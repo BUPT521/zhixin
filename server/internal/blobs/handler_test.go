@@ -18,7 +18,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
 
-// testAPI 只接本包的路由；其余路由由 testutil.Base 回 404。
+// testAPI 只接本包的路由；其余路由没有覆盖，被调用时会 panic。
 type testAPI struct {
 	testutil.Base
 	h *Handler
@@ -45,7 +45,6 @@ func newTestServer(t *testing.T, maxBytes, accountBytes int64) (*testutil.Client
 	handler := NewHandler(NewService(NewStore(objectstore.NewMemory()), maxBytes).SetAccountBytes(accountBytes), log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
-		httpx.RequestID,
 		auth.Middleware(authSvc, log),
 	)), authSvc
 }

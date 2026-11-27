@@ -109,7 +109,6 @@ func TestHandlerRegisterGlobalBudget(t *testing.T) {
 	h.SetRegisterGlobalLimiter(ratelimit.New(rate.Limit(0), 1, 0))
 	c := testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: h},
-		httpx.RequestID,
 		Middleware(svc, log),
 	))
 

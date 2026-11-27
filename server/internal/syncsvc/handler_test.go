@@ -24,7 +24,7 @@ const (
 	testMaxJSON       = 1 << 20
 )
 
-// testAPI 只接本包的路由；其余路由由 testutil.Base 回 404。
+// testAPI 只接本包的路由；其余路由没有覆盖，被调用时会 panic。
 type testAPI struct {
 	testutil.Base
 	h *Handler
@@ -59,7 +59,6 @@ func newTestServer(t *testing.T) (*testutil.Client, *auth.Service) {
 	handler := NewHandler(NewService(NewMemoryStore(), testSchemaVersion), log, 16*testMaxJSON)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
-		httpx.RequestID,
 		auth.Middleware(authSvc, log),
 	)), authSvc
 }
@@ -91,7 +90,6 @@ func TestHandlerHeadDeclaresCompact(t *testing.T) {
 	authSvc = auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	c = testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
-		httpx.RequestID,
 		auth.Middleware(authSvc, log),
 	))
 	token = signIn(t, authSvc, "compact-on@b.cn")
@@ -243,8 +241,8 @@ func TestHandlerSyncPreservesLargeIntegers(t *testing.T) {
 // 以下内容追加在文件末尾：另一个同事同时在改文件头部的 schema 常量，这里只补
 // 新的桩与用例，不重写已有的 testAPI 与常量。
 
-// snapshotAPI 在 testAPI 之上补齐快照的两条路由；testutil.Base 里已经有回 404
-// 的桩，契约新增接口时那边会先编译失败。
+// snapshotAPI 在 testAPI 之上补齐快照的两条路由；其余路由没有覆盖，被调用时
+// 会 panic。
 type snapshotAPI struct{ testAPI }
 
 func (a snapshotAPI) GetV1SyncSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +281,6 @@ func newSnapshotHarness(t *testing.T) *snapshotHarness {
 	h.log = log
 	h.client = testutil.NewClient(t, testutil.NewServer(
 		snapshotAPI{testAPI{h: handler}},
-		httpx.RequestID,
 		auth.Middleware(h.authSvc, log),
 	))
 	return h

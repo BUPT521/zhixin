@@ -27,7 +27,7 @@ const (
 	testKept          = 2
 )
 
-// testAPI 只接本包的路由；其余路由由 testutil.Base 回 404。
+// testAPI 只接本包的路由；其余路由没有覆盖，被调用时会 panic。
 type testAPI struct {
 	testutil.Base
 	h *Handler
@@ -58,7 +58,6 @@ func newTestServer(t *testing.T) (*testutil.Client, *auth.Service) {
 	handler := NewHandler(NewService(NewMemoryStore(), testMaxBytes, testKept, testSchemaVersion), log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
-		httpx.RequestID,
 		auth.Middleware(authSvc, log),
 	)), authSvc
 }
