@@ -11,6 +11,7 @@ import '../application/plan_service.dart';
 import '../domain/models/study.dart';
 import 'copy.dart';
 import 'format.dart';
+import 'live_view.dart';
 import 'plan_actions.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_menu.dart';
@@ -39,13 +40,26 @@ class PlanItemsTab extends StatefulWidget {
 }
 
 class _PlanItemsTabState extends State<PlanItemsTab> {
-  /// 已完成事项第一页的订阅；收起时退订。
-  StreamSubscription<List<PlanItem>>? _doneSubscription;
+  /// 已完成事项第一页的订阅；收起时置空，`LiveView` 随之退订。
+  Stream<List<PlanItem>>? _doneStream;
+
+  /// 第一页；订阅每带回一页就换掉这一份，界面由 `LiveView` 的 builder 重建。
   List<PlanItem> _doneFirst = const [];
+
+  /// 继续读取的页：按完成时间接着往后，去重之后接在第一页后面。
   List<PlanItem> _doneOlder = const [];
+
   bool _doneExpanded = false;
+
+  /// 正在读下一页；第一页的读取状态由 `LiveView` 的 loading 给出。
   bool _loadingDone = false;
+
+  /// 列表底部有重试入口：第一页读取失败，或续读下一页失败。
   bool _doneLoadFailed = false;
+
+  /// 失败的是第一页：重试要换一条订阅重读，而不是接着往下翻。
+  bool _doneFirstFailed = false;
+
   bool _doneLoadScheduled = false;
   static const int _donePageSize = 30;
 
@@ -70,64 +84,52 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
       !_loadingDone &&
       !_doneLoadFailed;
 
-  @override
-  void dispose() {
-    _doneSubscription?.cancel();
-    super.dispose();
-  }
-
-  /// 展开或收起已完成事项；展开时订阅第一页，收起时退订。
+  /// 展开或收起已完成事项；展开时给出订阅，收起时撤掉，已经读出的内容留着。
   void _toggleDone() {
     if (_loadingDone) return;
     if (_doneExpanded) {
       // 已经读出的内容留到收起动画结束，下次展开再重新订阅第一页。
-      setState(() => _doneExpanded = false);
-      _doneSubscription?.cancel();
-      _doneSubscription = null;
+      setState(() {
+        _doneExpanded = false;
+        _doneStream = null;
+        _doneOlder = const [];
+        _doneLoadFailed = false;
+        _doneFirstFailed = false;
+      });
       return;
     }
-    setState(() => _doneExpanded = true);
-    _subscribeDone();
+    setState(() {
+      _doneExpanded = true;
+      _doneOlder = const [];
+      _doneLoadFailed = false;
+      _doneFirstFailed = false;
+      _doneStream = AppScope.of(context).study.plan
+          .watchDoneItems(limit: _donePageSize);
+    });
   }
 
-  /// 已完成事项第一页跟着一条订阅：写入之后自动重读，页面不再自己刷新。
-  void _subscribeDone() {
-    _doneSubscription?.cancel();
-    _doneSubscription = null;
-    final service = AppScope.of(context).study.plan;
+  /// 第一页回来了：换掉屏幕上的一屏，写入之后的重读也走这里。
+  void _onDoneFirst(List<PlanItem> page) {
+    _doneFirst = page;
+    _doneLoadFailed = false;
+    _doneFirstFailed = false;
+  }
+
+  /// 第一页读取失败：已经读出的内容保持不变，列表底部留重试入口。
+  void _onDoneError(Object error, StackTrace stack) {
+    if (!mounted) return;
     setState(() {
-      _doneFirst = const [];
-      _doneOlder = const [];
-      _loadingDone = true;
-      _doneLoadFailed = false;
+      _doneLoadFailed = true;
+      _doneFirstFailed = true;
     });
-    _doneSubscription = service
-        .watchDoneItems(limit: _donePageSize)
-        .listen(
-          (page) {
-            if (!mounted) return;
-            setState(() {
-              _doneFirst = page;
-              _loadingDone = false;
-              _doneLoadFailed = false;
-            });
-          },
-          onError: (Object error, StackTrace stack) {
-            if (!mounted) return;
-            setState(() {
-              _loadingDone = false;
-              _doneLoadFailed = true;
-            });
-            _reportFailure(
-              error,
-              stack,
-              action: '读取已完成事项',
-              kind: 'plan_done_read',
-              kept: '已经读出的内容保持不变',
-              next: '可以在列表底部重试',
-            );
-          },
-        );
+    _reportFailure(
+      error,
+      stack,
+      action: '读取已完成事项',
+      kind: 'plan_done_read',
+      kept: '已经读出的内容保持不变',
+      next: '可以在列表底部重试',
+    );
   }
 
   /// 继续读取已完成的下一页；已经读到的内容保持不变，失败时留下重试入口。
@@ -151,6 +153,7 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
       setState(() {
         _loadingDone = false;
         _doneLoadFailed = true;
+        _doneFirstFailed = false;
       });
       _reportFailure(
         error,
@@ -163,10 +166,15 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
     }
   }
 
-  /// 读取失败之后重试：第一页还没读到时重新订阅，否则继续读下一页。
+  /// 读取失败之后重试：第一页失败时换一条订阅，否则继续读下一页。
   void _retryDone() {
-    if (_doneFirst.isEmpty) {
-      _subscribeDone();
+    if (_doneFirstFailed) {
+      setState(() {
+        _doneLoadFailed = false;
+        _doneFirstFailed = false;
+        _doneStream = AppScope.of(context).study.plan
+            .watchDoneItems(limit: _donePageSize);
+      });
     } else {
       _loadMoreDone();
     }
@@ -217,25 +225,33 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
-    return NotificationListener<ScrollNotification>(
-      onNotification: _onItemsScroll,
-      child: CustomScrollView(
-        key: const PageStorageKey<String>('plan-tab-1'),
-        slivers: [
-          SliverPadding(
-            // 左右边距由页面在每一页的外层给出，页签整幅滑进滑出；这里只留上下的间隔。
-            padding: EdgeInsets.only(
-              top: theme.space.xs,
-              bottom: theme.space.section,
+    return LiveView<List<PlanItem>>(
+      stream: _doneStream,
+      onData: _onDoneFirst,
+      onError: _onDoneError,
+      builder: (context, _, firstLoading) =>
+          NotificationListener<ScrollNotification>(
+            onNotification: _onItemsScroll,
+            child: CustomScrollView(
+              key: const PageStorageKey<String>('plan-tab-1'),
+              slivers: [
+                SliverPadding(
+                  // 左右边距由页面在每一页的外层给出，页签整幅滑进滑出；这里只留上下的间隔。
+                  padding: EdgeInsets.only(
+                    top: theme.space.xs,
+                    bottom: theme.space.section,
+                  ),
+                  sliver: SliverMainAxisGroup(
+                    slivers: _slivers(theme, firstLoading: firstLoading),
+                  ),
+                ),
+              ],
             ),
-            sliver: SliverMainAxisGroup(slivers: _slivers(theme)),
           ),
-        ],
-      ),
     );
   }
 
-  List<Widget> _slivers(ZhixinTheme theme) {
+  List<Widget> _slivers(ZhixinTheme theme, {required bool firstLoading}) {
     final week = widget.week;
     final header = <Widget>[
       SectionHeading(
@@ -272,15 +288,17 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
             ? header[index]
             : _itemTile(theme, week.items[index - header.length]),
       ),
-      if (week.doneItemCount > 0) ..._doneSection(theme),
+      if (week.doneItemCount > 0)
+        ..._doneSection(theme, firstLoading: firstLoading),
     ];
   }
 
   /// 已完成事项：一个展开入口，展开之后按页追加。
-  List<Widget> _doneSection(ZhixinTheme theme) {
+  List<Widget> _doneSection(ZhixinTheme theme, {required bool firstLoading}) {
     final week = widget.week;
     final items = _doneItems;
-    final hasFooter = _loadingDone || _doneLoadFailed;
+    final loadingFooter = firstLoading || _loadingDone;
+    final hasFooter = loadingFooter || _doneLoadFailed;
     return [
       SliverToBoxAdapter(
         child: Padding(
@@ -315,14 +333,14 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
             if (index <= items.length) {
               return _itemTile(theme, items[index - 1]);
             }
-            if (_loadingDone) {
+            if (loadingFooter) {
               return const Padding(
                 padding: EdgeInsets.all(_skeletonPadding),
                 child: ListSkeleton(rows: 1, rowHeight: 64),
               );
             }
             return LoadMoreFooter(
-              label: _doneFirst.isEmpty ? '重试读取已完成事项' : '重试读取更早的已完成事项',
+              label: _doneFirstFailed ? '重试读取已完成事项' : '重试读取更早的已完成事项',
               loading: false,
               onPressed: _retryDone,
             );

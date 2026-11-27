@@ -35,6 +35,12 @@ typedef PlanOpenStudyPlan = Future<void> Function(
   String planId,
 );
 
+/// 事项面板选中的命令：跳转与改状态各一条，不再用字符串约定动作。
+///
+/// 面板把命令交回页面，由 [PlanActions.openItem] 分派；写成枚举之后，增删一条
+/// 命令时编译器会检查分派是否补齐，字符串拼错不会静默变成“什么都不做”。
+enum _ItemCommand { study, source, plan, start, complete }
+
 /// 安排页的写入动作：页签只负责排列界面，对话框、服务调用与回执都走这里。
 ///
 /// 动作使用页面传入的数据与导航回调，写入后的数据由页面订阅更新。
@@ -221,7 +227,7 @@ class PlanActions {
   /// 打开事项的操作面板，按用户选择跳转或改状态。
   Future<void> openItem(PlanItem item) async {
     final canOpen = item.isStudyStep || item.conversationId != null;
-    final action = await showZhixinSheet<String>(
+    final action = await showZhixinSheet<_ItemCommand>(
       context: context,
       builder: (sheetContext) {
         final theme = sheetContext.zhixin;
@@ -242,7 +248,7 @@ class PlanActions {
             forui.FButton(
               variant: forui.FButtonVariant.outline,
               mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(sheetContext, 'source'),
+              onPress: () => Navigator.pop(sheetContext, _ItemCommand.source),
               prefix: const Icon(FLucideIcons.messageCircle),
               child: const Text('返回来源讨论'),
             ),
@@ -250,7 +256,7 @@ class PlanActions {
             forui.FButton(
               variant: forui.FButtonVariant.outline,
               mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(sheetContext, 'plan'),
+              onPress: () => Navigator.pop(sheetContext, _ItemCommand.plan),
               prefix: const Icon(FLucideIcons.route),
               child: const Text('打开学习计划'),
             ),
@@ -260,14 +266,14 @@ class PlanActions {
             forui.FButton(
               variant: forui.FButtonVariant.ghost,
               mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(sheetContext, 'start'),
+              onPress: () => Navigator.pop(sheetContext, _ItemCommand.start),
               child: const Text('标记进行中'),
             ),
           if (item.open)
             forui.FButton(
               variant: forui.FButtonVariant.ghost,
               mainAxisSize: MainAxisSize.min,
-              onPress: () => Navigator.pop(sheetContext, 'complete'),
+              onPress: () => Navigator.pop(sheetContext, _ItemCommand.complete),
               prefix: const Icon(FLucideIcons.check),
               child: Text(item.isStudyStep ? '完成这一步' : '完成事项'),
             ),
@@ -328,7 +334,8 @@ class PlanActions {
               SizedBox(height: theme.space.page),
               if (canOpen && !item.done) ...[
                 forui.FButton(
-                  onPress: () => Navigator.pop(sheetContext, 'study'),
+                  onPress: () =>
+                      Navigator.pop(sheetContext, _ItemCommand.study),
                   prefix: const Icon(FLucideIcons.play),
                   child: Text(item.isStudyStep ? '学这一步' : '回到原题'),
                 ),
@@ -347,16 +354,17 @@ class PlanActions {
     );
     if (!context.mounted || action == null) return;
     // 从学习页或讨论页返回之后不再重读，订阅已经带回写入的结果。
-    if (action == 'study') {
-      await openStudy(context, item);
-    } else if (action == 'source') {
-      await openDiscussion(context, item.conversationId!);
-    } else if (action == 'plan') {
-      await openStudyPlan(context, item.studyPlanId!);
-    } else if (action == 'start') {
-      await setStatus(item, PlanItemStatus.doing);
-    } else if (action == 'complete') {
-      await setStatus(item, PlanItemStatus.done);
+    switch (action) {
+      case _ItemCommand.study:
+        await openStudy(context, item);
+      case _ItemCommand.source:
+        await openDiscussion(context, item.conversationId!);
+      case _ItemCommand.plan:
+        await openStudyPlan(context, item.studyPlanId!);
+      case _ItemCommand.start:
+        await setStatus(item, PlanItemStatus.doing);
+      case _ItemCommand.complete:
+        await setStatus(item, PlanItemStatus.done);
     }
   }
 
