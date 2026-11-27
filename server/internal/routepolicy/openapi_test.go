@@ -88,6 +88,15 @@ func TestCloudWritePoliciesMatchContract(t *testing.T) {
 		"PUT /v1/blobs/{sha256}": AttachmentSpool,
 		"POST /v1/sync/commits":  NoSpool,
 	}
+	// 联系方式验证门槛覆盖全部云端写入，不只是按上传配额的前三条（S11）。
+	wantVerified := map[string]bool{
+		"POST /v1/backups":       true,
+		"PUT /v1/blobs/{sha256}": true,
+		"POST /v1/sync/commits":  true,
+		"PUT /v1/sync/snapshot":  true,
+		"PUT /v1/sync/refs":      true,
+		"PUT /v1/sync/devices":   true,
+	}
 	for pattern, policy := range cloudWrites {
 		if !all[pattern] {
 			t.Errorf("%s: cloud write policy has no operation in OpenAPI", pattern)
@@ -95,6 +104,9 @@ func TestCloudWritePoliciesMatchContract(t *testing.T) {
 		spool, upload := wantUpload[pattern]
 		if IsUpload(pattern) != upload || policy.Spool != spool {
 			t.Errorf("%s: upload=%v spool=%v, want upload=%v spool=%v", pattern, policy.Upload, policy.Spool, upload, spool)
+		}
+		if policy.RequireVerified != wantVerified[pattern] {
+			t.Errorf("%s: require_verified=%v, want %v", pattern, policy.RequireVerified, wantVerified[pattern])
 		}
 		if policy.Exclusive && policy.Upload {
 			t.Errorf("%s: exclusive deletion also marked as upload", pattern)

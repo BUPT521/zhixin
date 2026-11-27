@@ -35,18 +35,24 @@ const (
 
 // CloudWrite defines the protections for a write to an account's cloud data.
 type CloudWrite struct {
-	Upload    bool
-	Spool     Spool
-	Exclusive bool
+	// Upload 表示这条写入按账号限流并预留临时空间，只有备份、附件与提交推送
+	// 三条真正接收请求体的路由为真。
+	Upload bool
+	// RequireVerified 表示写入前要求账号至少有一种登录方式已经确认。它覆盖全部
+	// 云端写入，比 Upload 更宽：快照登记、命名版本与设备名册不占上传配额，但
+	// 同样是账号的云端数据，没有已验证联系方式时一并返回 403（ADR-0038）。
+	RequireVerified bool
+	Spool           Spool
+	Exclusive       bool
 }
 
 var cloudWrites = map[string]CloudWrite{
-	"POST /v1/backups":        {Upload: true, Spool: BackupSpool},
-	"PUT /v1/blobs/{sha256}":  {Upload: true, Spool: AttachmentSpool},
-	"POST /v1/sync/commits":   {Upload: true},
-	"PUT /v1/sync/snapshot":   {},
-	"PUT /v1/sync/refs":       {},
-	"PUT /v1/sync/devices":    {},
+	"POST /v1/backups":        {Upload: true, RequireVerified: true, Spool: BackupSpool},
+	"PUT /v1/blobs/{sha256}":  {Upload: true, RequireVerified: true, Spool: AttachmentSpool},
+	"POST /v1/sync/commits":   {Upload: true, RequireVerified: true},
+	"PUT /v1/sync/snapshot":   {RequireVerified: true},
+	"PUT /v1/sync/refs":       {RequireVerified: true},
+	"PUT /v1/sync/devices":    {RequireVerified: true},
 	"DELETE /v1/backups/{id}": {},
 	"DELETE /v1/cloud":        {Exclusive: true},
 	"DELETE /v1/sync/commits": {Exclusive: true},
