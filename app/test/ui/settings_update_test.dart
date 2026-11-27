@@ -8,7 +8,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/application/update_check_service.dart';
 import 'package:zhixin/data/cloud/release_verification.dart';
-import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/models/server_models.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_accent_controller.dart';

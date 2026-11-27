@@ -11,6 +11,7 @@ library;
 
 import '../data/cloud/release_verification.dart';
 import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import '../domain/rules/release_version.dart';
 
 /// 一次检查的结论；界面只在 [UpdateCheckStatus.updateAvailable] 时提示。

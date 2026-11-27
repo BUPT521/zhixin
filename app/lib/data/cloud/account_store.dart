@@ -2,7 +2,8 @@ import 'dart:convert';
 
 import '../../ai/llm_config.dart' show SecretStore;
 import '../../domain/rules/uuid_v7.dart';
-import 'server_client.dart' show ServerAccount, ServerIdentity;
+import '../../domain/models/server_models.dart'
+    show ServerAccount, ServerIdentity;
 
 /// 登录之后的会话：两枚令牌只存在 Android Keystore，不进数据库、数据包与日志。
 ///

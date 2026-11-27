@@ -16,7 +16,7 @@ import '../application/prefetch_service.dart';
 import '../application/sync_flow.dart';
 import '../application/sync_service.dart';
 import '../data/cloud/account_store.dart' show AccountIdentity;
-import '../data/cloud/server_client.dart' show ServerQuota;
+import '../domain/models/server_models.dart' show ServerQuota;
 import 'account_dialogs.dart';
 import 'account_login_form.dart';
 import 'navigation.dart';

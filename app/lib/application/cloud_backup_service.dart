@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
-import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import '../data/backup/data_version_service.dart';
 import '../domain/rules/schema_version.dart';
 import '../domain/rules/time_policy.dart';

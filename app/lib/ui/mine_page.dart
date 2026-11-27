@@ -9,7 +9,7 @@ import '../application/account_summary.dart';
 import '../application/prefetch_service.dart';
 import '../application/sync_flow.dart';
 import '../application/sync_service.dart';
-import '../data/cloud/server_client.dart' show ServerQuota;
+import '../domain/models/server_models.dart' show ServerQuota;
 import '../platform/app_info.dart';
 import 'copy.dart';
 import 'cloud_sync_prompts.dart';

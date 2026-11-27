@@ -4,6 +4,7 @@ import '../ai/llm_config.dart';
 import '../data/cloud/account_store.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import '../domain/models/model_api_key.dart';
 import '../domain/models/quota_purchase.dart';
 import '../domain/rules/uuid_v7.dart';

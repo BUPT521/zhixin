@@ -10,6 +10,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/models/server_models.dart';
 
 import '../../support/fake_server.dart';
 

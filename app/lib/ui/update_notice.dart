@@ -9,7 +9,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../application/update_check_service.dart';
-import '../data/cloud/server_client.dart' show ServerRelease;
+import '../domain/models/server_models.dart' show ServerRelease;
 import '../platform/app_info.dart';
 import 'theme.dart';
 import 'zhixin_dialog.dart';

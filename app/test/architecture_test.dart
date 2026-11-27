@@ -195,14 +195,10 @@ void main() {
 /// 不是允许继续新增依赖的许可；每去掉一处引用，就把文件名删掉，用例会强制清单只减不增。
 const _uiDataAllowlist = <String>{
   'account_page.dart',
-  'cloud_backup_page.dart',
   'data_version_page.dart',
   'embedding_settings_page.dart',
-  'feedback_page.dart',
   'integrity_check.dart',
-  'mine_page.dart',
   'settings_page.dart',
-  'update_notice.dart',
 };
 
 /// 曾经公开在 [AppScopeState] 上的仓库与连接字段；现在只在测试入口里露出。

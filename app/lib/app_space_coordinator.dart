@@ -1,5 +1,5 @@
 import 'app_composition.dart';
-import 'data/cloud/server_client.dart' show ServerProblem;
+import 'domain/models/server_models.dart' show ServerProblem;
 import 'platform/app_paths.dart';
 
 /// 空间切换与清空：换库、删掉当前空间、清空本机学习数据与云端数据。

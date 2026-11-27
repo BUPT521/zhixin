@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import '../data/cloud/cloud_preferences_store.dart';
-import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import '../data/db/guarded_database.dart';
 import '../data/db/sql.dart';
 import '../data/db/write_transactions.dart';

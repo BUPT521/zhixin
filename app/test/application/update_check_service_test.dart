@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/update_check_service.dart';
 import 'package:zhixin/data/cloud/release_verification.dart';
-import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/models/server_models.dart';
 
 /// 更新检查的拒绝与接受：版本、https、哈希格式与签名四步，任一不通过都不提示。
 ///

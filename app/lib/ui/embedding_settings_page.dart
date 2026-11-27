@@ -9,7 +9,7 @@ import 'theme.dart';
 import '../app_scope.dart';
 import '../application/prefetch_service.dart';
 import '../application/search_index_service.dart';
-import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import '../data/vector/embedding_config_store.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/material.dart';

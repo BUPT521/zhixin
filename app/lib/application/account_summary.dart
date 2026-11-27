@@ -1,4 +1,4 @@
-import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import 'account_service.dart';
 import 'sync_service.dart';
 

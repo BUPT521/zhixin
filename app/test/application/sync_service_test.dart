@@ -9,6 +9,7 @@ import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
 import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/models/server_models.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
