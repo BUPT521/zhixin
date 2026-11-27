@@ -23,6 +23,7 @@ import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/data_version_service.dart';
 import 'package:zhixin/data/backup/restore_point_store.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
+import 'package:zhixin/domain/models/account_models.dart';
 import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/domain/models/server_models.dart';

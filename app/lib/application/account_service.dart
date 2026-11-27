@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../ai/llm_config.dart';
 import '../data/cloud/account_store.dart';
+import '../domain/models/account_models.dart';
 import '../data/cloud/cloud_preferences_store.dart';
 import '../data/cloud/server_client.dart';
 import '../domain/models/server_models.dart';
