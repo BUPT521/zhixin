@@ -5,7 +5,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,17 +26,34 @@ import (
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	if err := run(log); err != nil {
+	if err := run(log, os.Args[1:]); err != nil {
 		log.Error("exit", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(log *slog.Logger, args []string) error {
+	setup := len(args) == 1 && args[0] == "configure-models"
+	if len(args) != 0 && !setup {
+		return errors.New("usage: zhixin-api [configure-models]")
+	}
 	cfg, err := config.Load(os.Getenv)
 	if err != nil {
 		return err
 	}
+	if setup {
+		if cfg.AdminToken == "" {
+			return errors.New("ZHIXIN_ADMIN_TOKEN is required for configure-models")
+		}
+		_, port, err := net.SplitHostPort(cfg.Addr)
+		if err != nil {
+			return fmt.Errorf("ZHIXIN_ADDR: %w", err)
+		}
+		cfg.Addr = net.JoinHostPort("127.0.0.1", port)
+		cfg.NowPay = nil
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	var stores server.Stores
 	// meter 是即刻收的积分核销执行器；没有配置商品时保持为空，结算之后不产生核销。
@@ -56,7 +75,7 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		pgStore, err := pg.Open(context.Background(), cfg.DatabaseURL, pg.Options{
+		pgStore, err := pg.Open(ctx, cfg.DatabaseURL, pg.Options{
 			Objects: objects, Log: log,
 		})
 		if err != nil {
@@ -64,26 +83,28 @@ func run(log *slog.Logger) error {
 		}
 		defer pgStore.Close()
 		if cfg.ApplySchema {
-			if err := pgStore.ApplySchema(context.Background()); err != nil {
+			if err := pgStore.ApplySchema(ctx); err != nil {
 				return err
 			}
 		}
 		// 额度结算要有在途预留与嵌入计费两列，还要有结算失败的补偿表；缺任何一项
 		// 都直接拒绝启动，让自动部署回滚到上一份文件（ADR-0071、ADR-0086）。
-		checkCtx, checkCancel := context.WithTimeout(context.Background(), 8*time.Second)
-		err = pgStore.CheckQuotaSchema(checkCtx)
-		checkCancel()
-		if err != nil {
-			return err
+		if !setup {
+			checkCtx, checkCancel := context.WithTimeout(ctx, 8*time.Second)
+			err = pgStore.CheckQuotaSchema(checkCtx)
+			checkCancel()
+			if err != nil {
+				return err
+			}
+			settlementFailures = pgStore
 		}
-		settlementFailures = pgStore
 		if cfg.NowPay != nil {
 			nowpayClient, err = nowpay.NewClient(cfg.Alipay, cfg.NowPay.ProductID)
 			if err != nil {
 				return err
 			}
 		}
-		stores, err = server.ProductionStores(context.Background(), cfg, pgStore, objects, nowpayClient, log)
+		stores, err = server.ProductionStores(ctx, cfg, pgStore, objects, nowpayClient, log)
 		if err != nil {
 			return err
 		}
@@ -95,14 +116,6 @@ func run(log *slog.Logger) error {
 			pgStore.SetNowPay(meter)
 			nowpayMaintenance = pgStore
 			chargePending = pgStore
-			// 启动时查一次商品收费能力：配置错、商品未审核或应用凭证不匹配会在日志里
-			// 先出现，购买接口的第一次请求不必承担这次排查；失败只记日志，不阻塞启动。
-			probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if _, err := nowpayClient.Charge(probeCtx); err != nil {
-				log.Error("查询即刻收商品失败，购买入口会在请求时再试",
-					"product_id", cfg.NowPay.ProductID, "error", err)
-			}
-			probeCancel()
 		}
 		log.Info("using PostgreSQL stores")
 	}
@@ -115,15 +128,25 @@ func run(log *slog.Logger) error {
 		log.Info("loaded the release manifest", slog.Int("releases", len(cfg.Releases)))
 	}
 
-	// 清理循环（会话与验证码过期行、反馈保留期）随 ctx 一起停止，所以先建
-	// 信号上下文，再构造处理器。
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	var handler http.Handler
+	if setup {
+		handler, err = server.BuildModelSetup(ctx, cfg, stores, log)
+	} else {
+		handler, err = server.Build(ctx, cfg, stores, log)
+	}
+	if err != nil {
+		return err
+	}
 	// 核销协程跟着进程退出；队列里没有来得及处理的流水留在库里，下一轮请求前补查。
 	// 全局补查每十分钟接手一次，保留期与对账日志每天一次，都在配置了即刻收商品时启用。
-	// 这三个循环都是启动时先跑一次再进循环本身（见 periodic.Run），必须在 goroutine
-	// 里启动，否则第一次补查会把主协程占住，Build 与 ListenAndServe 都走不到。
 	if meter != nil {
+		// 商品能力可在运行期间变化，临时查询失败仍由购买接口重试。
+		probeCtx, probeCancel := context.WithTimeout(ctx, 5*time.Second)
+		if _, err := nowpayClient.Charge(probeCtx); err != nil {
+			log.Error("查询即刻收商品失败，购买入口会在请求时再试",
+				"product_id", cfg.NowPay.ProductID, "error", err)
+		}
+		probeCancel()
 		meter.Start(ctx)
 		go nowpay.SweepLoop(ctx, meter, log)
 		go nowpay.ChargeSweepLoop(ctx, chargePending, log)
@@ -131,9 +154,12 @@ func run(log *slog.Logger) error {
 	}
 	// 结算失败留下的预留每十分钟补退一次、每天清一次两天之前的在途预留；它不依赖
 	// 收款配置，配了数据库就启用（ADR-0086）。
-	go llmproxy.SettlementSweepLoop(ctx, settlementFailures, log)
+	if !setup {
+		go llmproxy.SettlementSweepLoop(ctx, settlementFailures, log)
+		// 匿名活跃按保留期滚动删除：启动时清一次，之后每天一次。
+		go retention.PruneLoop(ctx, stores.Retention, cfg.Location, log)
+	}
 
-	handler := server.Build(ctx, cfg, stores, log)
 	srv := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,
@@ -142,9 +168,6 @@ func run(log *slog.Logger) error {
 		// minutes. Idle connections are still reaped.
 		IdleTimeout: 120 * time.Second,
 	}
-
-	// 匿名活跃按保留期滚动删除：启动时清一次，之后每天一次，与进程重启无关。
-	go retention.PruneLoop(ctx, stores.Retention, cfg.Location, log)
 
 	errc := make(chan error, 1)
 	go func() {

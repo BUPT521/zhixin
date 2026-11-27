@@ -31,7 +31,6 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/retentionadmin"
 	"github.com/BUPT521/zhixin/server/internal/routepolicy"
-	"github.com/BUPT521/zhixin/server/internal/secretbox"
 	"github.com/BUPT521/zhixin/server/internal/store/pg"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
@@ -176,7 +175,37 @@ func DeleteAccountData(deleters ...func(ctx context.Context, userID string) erro
 //
 // 模型路由快照只在启动时读一次，之后由管理后台保存配置时整体换新（ADR-0029）；
 // 直接改库或多实例部署的修改要经后台保存一次或重启本进程才会生效。
-func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) http.Handler {
+func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) (http.Handler, error) {
+	return build(ctx, cfg, st, log, false)
+}
+
+// BuildModelSetup serves the management UI and API for initial setup and key
+// repair. The command must serve this handler on a loopback listener.
+func BuildModelSetup(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) (http.Handler, error) {
+	if cfg.AdminToken == "" {
+		return nil, errors.New("ZHIXIN_ADMIN_TOKEN is required for configure-models")
+	}
+	handler, err := build(ctx, cfg, st, log, true)
+	if err != nil {
+		return nil, err
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !admin.IsAdminPath(r) {
+			http.NotFound(w, r)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	}), nil
+}
+
+func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, setup bool) (http.Handler, error) {
+	if cfg.NowPay != nil && cfg.DatabaseURL == "" {
+		return nil, errors.New("ZHIXIN_NOWPAY_PRODUCT_ID requires PostgreSQL")
+	}
+	startup, err := prepareStartup(ctx, cfg, st.Catalog, log, rand.Reader, setup)
+	if err != nil {
+		return nil, err
+	}
 	mux := http.NewServeMux()
 
 	authSvc := auth.NewService(st.Auth, cfg.AccessTTL, cfg.RefreshTTL)
@@ -198,7 +227,6 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 			slog.String("domains", strings.Join(cfg.RegisterEmailDomains, ",")))
 	}
 	authSvc.SetSecurityLog(log)
-	go authSvc.PruneLoop(ctx, st.Auth, log)
 
 	// 路由由 api/openapi.yaml 生成：路径、方法与路径参数由生成代码约束，改了契约
 	// 而这里没跟上时编译失败（ADR-0015 第 4 条）。
@@ -242,32 +270,9 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	if cfg.TelemetryGlobalRatePerSecond > 0 {
 		telemetryGlobal = ratelimit.New(rate.Limit(cfg.TelemetryGlobalRatePerSecond), cfg.TelemetryGlobalBurst, 15*time.Minute, cfg.RateLimitKeys)
 	}
-	mailer, err := auth.NewMailer(auth.MailerConfig{
-		Addr:            cfg.SMTPAddr,
-		From:            cfg.SMTPFrom,
-		Username:        cfg.SMTPUsername,
-		Password:        cfg.SMTPPassword,
-		TLS:             cfg.SMTPTLS,
-		LogOnly:         cfg.MailLog,
-		MaxConcurrent:   cfg.SMTPMaxConcurrent,
-		MaxAttempts:     cfg.SMTPMaxAttempts,
-		RetryAfterError: auth.ParseRetryAfterHint,
-	}, log)
-	if err != nil {
-		log.Error("mail is disabled because its configuration is invalid", slog.String("error", err.Error()))
-		mailer = nil
-	}
-	codeSecret := []byte(cfg.CodeSecret)
-	if len(codeSecret) == 0 {
-		codeSecret = make([]byte, 32)
-		if _, err := rand.Read(codeSecret); err != nil {
-			log.Error("cannot generate a code secret", slog.String("error", err.Error()))
-		}
-		log.Warn("ZHIXIN_CODE_SECRET is empty: verification codes stop working after a restart")
-	}
 	// 发信按登录方式分发：现在只有邮箱走 SMTP，手机号与微信没有对应发送方时
 	// 请求返回 501（ADR-0038）。
-	authSvc.ConfigureCodes(auth.NewSenders(mailer), codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
+	authSvc.ConfigureCodes(auth.NewSenders(startup.mailer), startup.codeSecret, cfg.CodeTTL, cfg.CodeCooldown)
 	// 收信预算的键是 kind:identifier：同一地址每 24 小时补充 4 枚，最多积存 4 枚。
 	authSvc.SetSendLimiter(ratelimit.New(rate.Limit(4/(24*time.Hour).Seconds()), 4, 48*time.Hour, cfg.RateLimitKeys))
 	// 实例级的发信总量：换地址与换收件地址都绕不过去，给 SMTP 服务商的配额兜底。
@@ -276,17 +281,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		Burst:     cfg.MailGlobalBurst,
 	}))
 
-	// 匿名活跃的安装标识用 HMAC 保存；密钥为空时每次启动随机生成，重启后同一个
-	// 安装会被当成新的，留存数字偏高，因此生产必须固定。
-	telemetrySecret := []byte(cfg.TelemetrySecret)
-	if len(telemetrySecret) == 0 {
-		telemetrySecret = make([]byte, 32)
-		if _, err := rand.Read(telemetrySecret); err != nil {
-			log.Error("cannot generate a telemetry secret", slog.String("error", err.Error()))
-		}
-		log.Warn("ZHIXIN_TELEMETRY_SECRET is empty: install hashes change on restart and active counts inflate")
-	}
-	retentionSvc := retention.NewService(st.Retention, telemetrySecret, cfg.Location)
+	retentionSvc := retention.NewService(st.Retention, startup.telemetrySecret, cfg.Location)
 	authSvc.SetActivityRecorder(retentionSvc)
 	// 后台的留存视图与写入共用同一份存储，时区也共用，读出来的自然日因此与
 	// 写入时落库的日子一致。
@@ -329,27 +324,6 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	// 期间写请求的 409 由进程内的 cloudOperations 中间件保证（审查 9.3 的 V10）。
 	purgeSvc := cloudpurge.New(st.Backups, st.Sync, st.Blobs, st.Cache, st.Objects)
 
-	// 模型来源的 key 加密入库。没有配置密钥时，内存存储用一把随进程消失的
-	// 随机密钥（数据本来也随进程消失）；数据库存储则无法保存或解密 key，
-	// config.Load 在打开后台时已经要求配置。
-	var box *secretbox.Box
-	if len(cfg.SecretKey) > 0 {
-		b, err := secretbox.New(cfg.SecretKey)
-		if err != nil {
-			log.Error("ZHIXIN_SECRET_KEY is unusable", slog.String("error", err.Error()))
-		}
-		box = b
-	} else if cfg.DatabaseURL == "" {
-		box = secretbox.Random()
-	}
-	router := llmproxy.NewRouter(st.Catalog, box, log)
-	if err := router.Reload(ctx); err != nil {
-		log.Error("load model routes; serving the last snapshot until the next reload", slog.String("error", err.Error()))
-	} else if router.ModelCount() == 0 {
-		// 来源与模型都只在管理后台配置（ADR-0035）：空库启动时聊天与嵌入接口会
-		// 一律返回 503，这里先把原因说清楚。
-		log.Warn("no model configured: add a source and a model in /admin/ before serving hosted models")
-	}
 	var adminLimits *ratelimit.Limiter
 	if cfg.AdminRatePerSecond > 0 {
 		adminLimits = ratelimit.New(rate.Limit(cfg.AdminRatePerSecond), cfg.AdminBurst, 15*time.Minute, cfg.RateLimitKeys)
@@ -357,7 +331,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 
 	adminGuard := admin.Middleware(admin.Options{Token: cfg.AdminToken, Limiter: adminLimits, ClientHost: clientHost})
 
-	llmProxy := llmproxy.NewRoutedHandler(cfg.LLM, router, st.Quota, cfg.Location, log)
+	llmProxy := llmproxy.NewRoutedHandler(cfg.LLM, startup.router, st.Quota, cfg.Location, log)
 	llmProxy.SetUsageStore(st.Usage)
 	// 嵌入向量缓存是派生数据：按账号隔离，命中时省掉嵌入与计费；清除云端数据
 	// 期间不写，清除与删号时一并删除（ADR-0030）。
@@ -373,14 +347,9 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	feedbackSvc.SetKeepDays(cfg.FeedbackKeepDays)
 	feedbackHandler := feedback.NewHandler(feedbackSvc, log, cfg.MaxJSONBytes, feedbackLimits, clientHost)
 	feedbackHandler.SetGlobalLimiter(feedbackGlobal)
-	go feedbackSvc.PruneLoop(ctx, log)
 
 	retentionHandler := retention.NewHandler(retentionSvc, log, cfg.MaxJSONBytes, telemetryLimits, clientHost)
 	retentionHandler.SetGlobalLimiter(telemetryGlobal)
-
-	// 备份对账只在 PostgreSQL 装配下有事可做：内存备份把字节留在自己的存储里，
-	// 对象存储里没有 backups/ 前缀可列，启动那一次是无害的空跑。
-	go backupSvc.ReconcileLoop(ctx, log)
 
 	handlers := routes{
 		auth:     authHandler,
@@ -389,7 +358,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		blobs:    blobHandler,
 		llm:      llmProxy,
 		payments: st.payments,
-		llmAdmin: llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
+		llmAdmin: llmproxy.NewAdmin(llmProxy, st.Catalog, startup.box, cfg.MaxJSONBytes),
 		accounts: accountadmin.New(st.Auth, st.Quota, authSvc.DeleteAccountByID,
 			cfg.LLM.DailyTokens, cfg.Location, log, cfg.MaxJSONBytes),
 		feedback:       feedbackHandler,
@@ -406,6 +375,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 	})
+
 	admin.RegisterUI(mux, adminGuard)
 	accountGuard := auth.Middleware(authSvc, log)
 	// 生成代码把 Middlewares 逐个套上，列表最后一个在最外层。因此按执行顺序
@@ -445,6 +415,12 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		},
 	})
 
+	if !setup {
+		go authSvc.PruneLoop(ctx, st.Auth, log)
+		go feedbackSvc.PruneLoop(ctx, log)
+		go backupSvc.ReconcileLoop(ctx, log)
+	}
+
 	// 外层顺序从外到内：先分配 request_id 并回写响应头，再记访问日志（401/404/429
 	// 也因此有编号并进日志），然后统一响应头，再恢复 panic，最后是请求体读空闲
 	// 期限。统一响应头在恢复 panic 之外，panic 转成的 500 也带 no-store 与
@@ -455,7 +431,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		httpx.SecurityHeaders,
 		httpx.Recover(log),
 		httpx.BodyIdleTimeout(cfg.BodyIdleTimeout),
-	)
+	), nil
 }
 
 // cachePublic 给明确可缓存的公开响应覆盖默认的 no-store，目前只有发布清单。

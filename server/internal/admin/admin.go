@@ -46,6 +46,12 @@ func IsAdminRoute(r *http.Request) bool {
 	return path == "/admin/v1" || strings.HasPrefix(path, "/admin/v1/")
 }
 
+// IsAdminPath reports whether the request targets the management UI or API.
+func IsAdminPath(r *http.Request) bool {
+	path := requestPath(r)
+	return path == "/admin" || strings.HasPrefix(path, "/admin/")
+}
+
 // Middleware 拦住 /admin 开头的请求：后台关闭时一律 404；/admin/v1/ 下的接口
 // 要求 Authorization: Bearer <管理令牌>，凭据无效且来源超限时返回 429。页面本身不含
 // 任何数据，不需要令牌，打开之后由页面向接口出示令牌。
@@ -53,8 +59,7 @@ func Middleware(opt Options) func(http.Handler) http.Handler {
 	want := sha256.Sum256([]byte(opt.Token))
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			path := requestPath(r)
-			if path != "/admin" && !strings.HasPrefix(path, "/admin/") {
+			if !IsAdminPath(r) {
 				next.ServeHTTP(w, r)
 				return
 			}

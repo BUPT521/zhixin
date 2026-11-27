@@ -15,6 +15,7 @@ import (
 	"net/mail"
 	"net/smtp"
 	"net/textproto"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -62,11 +63,16 @@ func NewMailer(cfg MailerConfig, log *slog.Logger) (Mailer, error) {
 		}
 		return nil, nil
 	}
+	cfg.Addr = strings.TrimSpace(cfg.Addr)
+	host, port, err := net.SplitHostPort(cfg.Addr)
+	portNumber, portErr := strconv.ParseUint(port, 10, 16)
+	if err != nil || host == "" || strings.ContainsAny(host, " /@\t\r\n") || portErr != nil || portNumber == 0 {
+		return nil, errors.New("auth: ZHIXIN_SMTP_ADDR must be a host and numeric port")
+	}
 	addr, err := mail.ParseAddress(strings.TrimSpace(cfg.From))
 	if err != nil {
 		return nil, fmt.Errorf("auth: 发信地址 %q 不能用: %w", cfg.From, err)
 	}
-	cfg.Addr = strings.TrimSpace(cfg.Addr)
 	cfg.From = addr.Address
 	cfg.Username = strings.TrimSpace(cfg.Username)
 	switch cfg.TLS {

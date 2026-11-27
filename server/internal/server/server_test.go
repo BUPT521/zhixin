@@ -66,9 +66,23 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stores := MemoryStores(cfg, log)
-	srv := httptest.NewServer(Build(context.Background(), cfg, stores, log))
+	// 管理后台的用例会从空目录录入来源和模型，再用普通客户端请求核对配置。
+	handler, err := build(t.Context(), cfg, stores, log, cfg.AdminToken != "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
 	return &harness{t: t, srv: srv, cfg: cfg, stores: stores}
+}
+
+func mustBuild(t *testing.T, cfg config.Config, stores Stores, log *slog.Logger) http.Handler {
+	t.Helper()
+	handler, err := Build(t.Context(), cfg, stores, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return handler
 }
 
 func (h *harness) do(method, path, token string, body io.Reader, hdr map[string]string) *http.Response {
@@ -444,7 +458,7 @@ func TestRefreshRateLimitFollowsAccountAcrossDevices(t *testing.T) {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := Build(context.Background(), cfg, MemoryStores(cfg, log), log)
+	handler := mustBuild(t, cfg, MemoryStores(cfg, log), log)
 	post := func(path, address string, body any) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(mustJSON(t, body)))
@@ -487,7 +501,7 @@ func TestAccessLogRecordsRouteAndRequestID(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
-	handler := Build(context.Background(), cfg, MemoryStores(cfg, log), log)
+	handler := mustBuild(t, cfg, MemoryStores(cfg, log), log)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -513,7 +527,7 @@ func TestUnauthorizedHasRequestIDAndIsLogged(t *testing.T) {
 	}
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
-	handler := Build(context.Background(), cfg, MemoryStores(cfg, log), log)
+	handler := mustBuild(t, cfg, MemoryStores(cfg, log), log)
 	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -619,7 +633,7 @@ func TestInternalErrorsAreProblems(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 	stores := MemoryStores(cfg, log)
 	stores.Sync = failingSyncStore{}
-	handler := Build(context.Background(), cfg, stores, log)
+	handler := mustBuild(t, cfg, stores, log)
 
 	register := httptest.NewRequest(http.MethodPost, "/v1/auth/register",
 		bytes.NewReader(mustJSON(t, map[string]string{"identifier": "fail@b.cn", "password": "password1"})))

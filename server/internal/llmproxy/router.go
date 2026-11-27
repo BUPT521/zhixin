@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"math/rand/v2"
@@ -124,6 +126,22 @@ func (r *Router) current() *snapshot { return r.snap.Load() }
 
 // ModelCount 是当前快照里的对外模型数，用于启动日志与运维核对。
 func (r *Router) ModelCount() int { return len(r.current().models) }
+
+// ValidateStartup checks the loaded snapshot before the service accepts traffic.
+func (r *Router) ValidateStartup() error {
+	s := r.current()
+	for _, provider := range s.providers {
+		if provider.KeyBroken {
+			return fmt.Errorf("model source %q key cannot be decrypted with ZHIXIN_SECRET_KEY", provider.ID)
+		}
+	}
+	for _, model := range s.models {
+		if model.usable() {
+			return nil
+		}
+	}
+	return errors.New("model catalog has no usable model: configure an enabled model with a usable route before starting")
+}
 
 // Reload 从 Catalog 重新读取配置并换上新快照。读取失败时保留旧快照并返回错误，
 // 数据库短暂不可用不会让正在工作的路由消失。

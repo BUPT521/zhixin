@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、登录方式验证与找回密码、提交序列的推送、拉取、快照登记与压缩（`/v1/sync/snapshot`，[ADR-0043](../docs/adr/0043-服务端快照登记与提交序列压缩.md)）、整库备份的上传下载与保留份数、附件的上传下载与存在检查、模型代理的转发与额度都已经按契约实现。应用内的更新检查与反馈接口也已经在 2026-11-18 实现：`GET /v1/app/releases` 公开返回发布清单，`POST /v1/feedback` 公开接收反馈并写入 `feedback` 表，两者都不需要登录，取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。留存统计的服务端部分同日完成：登录账号按服务端收到的请求日期记活跃，未登录设备通过 `POST /v1/telemetry/active` 匿名上报，安装标识只保存 HMAC-SHA256，匿名数据按 180 天滚动删除；模型额度也支持按账号单独调整（`llm_quota` 表），调整不用重启服务（[留存统计](#留存统计)、[模型代理](#模型代理)）。账号管理于 2026-11-26 补上后台入口：管理员可以按邮箱或账号编号搜索账号、调整两类额度与注销账号，注销复用账号本人的清理流程，取舍见 [ADR-0078](../docs/adr/0078-管理后台的账号注销与额度管理.md)。同日后台补上反馈查看：管理员可以按关键字分页查看反馈、读取诊断摘要与删除单条，公开接口仍然只写不读，取舍见 [ADR-0079](../docs/adr/0079-管理后台的反馈查看.md)。留存统计的后台读取也在 2026-11-26 补上：后台增加“留存”页签，`GET /admin/v1/retention` 只读返回每日活跃与按首次出现日分组的 7 日、28 日留存，公开的上报接口仍然只写不读，取舍见 [ADR-0080](../docs/adr/0080-管理后台的留存视图.md)。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时全部在内存里，进程退出后数据丢失，只能用于本地开发与联调；设置之后账号、会话、提交序列、备份元数据、反馈、活跃数据与用量入库（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），字节放对象存储（`internal/objectstore`）：设了 `ZHIXIN_S3_ENDPOINT` 用 S3 兼容存储，没设时落到 `ZHIXIN_BLOB_DIR` 指定的本地目录，进程重启都不丢。首次在空库上启动时设 `ZHIXIN_APPLY_SCHEMA=1`，服务会按 `internal/store/schema.sql` 建表，建完可以去掉。附件按内容寻址，服务端核对 SHA-256 之后保存，单个上限见配置表的 `ZHIXIN_MAX_ATTACHMENT_BYTES`，一个账号的全部附件另有总量上限 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`，超限时上传返回 413 `storage_full`。
+路由由 `api/openapi.yaml` 经 `oapi-codegen` 生成到 `internal/api/`，`internal/server/routes.go` 只把生成的路由转发给各业务包的处理器；契约改了而转发没跟上时编译失败。账号、登录方式验证与找回密码、提交序列的推送、拉取、快照登记与压缩（`/v1/sync/snapshot`，[ADR-0043](../docs/adr/0043-服务端快照登记与提交序列压缩.md)）、整库备份的上传下载与保留份数、附件的上传下载与存在检查、模型代理的转发与额度都已经按契约实现。应用内的更新检查与反馈接口也已经在 2026-11-18 实现：`GET /v1/app/releases` 公开返回发布清单，`POST /v1/feedback` 公开接收反馈并写入 `feedback` 表，两者都不需要登录，取舍见 [ADR-0025](../docs/adr/0025-应用内更新检查与反馈的接口口径.md)。留存统计的服务端部分同日完成：登录账号按服务端收到的请求日期记活跃，未登录设备通过 `POST /v1/telemetry/active` 匿名上报，安装标识只保存 HMAC-SHA256，匿名数据按 180 天滚动删除；模型额度也支持按账号单独调整（`llm_quota` 表），调整不用重启服务（[留存统计](#留存统计)、[模型代理](#模型代理)）。账号管理于 2026-11-26 补上后台入口：管理员可以按邮箱或账号编号搜索账号、调整两类额度与注销账号，注销复用账号本人的清理流程，取舍见 [ADR-0078](../docs/adr/0078-管理后台的账号注销与额度管理.md)。同日后台补上反馈查看：管理员可以按关键字分页查看反馈、读取诊断摘要与删除单条，公开接口仍然只写不读，取舍见 [ADR-0079](../docs/adr/0079-管理后台的反馈查看.md)。留存统计的后台读取也在 2026-11-26 补上：后台增加“留存”页签，`GET /admin/v1/retention` 只读返回每日活跃与按首次出现日分组的 7 日、28 日留存，公开的上报接口仍然只写不读，取舍见 [ADR-0080](../docs/adr/0080-管理后台的留存视图.md)。存储分两种：不设 `ZHIXIN_DATABASE_URL` 时全部在内存里，进程退出后数据丢失，只能用于本地开发与联调；设置之后账号、会话、提交序列、备份元数据、反馈、活跃数据与用量入库（`internal/store/pg`，查询由 `sqlc` 从 `internal/store/queries` 生成），字节放对象存储（`internal/objectstore`）：设了 `ZHIXIN_S3_ENDPOINT` 用 S3 兼容存储，没设时落到 `ZHIXIN_BLOB_DIR` 指定的本地目录，进程重启都不丢。空库首次配置模型时可以设 `ZHIXIN_APPLY_SCHEMA=1` 运行 `configure-models`，服务会按 `internal/store/schema.sql` 建表，完成后将该变量改回 `0`。附件按内容寻址，服务端核对 SHA-256 之后保存，单个上限见配置表的 `ZHIXIN_MAX_ATTACHMENT_BYTES`，一个账号的全部附件另有总量上限 `ZHIXIN_MAX_ACCOUNT_ATTACHMENT_BYTES`，超限时上传返回 413 `storage_full`。
 
 2026-11-18 的加固轮次把服务端的默认行为收紧：启动时自检生产配置（配置了数据库时验证码不能写进日志、验证码与匿名统计的 HMAC 密钥必须固定、带凭据的上游地址必须走 https），公开写入接口在按地址的桶之外增加全局上限，反馈按保留期每日清理，登录失败按规范化的登录方式计预算，密码哈希受 Argon2 内存预算约束，每个账号的会话数有上限并在每天清理过期会话，刷新令牌轮换后只保留固定 60 秒的重试宽限，附件增加账号总量配额，清除云端数据统一为 `DELETE /v1/cloud`，模型代理增加未验证登录方式拒绝、账号并发上限、响应体上限、额度预留与实例总预算，发布清单要求 HTTPS、SHA-256 和 Ed25519 签名。配置项见下表，跨模块取舍与代价见 [ADR-0028](../docs/adr/0028-服务端加固的默认拒绝与预算.md) 和 [ADR-0031](../docs/adr/0031-云端写入与托管模型的资源预算.md)。
 
@@ -205,7 +205,7 @@ server/
 
 `POST /v1/auth/password/forgot` 向账号登记的登录方式发送重设验证码，尚未确认的联系方式也可找回账号。`POST /v1/auth/password/reset` 在同一事务中消费验证码、确认收到验证码的那种登录方式、更新密码并撤销全部旧会话与全部模型代理密钥（[ADR-0063](../docs/adr/0063-模型代理接入密钥.md)）。发信按登录方式分发：现在只有邮箱走 SMTP，没有对应发送方的 kind 返回 501 `not_implemented`，发送通道没有配置时返回 503。两种验证码共用按 `kind:identifier` 的令牌桶，每 24 小时补充 4 枚，最多积存 4 枚。
 
-验证码默认十分钟过期，同一种登录方式同一用途一分钟内只能发一次，输错超过五次就作废；库里只保存 HMAC-SHA256，密钥来自 `ZHIXIN_CODE_SECRET`，不保存六位数字本身。发信走 `ZHIXIN_SMTP_*` 配置，没有配置时这两个接口返回 503，登录、备份、同步与模型代理不受影响；`ZHIXIN_MAIL_LOG=1` 只用于本机联调，会把邮件正文写进日志，生产不能打开。验证码接口按登录方式、来源地址与联系方式分别限流，参数见下表的 `ZHIXIN_CODE_*`。
+验证码默认十分钟过期，同一种登录方式同一用途一分钟内只能发一次，输错超过五次就作废；库里只保存 HMAC-SHA256，密钥来自 `ZHIXIN_CODE_SECRET`，不保存六位数字本身。发信走 `ZHIXIN_SMTP_*` 配置，启用后台、数据库或收款的实例必须配置 SMTP 才能正常启动，普通内存联调未配置发信时这两个接口返回 503。`ZHIXIN_MAIL_LOG=1` 只用于本机联调，会把邮件正文写进日志，生产不能打开。验证码接口按登录方式、来源地址与联系方式分别限流，参数见下表的 `ZHIXIN_CODE_*`。
 
 发信总量按实例控制：除了按地址与按收件地址的桶，所有发信再共用一个桶（`ZHIXIN_MAIL_GLOBAL_RATE` 与 `ZHIXIN_MAIL_GLOBAL_BURST`），换大量没有注册过的邮箱地址也绕不过去，超限返回 429 并带 `Retry-After`。桶的默认值按 SMTP 服务商免费额的保守值定，部署时按实际通道调整。每次发信同时占用的 SMTP 连接数不超过 `ZHIXIN_SMTP_MAX_CONCURRENT`，超出的请求排队而不是拒绝。连接失败、超时、4xx 这类临时失败按 `ZHIXIN_SMTP_MAX_ATTEMPTS` 重试，间隔为 1 秒与 3 秒，服务商在响应文本里给出 `Retry-After` 时取较大者，超过 30 秒就直接放弃这次发送并把验证码作废，不把请求挂住。连续三次临时失败之后整体暂停发信，暂停从 30 秒起翻倍、最长 5 分钟，暂停期间请求返回 429 而不是 503，发信恢复之后计数归零。
 
@@ -311,7 +311,7 @@ DELETE FROM llm_quota WHERE user_id = '<账号 id>';
 | `GET /admin/v1/feedback/{id}` | 读取一条反馈的正文、联系邮箱、版本、平台与诊断摘要；不存在时返回 404 |
 | `DELETE /admin/v1/feedback/{id}` | 删除一条反馈，用于误提交或用户要求提前删除；保留期清理仍按每天一次执行 |
 
-来源的 key 用 `ZHIXIN_SECRET_KEY`（32 字节的 base64，`openssl rand -base64 32`）加密入库，附加数据是来源编号与完整地址，后台修改地址的任一部分时都必须重新填写 key。生产后台的来源必须使用公网 HTTPS，连接前解析域名并核对实际连接的地址。打开后台并使用数据库时这个密钥必须配置，否则启动失败；内存存储时缺省用一把随进程消失的随机密钥。更换密钥或从旧地址绑定规则升级后，已保存的 key 显示为 `key_error`，需要在后台重新填写。来源与模型只从这三张表读取，管理后台是唯一的配置入口：新建实例或重建库之后，要先在后台新建来源、再新建模型并配置路由，聊天与嵌入接口才有可用的路由，否则一律返回 503；换 key 也在后台修改，改 `<服务地址>/admin/` 里的来源即可，不需要重启。
+来源的 key 用 `ZHIXIN_SECRET_KEY`（32 字节的 base64，`openssl rand -base64 32`）加密入库，附加数据是来源编号与完整地址，后台修改地址的任一部分时都必须重新填写 key。生产后台的来源必须使用公网 HTTPS，连接前解析域名并核对实际连接的地址。打开后台并使用数据库时这个密钥必须配置，否则启动失败；内存存储时缺省用一把随进程消失的随机密钥。启用后台、数据库或收款的实例在启动时读取模型目录，只要有一个已保存的来源密钥无法解密，或者没有任何一个启用的模型连到可用来源，服务就会退出。空库首次配置或更换加密密钥后，先按[运维手册](运维手册.md#3-配置)用 `zhixin-api configure-models` 从本机打开后台，录入模型和路由，或重新填写显示为 `key_error` 的来源密钥，再正常启动。服务运行期间，模型与来源的修改仍然在后台保存后立即生效。
 
 “模型调度”页可以在模型名、备注、来源与来源侧模型名里搜索，按用途筛选，并只显示需要处理的模型：模型停用、没有可用路由，或者有冷却、试探、密钥异常、来源停用、来源缺失的路由。每条路由可以直接停用或启用，模型也可以不打开弹窗就整体停用；这两种改动按模型整体保存，与弹窗里保存调用同一个接口。列表按主用组与各备用组显示同组配置比例、当前健康权重占比及备用组的接手条件，并分别列出来源与路由的连续失败次数及冷却时间。点“复制”把这个模型的路由填进新增表单，填一个新的名称即可得到一套相同的路由。新增来源或模型时，编号或名称已经存在会被拒绝并提示去编辑，原有配置不会被覆盖；修改接口只更新已有条目，目标不存在时返回 404。
 
@@ -441,7 +441,7 @@ ORDER BY f.first_day;
 | `ZHIXIN_REFRESH_BURST` | `30` | 刷新令牌的桶容量 |
 | `ZHIXIN_UPLOAD_RATE` | `0.5` | 备份与附件上传按账号的补充速率，设 `0` 关闭 |
 | `ZHIXIN_UPLOAD_BURST` | `5` | 备份与附件上传的桶容量，两类请求共用一个桶 |
-| `ZHIXIN_SMTP_ADDR` | 空 | 发信服务器，`host:port`；为空时登录方式验证与找回密码返回 503 |
+| `ZHIXIN_SMTP_ADDR` | 空 | 发信服务器，格式为 `host:port`，端口为数字。启用后台、数据库或收款时必填 |
 | `ZHIXIN_SMTP_FROM` | 空 | 发件人地址；设置了 `ZHIXIN_SMTP_ADDR` 时必填 |
 | `ZHIXIN_SMTP_USERNAME` | 空 | SMTP 用户名，留空表示不鉴权 |
 | `ZHIXIN_SMTP_PASSWORD` | 空 | SMTP 口令；有用户名时必填 |
@@ -512,7 +512,7 @@ ORDER BY f.first_day;
 
 加固轮次之后，启动时会自检生产配置：配置了数据库时 `ZHIXIN_MAIL_LOG` 必须为 `0`，`ZHIXIN_CODE_SECRET` 与 `ZHIXIN_TELEMETRY_SECRET` 必须固定，带认证的 SMTP 连接不允许 `none`，任何一项不满足都拒绝启动；第一套实例因此需要在 `api.env` 里补上两个固定密钥。带 key 的模型上游公网地址必须是 https，这条在后台保存来源时校验，不再随启动检查。按地址的限流要分清真实用户，`ZHIXIN_TRUSTED_PROXIES` 写 `127.0.0.1/32,::1/128`（nginx 只从回环地址连进来）；服务直接对外监听时保持为空。改了 `ZHIXIN_TRUSTED_PROXIES` 或其它配置之后重启服务生效，部署前按[运维手册](运维手册.md#4-加固后的运维动作)的核对清单逐项确认。
 
-部署已经与仓库联动：`main` 收到 `server/**` 的推送后，[deploy-server.yml](../.github/workflows/deploy-server.yml) 先跑与服务端 CI 相同的一组检查，通过之后交叉编译、上传、重启并核对 `/readyz`，失败时自动换回上一份可执行文件，也可以从 Actions 手动运行；账号、secrets、回滚与轮换步骤见[运维手册](运维手册.md#49-自动部署与回滚)，取舍见 [ADR-0032](../docs/adr/0032-main推送后自动部署服务端.md)。自动部署不处理表结构与运行配置，`schema.sql` 与 `api.env` 的变化仍在服务器上手工执行；部署工作流本身不可用时，照旧三步手工发布：在开发机上交叉编译，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`，回滚是把 `zhixin-api.prev` 换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次启动前把 `ZHIXIN_APPLY_SCHEMA` 设为 `1`，建表之后改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。schema 32 的结构变化（删 `user_purge`、`sync_commit` 增加必填 `kind`、删三条索引与 `sync_commit` 的 `UNIQUE (user_id, uid)`）同样要在现有实例上按当前 `schema.sql` 手工重建库，重建会清空全部账号，内测者需要重新注册（[ADR-0057](../docs/adr/0057-服务端改表清空重建.md)）；重建按[运维手册](运维手册.md#49-自动部署与回滚)的步骤停服、`pg_dump` 全量备份、只保留模型来源与模型路由和两张实例级用量表，建库之后用 ossutil 按 `attachments/` 前缀清空对象存储里的附件字节，这类字节在重建之后既没有索引行也没有对应的账号；清除云端数据期间的互斥只在进程内有效，服务端按单实例部署，换成多实例部署时要另做跨进程协调。保留期 `ZHIXIN_SYNC_COMPACT_KEEP` 有默认值 168 小时，不配置也照常运行，内测期间希望落后设备少重新克隆时可以调到 720 小时并写进 `api.env`，重启后生效。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
+部署已经与仓库联动：`main` 收到 `server/**` 的推送后，[deploy-server.yml](../.github/workflows/deploy-server.yml) 先跑与服务端 CI 相同的一组检查，通过之后交叉编译、上传、重启并核对 `/readyz`，失败时自动换回上一份可执行文件，也可以从 Actions 手动运行；账号、secrets、回滚与轮换步骤见[运维手册](运维手册.md#49-自动部署与回滚)，取舍见 [ADR-0032](../docs/adr/0032-main推送后自动部署服务端.md)。自动部署不处理表结构与运行配置，`schema.sql` 与 `api.env` 的变化仍在服务器上手工执行；部署工作流本身不可用时，照旧三步手工发布：在开发机上交叉编译，把可执行文件传到服务器的 `/opt/zhixin/bin/`，再执行 `systemctl restart zhixin-api`，回滚是把 `zhixin-api.prev` 换回去重新启动。发版时还要把安装包放到清单里的地址，用 Actions 发版任务在 step summary 里给出的 `sha256` 与 `signature` 更新 `ZHIXIN_RELEASE_FILE` 指向的 JSON 文件，再重启服务；地址必须是 https，漏掉这一步或清单与安装包对不上时客户端都不会提示更新。空库首次部署时按[运维手册](运维手册.md#3-配置)建表并录入模型，建表之后将 `ZHIXIN_APPLY_SCHEMA` 改回 `0`，因为 `schema.sql` 不带 `IF NOT EXISTS`，重复执行会报错。schema 32 的结构变化（删 `user_purge`、`sync_commit` 增加必填 `kind`、删三条索引与 `sync_commit` 的 `UNIQUE (user_id, uid)`）同样要在现有实例上按当前 `schema.sql` 手工重建库，重建会清空全部账号，内测者需要重新注册（[ADR-0057](../docs/adr/0057-服务端改表清空重建.md)）；重建按[运维手册](运维手册.md#49-自动部署与回滚)的步骤停服、`pg_dump` 全量备份、只保留模型来源与模型路由和两张实例级用量表，建库之后用 ossutil 按 `attachments/` 前缀清空对象存储里的附件字节，这类字节在重建之后既没有索引行也没有对应的账号；清除云端数据期间的互斥只在进程内有效，服务端按单实例部署，换成多实例部署时要另做跨进程协调。保留期 `ZHIXIN_SYNC_COMPACT_KEEP` 有默认值 168 小时，不配置也照常运行，内测期间希望落后设备少重新克隆时可以调到 720 小时并写进 `api.env`，重启后生效。日常备份是 `pg_dump`，加上对象存储里 `backups/` 与 `attachments/` 两个前缀下的字节；删号与删除备份都会按前缀清理，所以两处要一起备。
 
 服务器只有一位管理员（[04 第 5 节](../docs/04-长期路线图.md#5-决定) D7），不设第二位。数据库口令、对象存储密钥、TLS 证书与备份介质的存放位置，以及主机失联、数据库损坏、对象存储不可用三种情况下的恢复步骤，由管理员写在仓库之外的私有目录；仓库只保留需要哪些变量与恢复的先后顺序。公测准备阶段做一次恢复演练，用备份重建一台可用实例，演练日期与结果写进结题材料。
 
@@ -533,18 +533,19 @@ curl -X POST localhost:8080/v1/telemetry/active \
   -d '{"install_id":"0f8fad5b-d9cb-469f-a165-70867728950e","app_version":"0.2.0-dev+3","platform":"android"}'
 ```
 
-本地要试模型代理时，先给服务一个管理令牌，再经管理接口登记来源与模型（内存存储的加密密钥随进程生成，重启后要重新登记）：
+本地可以用管理模式录入来源和模型，并从后台执行模型自测，因为内存目录随进程退出而清空，需要经客户端联调模型时应使用 PostgreSQL 保存目录，再正常启动服务。
 
 ```bash
-ZHIXIN_ADMIN_TOKEN=$(openssl rand -base64 32) go run ./cmd/zhixin-api
-TOKEN=$ZHIXIN_ADMIN_TOKEN
+export ZHIXIN_ADMIN_TOKEN=$(openssl rand -base64 32)
+go run ./cmd/zhixin-api configure-models
+# 在另一个终端将 TOKEN 设为上一步生成的令牌，再执行以下命令。
 curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/admin/v1/providers \
   -H 'Content-Type: application/json' \
   -d '{"id":"deepseek","base_url":"https://api.deepseek.com/v1","api_key":"sk-..."}'
 curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/admin/v1/models \
   -H 'Content-Type: application/json' \
   -d '{"name":"zhixin-chat","kind":"chat","routes":[{"provider_id":"deepseek","upstream_model":"deepseek-chat"}]}'
-curl localhost:8080/v1/llm/models
+curl -H "Authorization: Bearer $TOKEN" -X POST localhost:8080/admin/v1/models/zhixin-chat/test
 ```
 
 设置 `ZHIXIN_DATABASE_URL` 之后启动就用 PostgreSQL，备份与附件默认写到 `ZHIXIN_BLOB_DIR`。要连 MinIO 时设置 `ZHIXIN_S3_ENDPOINT`、`ZHIXIN_S3_BUCKET`、`ZHIXIN_S3_ACCESS_KEY` 与 `ZHIXIN_S3_SECRET_KEY`，bucket 要先建好，`/readyz` 会检查它是否存在。

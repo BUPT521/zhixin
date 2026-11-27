@@ -92,7 +92,9 @@ func TestStartupPrunesOldUnverifiedAccounts(t *testing.T) {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	Build(runCtx, cfg, stores, log)
+	if _, err := Build(runCtx, cfg, stores, log); err != nil {
+		t.Fatal(err)
+	}
 
 	// 每日清理在启动后的 goroutine 里先跑一次，等它把过期账号删掉。
 	deadline := time.Now().Add(2 * time.Second)
