@@ -1,45 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ui/quota_text.dart';
 
-/// 嵌入额度的相对显示：给出百分比与“已用 / 每日上限 token”，不出现积分单位。
 void main() {
-  test('有上限时显示已用占比与已用、上限 token', () {
+  test('分开显示两种模型的已结算计费量', () {
     expect(
-      embeddingQuotaText(usedTokens: 12345, dailyTokens: 200000),
-      '嵌入今日已用 6% · 12,345 / 200,000 token',
-    );
-    expect(
-      embeddingQuotaText(usedTokens: 120000, dailyTokens: 200000),
-      '嵌入今日已用 60% · 120,000 / 200,000 token',
-    );
-    expect(
-      embeddingQuotaText(usedTokens: 0, dailyTokens: 200000),
-      '嵌入今日已用 0% · 0 / 200,000 token',
-    );
-  });
-
-  test('上限为 0 时只显示已用 token 与说明', () {
-    expect(
-      embeddingQuotaText(usedTokens: 12345, dailyTokens: 0),
-      '嵌入今日已用 12,345 token；暂时读不到每日上限。',
-    );
-  });
-
-  test('旧版服务端没有嵌入额度数值时按 0 处理', () {
-    expect(
-      embeddingQuotaText(usedTokens: 0, dailyTokens: null),
-      '嵌入今日已用 0 token；暂时读不到每日上限。',
-    );
-  });
-
-  test('用了一点但占比不到 1% 时显示 1%，超过上限时照实显示', () {
-    expect(
-      embeddingQuotaText(usedTokens: 1, dailyTokens: 200000),
-      '嵌入今日已用 1% · 1 / 200,000 token',
-    );
-    expect(
-      embeddingQuotaText(usedTokens: 250000, dailyTokens: 200000),
-      '嵌入今日已用 125% · 250,000 / 200,000 token',
+      modelUsageText(chatTokens: 12345, embeddingTokens: 6789),
+      '聊天 12,345 · 嵌入 6,789 计费 token',
     );
   });
 

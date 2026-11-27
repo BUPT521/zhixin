@@ -18,8 +18,8 @@ SELECT
   u.user_id,
   u.api_key_id,
   u.kind,
-  u.tokens,
-  u.reserved_tokens,
+  (CASE WHEN u.kind = 'embedding' THEN u.embedding_billed_tokens ELSE u.tokens END)::bigint AS tokens,
+  (CASE WHEN u.kind = 'embedding' THEN u.embedding_reserved_tokens ELSE u.reserved_tokens END)::bigint AS reserved_tokens,
   u.input_tokens,
   u.cached_tokens,
   u.attempts,
@@ -33,6 +33,7 @@ FROM llm_usage u
 LEFT JOIN api_key k ON k.id = u.api_key_id
 WHERE u.day BETWEEN sqlc.arg(from_day)::date AND sqlc.arg(to_day)::date
   AND (sqlc.arg(user_id)::text = '' OR u.user_id = sqlc.arg(user_id)::text)
-  AND (u.tokens <> 0 OR u.reserved_tokens <> 0 OR u.input_tokens <> 0
+  AND (u.tokens <> 0 OR u.reserved_tokens <> 0 OR u.embedding_billed_tokens <> 0
+       OR u.embedding_reserved_tokens <> 0 OR u.input_tokens <> 0
        OR u.cached_tokens <> 0 OR u.attempts <> 0 OR u.failures <> 0)
 ORDER BY u.day, u.user_id, u.api_key_id, u.kind;

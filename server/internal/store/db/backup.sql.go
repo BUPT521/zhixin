@@ -12,16 +12,15 @@ import (
 )
 
 const accountQuota = `-- name: AccountQuota :one
-SELECT daily_tokens, embedding_daily_tokens, note, updated_at
+SELECT daily_tokens, note, updated_at
 FROM llm_quota
 WHERE user_id = $1
 `
 
 type AccountQuotaRow struct {
-	DailyTokens          pgtype.Int8
-	EmbeddingDailyTokens pgtype.Int8
-	Note                 string
-	UpdatedAt            pgtype.Timestamptz
+	DailyTokens pgtype.Int8
+	Note        string
+	UpdatedAt   pgtype.Timestamptz
 }
 
 // 管理后台读取一个账号的覆盖行：与 LLMQuotaOverride 相比多出备注与保存时间。
@@ -29,17 +28,12 @@ type AccountQuotaRow struct {
 func (q *Queries) AccountQuota(ctx context.Context, userID string) (AccountQuotaRow, error) {
 	row := q.db.QueryRow(ctx, accountQuota, userID)
 	var i AccountQuotaRow
-	err := row.Scan(
-		&i.DailyTokens,
-		&i.EmbeddingDailyTokens,
-		&i.Note,
-		&i.UpdatedAt,
-	)
+	err := row.Scan(&i.DailyTokens, &i.Note, &i.UpdatedAt)
 	return i, err
 }
 
 const accountQuotasByUsers = `-- name: AccountQuotasByUsers :many
-SELECT user_id, daily_tokens, embedding_daily_tokens, note, updated_at
+SELECT user_id, daily_tokens, note, updated_at
 FROM llm_quota
 WHERE user_id = ANY($1::text[])
 `
@@ -57,7 +51,6 @@ func (q *Queries) AccountQuotasByUsers(ctx context.Context, userIds []string) ([
 		if err := rows.Scan(
 			&i.UserID,
 			&i.DailyTokens,
-			&i.EmbeddingDailyTokens,
 			&i.Note,
 			&i.UpdatedAt,
 		); err != nil {
@@ -72,13 +65,17 @@ func (q *Queries) AccountQuotasByUsers(ctx context.Context, userIds []string) ([
 }
 
 const addReservedTokens = `-- name: AddReservedTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, reserved_tokens)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, reserved_tokens, embedding_reserved_tokens)
 VALUES (
   $1, $2::date, $3,
-  $4, $5
+  $4,
+  CASE WHEN $3::text = 'chat' THEN $5::bigint ELSE 0 END,
+  CASE WHEN $3 = 'embedding' THEN $5 ELSE 0 END
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
-DO UPDATE SET reserved_tokens = llm_usage.reserved_tokens + EXCLUDED.reserved_tokens
+DO UPDATE SET
+  reserved_tokens = llm_usage.reserved_tokens + EXCLUDED.reserved_tokens,
+  embedding_reserved_tokens = llm_usage.embedding_reserved_tokens + EXCLUDED.embedding_reserved_tokens
 `
 
 type AddReservedTokensParams struct {
@@ -217,22 +214,17 @@ func (q *Queries) InsertBackup(ctx context.Context, arg InsertBackupParams) erro
 }
 
 const lLMQuotaOverride = `-- name: LLMQuotaOverride :one
-SELECT daily_tokens, embedding_daily_tokens
+SELECT daily_tokens
 FROM llm_quota
 WHERE user_id = $1
 `
 
-type LLMQuotaOverrideRow struct {
-	DailyTokens          pgtype.Int8
-	EmbeddingDailyTokens pgtype.Int8
-}
-
 // 按账号调整的每日额度；没有行或者对应列为空时用配置的默认值。
-func (q *Queries) LLMQuotaOverride(ctx context.Context, userID string) (LLMQuotaOverrideRow, error) {
+func (q *Queries) LLMQuotaOverride(ctx context.Context, userID string) (pgtype.Int8, error) {
 	row := q.db.QueryRow(ctx, lLMQuotaOverride, userID)
-	var i LLMQuotaOverrideRow
-	err := row.Scan(&i.DailyTokens, &i.EmbeddingDailyTokens)
-	return i, err
+	var daily_tokens pgtype.Int8
+	err := row.Scan(&daily_tokens)
+	return daily_tokens, err
 }
 
 const listAllBackups = `-- name: ListAllBackups :many
@@ -310,9 +302,10 @@ func (q *Queries) ListBackups(ctx context.Context, userID string) ([]ListBackups
 }
 
 const settledTokens = `-- name: SettledTokens :one
-SELECT COALESCE(SUM(tokens), 0)::bigint
+SELECT COALESCE(SUM(CASE WHEN kind = 'embedding' THEN embedding_billed_tokens ELSE tokens END), 0)::bigint
 FROM llm_usage
-WHERE user_id = $1 AND day = $2::date AND kind = $3
+WHERE user_id = $1 AND day = $2::date
+  AND ($3::text = '' OR kind = $3)
 `
 
 type SettledTokensParams struct {
@@ -369,53 +362,46 @@ func (q *Queries) TrimBackups(ctx context.Context, arg TrimBackupsParams) ([]str
 }
 
 const upsertAccountQuota = `-- name: UpsertAccountQuota :exec
-INSERT INTO llm_quota (user_id, daily_tokens, embedding_daily_tokens, note, updated_at)
+INSERT INTO llm_quota (user_id, daily_tokens, note, updated_at)
 VALUES (
-  $1, $2, $3,
-  $4, now()
+  $1, $2,
+  $3, now()
 )
 ON CONFLICT (user_id) DO UPDATE SET
   daily_tokens = EXCLUDED.daily_tokens,
-  embedding_daily_tokens = EXCLUDED.embedding_daily_tokens,
   note = EXCLUDED.note,
   updated_at = now()
 `
 
 type UpsertAccountQuotaParams struct {
-	UserID               string
-	DailyTokens          pgtype.Int8
-	EmbeddingDailyTokens pgtype.Int8
-	Note                 string
+	UserID      string
+	DailyTokens pgtype.Int8
+	Note        string
 }
 
 // 管理后台整体替换一个账号的覆盖值；两项额度都为空时调用方先删除这一行，不写
 // 一条没有意义的记录。updated_at 在更新分支同样推进，页面据此看出最近一次保存。
 func (q *Queries) UpsertAccountQuota(ctx context.Context, arg UpsertAccountQuotaParams) error {
-	_, err := q.db.Exec(ctx, upsertAccountQuota,
-		arg.UserID,
-		arg.DailyTokens,
-		arg.EmbeddingDailyTokens,
-		arg.Note,
-	)
+	_, err := q.db.Exec(ctx, upsertAccountQuota, arg.UserID, arg.DailyTokens, arg.Note)
 	return err
 }
 
 const usedTokens = `-- name: UsedTokens :one
-SELECT COALESCE(SUM(tokens + reserved_tokens), 0)::bigint
+SELECT COALESCE(SUM(CASE WHEN kind = 'embedding'
+  THEN embedding_billed_tokens + embedding_reserved_tokens ELSE tokens + reserved_tokens END), 0)::bigint
 FROM llm_usage
-WHERE user_id = $1 AND day = $2::date AND kind = $3
+WHERE user_id = $1 AND day = $2::date
 `
 
 type UsedTokensParams struct {
 	UserID string
 	Day    pgtype.Date
-	Kind   string
 }
 
-// 账号当天的用量按用途汇总，额度判定看已结算量与在途预留之和：同时发起的请求
+// 账号当天的共享额度用量，额度判定看已结算量与在途预留之和：同时发起的请求
 // 必须互相看得见，否则各自按旧值通过（ADR-0063、ADR-0071）。
 func (q *Queries) UsedTokens(ctx context.Context, arg UsedTokensParams) (int64, error) {
-	row := q.db.QueryRow(ctx, usedTokens, arg.UserID, arg.Day, arg.Kind)
+	row := q.db.QueryRow(ctx, usedTokens, arg.UserID, arg.Day)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err

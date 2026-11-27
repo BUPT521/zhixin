@@ -416,7 +416,7 @@ func text(value string) pgtype.Text {
 // 核销。累计量只算已经结算的用量：在途预留还没有产生实际费用，算进去会让并发
 // 请求多扣积分（ADR-0071）。
 func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtype.Date) {
-	limit, limited, err := s.accountLimit(ctx, s.q, userID, llmproxy.KindChat)
+	limit, limited, err := s.accountLimit(ctx, s.q, userID)
 	if err != nil {
 		s.log.Error("read the daily quota for nowpay", "user_id", userID, "error", err)
 		return
@@ -424,7 +424,7 @@ func (s *Store) chargeNowPay(ctx context.Context, userID, day string, date pgtyp
 	if !limited {
 		return
 	}
-	settled, err := settledTokens(ctx, s.q, userID, date, llmproxy.KindChat)
+	settled, err := settledTokens(ctx, s.q, userID, date, "")
 	if err != nil {
 		s.log.Error("read the settled tokens for nowpay", "user_id", userID, "error", err)
 		return

@@ -1390,26 +1390,16 @@ func TestPostgresQuotaOverride(t *testing.T) {
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "quota@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	if _, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindChat); err != nil || ok {
+	if _, ok, err := st.DailyLimit(ctx, "u1"); err != nil || ok {
 		t.Fatalf("没有覆盖行时应回落到默认值：ok=%v err=%v", ok, err)
 	}
 
 	if _, err := st.pool.Exec(ctx, `INSERT INTO llm_quota (user_id, daily_tokens, note) VALUES ('u1', 5000, '内测')`); err != nil {
 		t.Fatalf("insert override: %v", err)
 	}
-	limit, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindChat)
+	limit, ok, err := st.DailyLimit(ctx, "u1")
 	if err != nil || !ok || limit != 5000 {
 		t.Fatalf("覆盖额度没有读到：limit=%d ok=%v err=%v", limit, ok, err)
-	}
-	// 嵌入那一列为空：回落到嵌入的默认值。
-	if _, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindEmbedding); err != nil || ok {
-		t.Fatalf("嵌入列为空时应回落到默认值：ok=%v err=%v", ok, err)
-	}
-	if _, err := st.pool.Exec(ctx, `UPDATE llm_quota SET embedding_daily_tokens = 900000 WHERE user_id = 'u1'`); err != nil {
-		t.Fatalf("update override: %v", err)
-	}
-	if limit, ok, err := st.DailyLimit(ctx, "u1", llmproxy.KindEmbedding); err != nil || !ok || limit != 900000 {
-		t.Fatalf("嵌入覆盖额度没有读到：limit=%d ok=%v err=%v", limit, ok, err)
 	}
 
 	if err := st.DeleteUser(ctx, "u1"); err != nil {

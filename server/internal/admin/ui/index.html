@@ -195,10 +195,10 @@
           <label class="usage-group">日期<select id="key-usage-day"></select></label>
         </div>
         <div class="scroll" role="region" aria-labelledby="key-usage-title" tabindex="0"><table class="grid usage-table key-usage-table">
-          <thead><tr><th scope="col">密钥</th><th scope="col">账号</th><th scope="col">聊天 Token</th><th scope="col">约合积分</th><th scope="col">嵌入 Token</th><th scope="col">尝试</th><th scope="col">未成功</th><th scope="col">在途 Token</th><th scope="col">每日趋势</th><th scope="col">最近使用</th><th scope="col">状态</th></tr></thead>
+          <thead><tr><th scope="col">密钥</th><th scope="col">账号</th><th scope="col">聊天 Token</th><th scope="col">约合积分</th><th scope="col">嵌入计费 Token</th><th scope="col">尝试</th><th scope="col">未成功</th><th scope="col">在途 Token</th><th scope="col">每日趋势</th><th scope="col">最近使用</th><th scope="col">状态</th></tr></thead>
           <tbody id="key-usage-rows"></tbody>
         </table></div>
-        <p class="hint usage-note">约合积分按聊天计费 Token 折算，未扣除每日免费额度。实际核销请查看账号详情。发起上游尝试前取消的请求不计入尝试。</p>
+        <p class="hint usage-note">约合积分按聊天与嵌入合计的计费 Token 折算，未扣除每日免费额度。实际核销请查看账号详情。发起上游尝试前取消的请求不计入尝试。</p>
       </section>
     </div>
   </section>
@@ -473,13 +473,9 @@
       </section>
       <section class="form-section">
         <div class="field-row">
-          <label>聊天每日额度
+          <label>每日共享额度（计费 Token）
             <input name="daily_tokens" type="number" min="1" step="1" inputmode="numeric" placeholder="留空用默认值" autocomplete="off">
-            <span class="field-hint">实例默认 <span id="quota-chat-default"></span>；留空表示恢复默认</span>
-          </label>
-          <label>嵌入每日额度
-            <input name="embedding_daily_tokens" type="number" min="1" step="1" inputmode="numeric" placeholder="留空用默认值" autocomplete="off">
-            <span class="field-hint">实例默认 <span id="quota-embedding-default"></span>；留空表示恢复默认</span>
+            <span class="field-hint">实例默认 <span id="quota-daily-default"></span>；留空表示恢复默认</span>
           </label>
         </div>
         <label>备注

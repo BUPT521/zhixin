@@ -318,7 +318,7 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 	keyRow := keyReport.Keys[0]
 	today := day.Day.Format("2006-01-02")
 	if keyRow.KeyId != "" || keyRow.UserId == "" || keyRow.Name != "" ||
-		keyRow.Chat.Tokens != day.Chat.Tokens || keyRow.Embedding.Tokens != day.Embedding.Tokens ||
+		keyRow.Chat.Tokens != day.Chat.Tokens || keyRow.Embedding.Tokens != 2 ||
 		keyRow.Chat.ReservedTokens != 0 ||
 		len(keyRow.Daily) != 1 || keyRow.Daily[today].Chat.Tokens != day.Chat.Tokens {
 		t.Fatalf("key usage row: %+v", keyRow)
@@ -540,8 +540,8 @@ func TestAdminConfiguresRoutesEndToEnd(t *testing.T) {
 		EmbUsed int64 `json:"embedding_used_tokens"`
 	}
 	h.json("GET", "/v1/llm/quota", user, nil, &quota)
-	if quota.Used != 3 || quota.EmbUsed != 4 {
-		t.Fatalf("两类用量分开记：%+v", quota)
+	if quota.Used != 4 || quota.EmbUsed != 1 {
+		t.Fatalf("共享用量包含计费后的嵌入：%+v", quota)
 	}
 
 	// 测试模型：嵌入模型报告维度。

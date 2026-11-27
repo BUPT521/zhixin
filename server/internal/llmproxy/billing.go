@@ -1,5 +1,7 @@
 package llmproxy
 
+import "math"
+
 // 计费 token 的折算口径。
 //
 // 上游按输入是否命中上下文缓存分开计价，命中与未命中的单价差到五十倍（DeepSeek
@@ -31,9 +33,8 @@ type Usage struct {
 
 func (u Usage) Total() int64 { return u.Input + u.Output }
 
-// Billed 把原始用量折算成计费 token 数。嵌入没有缓存语义，聊天在来源没有报告
-// 输入拆分时也无法判断命中，这两种情况都按原始 token 一比一记：宁可少给折扣，
-// 也不把“不知道”当成“全是输出”多扣四倍。
+// Billed 按聊天的缓存与输出权重折算 token；嵌入的原始 token 交给 quotaCost 折算。
+// 聊天来源只报总量时也保留原始 token，以免误按输出权重计费。
 func (u Usage) Billed(kind Kind) int64 {
 	if kind == KindEmbedding || u.Input <= 0 {
 		return u.Total()
@@ -52,4 +53,24 @@ func (u Usage) reserve(kind Kind) int64 {
 		return u.Total()
 	}
 	return (u.Input*billedMissUnit + u.Output*billedOutUnit + billedScale/2) / billedScale
+}
+
+// quotaCost uses the same embedding rate for reservation and settlement. Round
+// positive usage up to one billed token so separate small requests still count.
+func (p *Proxy) quotaCost(kind Kind, tokens int64) int64 {
+	if kind != KindEmbedding || tokens <= 0 {
+		return tokens
+	}
+	const scale int64 = 1000
+	rate := p.cfg.EmbeddingBillingPermille
+	if rate == 0 {
+		// Handler configurations constructed in code can keep one-to-one accounting.
+		return tokens
+	}
+	whole := tokens / scale
+	remainder := (tokens%scale*rate + scale - 1) / scale
+	if whole > (math.MaxInt64-remainder)/rate {
+		return math.MaxInt64
+	}
+	return whole*rate + remainder
 }

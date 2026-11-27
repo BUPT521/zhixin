@@ -30,7 +30,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Addr != ":8080" || cfg.AccessTTL != time.Hour || cfg.RefreshTTL != 720*time.Hour {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
-	if cfg.LLM.DailyTokens != 320000 || cfg.LLM.MaxAttempts != 3 {
+	if cfg.LLM.DailyTokens != 400000 || cfg.LLM.MaxAttempts != 3 {
 		t.Fatalf("unexpected llm defaults: %+v", cfg.LLM)
 	}
 }
@@ -313,7 +313,7 @@ func TestLoadModelRoutingDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLM.EmbeddingDailyTokens != 2000000 || cfg.LLM.EmbeddingMaxInputs != 256 || cfg.LLM.MaxAttempts != 3 || cfg.LLM.HeaderTimeout != time.Minute {
+	if cfg.LLM.EmbeddingBillingPermille != 200 || cfg.LLM.EmbeddingMaxInputs != 256 || cfg.LLM.MaxAttempts != 3 || cfg.LLM.HeaderTimeout != time.Minute {
 		t.Fatalf("unexpected routing defaults: %+v", cfg.LLM)
 	}
 	if cfg.AdminToken != "" || cfg.SecretKey != nil {

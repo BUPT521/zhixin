@@ -56,40 +56,44 @@ func (q *Queries) InstanceTokens(ctx context.Context, day pgtype.Date) (int64, e
 }
 
 const settleTokens = `-- name: SettleTokens :exec
-INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, reserved_tokens, input_tokens, cached_tokens, attempts, failures)
+INSERT INTO llm_usage (user_id, day, kind, api_key_id, tokens, embedding_billed_tokens, input_tokens, cached_tokens, attempts, failures)
 VALUES (
   $1,
   $2::date,
   $3,
   $4,
-  GREATEST($5::bigint, 0),
-  0,
-  GREATEST($6::bigint, 0),
+  CASE WHEN $3::text = 'embedding' THEN GREATEST($5::bigint, 0)
+    ELSE GREATEST($6::bigint, 0) END,
+  CASE WHEN $3 = 'embedding' THEN GREATEST($6, 0) ELSE 0 END,
   GREATEST($7::bigint, 0),
   GREATEST($8::bigint, 0),
-  GREATEST($9::bigint, 0)
+  GREATEST($9::bigint, 0),
+  GREATEST($10::bigint, 0)
 )
 ON CONFLICT (user_id, day, kind, api_key_id)
 DO UPDATE SET
-  tokens = GREATEST(llm_usage.tokens + $5::bigint, 0),
-  reserved_tokens = GREATEST(llm_usage.reserved_tokens - $10::bigint, 0),
-  input_tokens = GREATEST(llm_usage.input_tokens + $6::bigint, 0),
-  cached_tokens = GREATEST(llm_usage.cached_tokens + $7::bigint, 0),
-  attempts = GREATEST(llm_usage.attempts + $8::bigint, 0),
-  failures = GREATEST(llm_usage.failures + $9::bigint, 0)
+  tokens = llm_usage.tokens + EXCLUDED.tokens,
+  embedding_billed_tokens = llm_usage.embedding_billed_tokens + EXCLUDED.embedding_billed_tokens,
+  reserved_tokens = GREATEST(llm_usage.reserved_tokens - CASE WHEN EXCLUDED.kind = 'chat' THEN $11::bigint ELSE 0 END, 0),
+  embedding_reserved_tokens = GREATEST(llm_usage.embedding_reserved_tokens - CASE WHEN EXCLUDED.kind = 'embedding' THEN $11 ELSE 0 END, 0),
+  input_tokens = GREATEST(llm_usage.input_tokens + $7::bigint, 0),
+  cached_tokens = GREATEST(llm_usage.cached_tokens + $8::bigint, 0),
+  attempts = GREATEST(llm_usage.attempts + $9::bigint, 0),
+  failures = GREATEST(llm_usage.failures + $10::bigint, 0)
 `
 
 type SettleTokensParams struct {
-	UserID       string
-	Day          pgtype.Date
-	Kind         string
-	ApiKeyID     string
-	Actual       int64
-	InputTokens  int64
-	CachedTokens int64
-	Attempts     int64
-	Failures     int64
-	Reserved     int64
+	UserID             string
+	Day                pgtype.Date
+	Kind               string
+	ApiKeyID           string
+	RawEmbeddingTokens int64
+	Actual             int64
+	InputTokens        int64
+	CachedTokens       int64
+	Attempts           int64
+	Failures           int64
+	Reserved           int64
 }
 
 // 结算一次预留：把 reserved 从在途预留里扣掉，把 actual 记进已结算用量。行一定
@@ -108,6 +112,7 @@ func (q *Queries) SettleTokens(ctx context.Context, arg SettleTokensParams) erro
 		arg.Day,
 		arg.Kind,
 		arg.ApiKeyID,
+		arg.RawEmbeddingTokens,
 		arg.Actual,
 		arg.InputTokens,
 		arg.CachedTokens,

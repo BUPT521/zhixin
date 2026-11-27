@@ -246,7 +246,7 @@ func TestHandlerReservesImagesByCountNotBytes(t *testing.T) {
 func TestMemoryQuotaInstanceCountsFreePortionOnly(t *testing.T) {
 	ctx := context.Background()
 	q := NewMemoryQuota()
-	q.SetQuotaLimits(100, 200, 1000)
+	q.SetQuotaLimits(100, 1000)
 	const day = "2026-11-18"
 
 	if got, err := q.Reserve(ctx, "u1", day, KindChat, "", 100); err != nil || got != 100 {

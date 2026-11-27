@@ -17,11 +17,12 @@ import (
 // 看得见，结算再按实际用量多退少补。
 //
 // DailyLimit 读取按账号调整过的每日额度；没有覆盖行时返回 ok=false，由代理用
-// 聊天与嵌入各自的默认额度。管理员在 llm_quota 表里调整，见 server/README。
+// 实例默认的共享额度。管理员在 llm_quota 表里调整，见 server/README。
 type Quota interface {
+	// Used 返回已结算的计费 token；kind 为空时返回两类合计。
 	Used(ctx context.Context, userID, day string, kind Kind) (int64, error)
 	Add(ctx context.Context, userID, day string, kind Kind, tokens int64) error
-	DailyLimit(ctx context.Context, userID string, kind Kind) (int64, bool, error)
+	DailyLimit(ctx context.Context, userID string) (int64, bool, error)
 	// Reserve 原子预留 want 个计费 token，成功时返回 want。keyID 是这次调用用的
 	// 模型代理密钥编号，用访问令牌调用时为空字符串；用量按它分开记，额度仍按账号
 	// 合计。账号额度或实例预算不足以覆盖 want 时返回 *QuotaExceededError，原因写
@@ -51,9 +52,8 @@ type Quota interface {
 	// QuotaOverrides 批量读取管理后台用到的额度覆盖行。它只返回有覆盖的账号，
 	// 没有出现说明这一类额度走实例默认值；一次读回一页账号，避免逐行查询。
 	QuotaOverrides(ctx context.Context, userIDs []string) (map[string]QuotaOverride, error)
-	// SetQuotaOverride 整体替换一个账号的额度覆盖值；某一项为 nil 时回到实例
-	// 默认值，两项都为 nil 且备注为空时删除覆盖行。下一次模型请求生效。
-	SetQuotaOverride(ctx context.Context, userID string, daily, embedding *int64, note string) error
+	// SetQuotaOverride 整体替换账号的共享额度覆盖值。额度与备注都为空时删除覆盖行。
+	SetQuotaOverride(ctx context.Context, userID string, daily *int64, note string) error
 	// ClearQuotaOverride 删除覆盖行，这个账号回到实例默认额度。
 	ClearQuotaOverride(ctx context.Context, userID string) error
 }
@@ -61,10 +61,9 @@ type Quota interface {
 // QuotaOverride 是管理后台看到的一个账号额度覆盖行。指针为空表示这一项没有
 // 单独调整过，实际放行时用配置的默认额度；UpdatedAt 为零值表示没有这一行。
 type QuotaOverride struct {
-	DailyTokens          *int64
-	EmbeddingDailyTokens *int64
-	Note                 string
-	UpdatedAt            time.Time
+	DailyTokens *int64
+	Note        string
+	UpdatedAt   time.Time
 }
 
 // SettleAttempt 是这次结算对应的尝试与它的结果。失败的尝试按 ADR-0070 记 0，
@@ -147,7 +146,7 @@ func (e *QuotaExceededError) Is(target error) bool { return target == ErrQuotaEx
 // 来源，NewHandler 装配时注入给实现，Reserve 用它做原子比较。内存与 PostgreSQL
 // 两种实现都实现了这个方法。
 type quotaLimits interface {
-	SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyTokens int64)
+	SetQuotaLimits(dailyTokens, instanceDailyTokens int64)
 }
 
 // memoryUsageKey matches the dimensions of an llm_usage row.
@@ -169,7 +168,7 @@ type MemoryQuota struct {
 	keysByUser func(context.Context, string) ([]auth.APIKey, error)
 	// limits 是管理后台调整过的额度覆盖值；quotaNotes 与 quotaUpdated 跟着覆盖行
 	// 一起保存，供后台列表显示备注与保存时间。
-	limits       map[[2]string]int64
+	limits       map[string]int64
 	quotaNotes   map[string]string
 	quotaUpdated map[string]time.Time
 	// instance 按自然日保存实例用量，删号之后保留（ADR-0036）。
@@ -177,15 +176,14 @@ type MemoryQuota struct {
 
 	// dailyTokens 与 instanceTokens 是配置里的默认额度与实例预算，由 NewHandler
 	// 装配时注入；小于等于 0 表示不限。
-	dailyTokens          int64
-	embeddingDailyTokens int64
-	instanceTokens       int64
+	dailyTokens    int64
+	instanceTokens int64
 }
 
 func NewMemoryQuota() *MemoryQuota {
 	return &MemoryQuota{
 		usage:        make(map[memoryUsageKey]memoryUsageRow),
-		limits:       map[[2]string]int64{},
+		limits:       map[string]int64{},
 		quotaNotes:   map[string]string{},
 		quotaUpdated: map[string]time.Time{},
 		instance:     map[string]int64{},
@@ -193,11 +191,10 @@ func NewMemoryQuota() *MemoryQuota {
 }
 
 // SetQuotaLimits 注入配置里的默认每日额度与实例预算；由 NewHandler 在装配时调用。
-func (m *MemoryQuota) SetQuotaLimits(dailyTokens, embeddingDailyTokens, instanceDailyTokens int64) {
+func (m *MemoryQuota) SetQuotaLimits(dailyTokens, instanceDailyTokens int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.dailyTokens = dailyTokens
-	m.embeddingDailyTokens = embeddingDailyTokens
 	m.instanceTokens = instanceDailyTokens
 }
 
@@ -211,7 +208,7 @@ func (m *MemoryQuota) Used(_ context.Context, userID, day string, kind Kind) (in
 func (m *MemoryQuota) accountUsageLocked(userID, day string, kind Kind) KeyUsageCounts {
 	var counts KeyUsageCounts
 	for key, row := range m.usage {
-		if key.userID == userID && key.day == day && key.kind == kind {
+		if key.userID == userID && key.day == day && (kind == "" || key.kind == kind) {
 			counts.add(row.KeyUsageCounts)
 		}
 	}
@@ -239,10 +236,10 @@ func (m *MemoryQuota) Reserve(_ context.Context, userID, day string, kind Kind, 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := memoryUsageKey{userID, day, kind, keyID}
-	limit, limited := m.accountLimitLocked(userID, kind)
+	limit, limited := m.accountLimitLocked(userID)
 	free := int64(0)
 	if limited {
-		counts := m.accountUsageLocked(userID, day, kind)
+		counts := m.accountUsageLocked(userID, day, "")
 		free = max(0, limit-counts.Tokens-counts.ReservedTokens)
 	}
 	if limited && want > free {
@@ -277,8 +274,8 @@ func (m *MemoryQuota) Settle(_ context.Context, userID, day string, kind Kind, k
 
 	// 实例账本只加减免费额度内的部分。
 	instance := actual - reserved
-	if limit, limited := m.accountLimitLocked(userID, kind); limited {
-		counts := m.accountUsageLocked(userID, day, kind)
+	if limit, limited := m.accountLimitLocked(userID); limited {
+		counts := m.accountUsageLocked(userID, day, "")
 		before := max(0, counts.Tokens+counts.ReservedTokens-reserved)
 		free := max(0, limit-before)
 		instance = min(actual, free) - min(reserved, free)
@@ -335,34 +332,26 @@ func instancePortion(reserved, freeRemaining int64, limited bool) int64 {
 
 // accountLimitLocked 返回账号当天的额度：覆盖值优先，其次配置的默认值；都没有
 // 时 ok 为 false，表示不限额度。调用方必须持有 m.mu。
-func (m *MemoryQuota) accountLimitLocked(userID string, kind Kind) (int64, bool) {
-	if limit, ok := m.limits[[2]string{userID, string(kind)}]; ok {
+func (m *MemoryQuota) accountLimitLocked(userID string) (int64, bool) {
+	if limit, ok := m.limits[userID]; ok {
 		return limit, true
 	}
 	limit := m.dailyTokens
-	if kind == KindEmbedding {
-		limit = m.embeddingDailyTokens
-	}
 	return limit, limit > 0
 }
 
 // SetDailyLimit 调整一个账号的每日额度，供本地联调与测试使用；生产上改
 // llm_quota 表。
 func (m *MemoryQuota) SetDailyLimit(userID string, tokens int64) {
-	m.SetKindLimit(userID, KindChat, tokens)
-}
-
-// SetKindLimit 调整一个账号某类模型的每日额度。
-func (m *MemoryQuota) SetKindLimit(userID string, kind Kind, tokens int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.limits[[2]string{userID, string(kind)}] = tokens
+	m.limits[userID] = tokens
 }
 
-func (m *MemoryQuota) DailyLimit(_ context.Context, userID string, kind Kind) (int64, bool, error) {
+func (m *MemoryQuota) DailyLimit(_ context.Context, userID string) (int64, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	limit, ok := m.limits[[2]string{userID, string(kind)}]
+	limit, ok := m.limits[userID]
 	return limit, ok, nil
 }
 
@@ -374,14 +363,9 @@ func (m *MemoryQuota) QuotaOverrides(_ context.Context, userIDs []string) (map[s
 	for _, userID := range userIDs {
 		override := QuotaOverride{}
 		found := false
-		if limit, ok := m.limits[[2]string{userID, string(KindChat)}]; ok {
+		if limit, ok := m.limits[userID]; ok {
 			value := limit
 			override.DailyTokens = &value
-			found = true
-		}
-		if limit, ok := m.limits[[2]string{userID, string(KindEmbedding)}]; ok {
-			value := limit
-			override.EmbeddingDailyTokens = &value
 			found = true
 		}
 		if note, ok := m.quotaNotes[userID]; ok {
@@ -399,17 +383,16 @@ func (m *MemoryQuota) QuotaOverrides(_ context.Context, userIDs []string) (map[s
 	return out, nil
 }
 
-// SetQuotaOverride 整体替换一个账号的覆盖值；两项都为空且没有备注时删除覆盖，
+// SetQuotaOverride 整体替换一个账号的覆盖值；额度与备注都为空时删除覆盖，
 // 与 PostgreSQL 的 upsert 分支保持同一语义。
-func (m *MemoryQuota) SetQuotaOverride(_ context.Context, userID string, daily, embedding *int64, note string) error {
+func (m *MemoryQuota) SetQuotaOverride(_ context.Context, userID string, daily *int64, note string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if daily == nil && embedding == nil && note == "" {
+	if daily == nil && note == "" {
 		m.clearQuotaOverrideLocked(userID)
 		return nil
 	}
-	m.setLimitLocked(userID, KindChat, daily)
-	m.setLimitLocked(userID, KindEmbedding, embedding)
+	m.setLimitLocked(userID, daily)
 	m.quotaNotes[userID] = note
 	m.quotaUpdated[userID] = time.Now().UTC()
 	return nil
@@ -422,18 +405,16 @@ func (m *MemoryQuota) ClearQuotaOverride(_ context.Context, userID string) error
 	return nil
 }
 
-func (m *MemoryQuota) setLimitLocked(userID string, kind Kind, limit *int64) {
-	key := [2]string{userID, string(kind)}
+func (m *MemoryQuota) setLimitLocked(userID string, limit *int64) {
 	if limit == nil {
-		delete(m.limits, key)
+		delete(m.limits, userID)
 		return
 	}
-	m.limits[key] = *limit
+	m.limits[userID] = *limit
 }
 
 func (m *MemoryQuota) clearQuotaOverrideLocked(userID string) {
-	delete(m.limits, [2]string{userID, string(KindChat)})
-	delete(m.limits, [2]string{userID, string(KindEmbedding)})
+	delete(m.limits, userID)
 	delete(m.quotaNotes, userID)
 	delete(m.quotaUpdated, userID)
 }

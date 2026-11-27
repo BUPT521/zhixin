@@ -22,7 +22,7 @@ func TestPostgresQuotaReserveAndSettle(t *testing.T) {
 		}
 	}
 	// 实例预算为 0 表示不限制，先只验账号额度。
-	st.SetQuotaLimits(100, 200, 0)
+	st.SetQuotaLimits(100, 0)
 	const day = "2026-11-18"
 
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 40); err != nil || got != 40 {
@@ -86,7 +86,7 @@ func TestPostgresQuotaInstanceBudget(t *testing.T) {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
-	st.SetQuotaLimits(1000, 200, 250)
+	st.SetQuotaLimits(1000, 250)
 	const day = "2026-11-18"
 
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 200); err != nil || got != 200 {
@@ -136,7 +136,7 @@ func TestPostgresQuotaInstanceLedgerSurvivesDelete(t *testing.T) {
 			t.Fatalf("user %s: %v", id, err)
 		}
 	}
-	st.SetQuotaLimits(1000, 200, 300)
+	st.SetQuotaLimits(1000, 300)
 	const day = "2026-11-18"
 
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 300); err != nil || got != 300 {
@@ -164,7 +164,7 @@ func TestPostgresQuotaReserveIsAtomic(t *testing.T) {
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "atomic@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	st.SetQuotaLimits(100, 200, 0)
+	st.SetQuotaLimits(100, 0)
 	const day = "2026-11-18"
 
 	var wg sync.WaitGroup
@@ -211,7 +211,7 @@ func TestPostgresQuotaInstanceCountsFreePortionOnly(t *testing.T) {
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "free@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	st.SetQuotaLimits(100, 200, 1000)
+	st.SetQuotaLimits(100, 1000)
 	const day = "2026-11-18"
 
 	if got, err := st.Reserve(ctx, "u1", day, llmproxy.KindChat, "", 100); err != nil || got != 100 {
@@ -236,7 +236,7 @@ func TestPostgresQuotaAttributesUsageToKey(t *testing.T) {
 	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "attr@b.cn"); err != nil {
 		t.Fatalf("user: %v", err)
 	}
-	st.SetQuotaLimits(1000, 2000, 0)
+	st.SetQuotaLimits(1000, 0)
 	const day = "2026-11-18"
 	for _, call := range []struct {
 		keyID string

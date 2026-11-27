@@ -90,21 +90,20 @@ func TestAdminAccountManagement(t *testing.T) {
 	admin("POST", "/admin/v1/accounts/absent/points/refresh", nil, nil, http.StatusNotFound)
 	admin("GET", "/admin/v1/accounts/absent", nil, nil, http.StatusNotFound)
 
-	// 调整聊天额度后，账号自己的额度接口立即读到新值，嵌入仍然走实例默认值。
+	// 调整共享额度后，账号自己的额度接口立即读到新值。
 	var saved api.AdminAccount
 	admin("PUT", "/admin/v1/accounts/"+idA+"/quota", map[string]any{
 		"daily_tokens": 5000, "note": "内测账号",
 	}, &saved, http.StatusOK)
 	if saved.Quota.DailyTokens != 5000 || saved.Quota.DailyTokensOverride == nil ||
-		*saved.Quota.DailyTokensOverride != 5000 || saved.Quota.Note != "内测账号" ||
-		saved.Quota.EmbeddingDailyTokens != 2000 || saved.Quota.EmbeddingDailyTokensOverride != nil {
+		*saved.Quota.DailyTokensOverride != 5000 || saved.Quota.Note != "内测账号" {
 		t.Fatalf("saved quota: %+v", saved.Quota)
 	}
 	var quota api.LLMQuota
 	if code := h.json("GET", "/v1/llm/quota", tokenA, nil, &quota); code != http.StatusOK {
 		t.Fatalf("quota status: %d", code)
 	}
-	if quota.DailyTokens != 5000 || quota.EmbeddingDailyTokens != 2000 {
+	if quota.DailyTokens != 5000 {
 		t.Fatalf("effective quota: %+v", quota)
 	}
 	for _, bad := range []map[string]any{
