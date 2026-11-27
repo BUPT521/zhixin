@@ -62,6 +62,24 @@ class AccountSnapshot {
   String get serverLabel => serverBaseUrl.isEmpty
       ? '还没有填写服务地址'
       : (usesDefaultServer ? '默认地址：$serverBaseUrl' : serverBaseUrl);
+
+  /// 复制一份快照，只替换给出的字段。
+  ///
+  /// 账号页保存开关这类小改动经服务层返回整份快照，页面不再自己拼一份只有几项
+  /// 的快照：拼出来的那一份会把资料、登录方式与已验证状态一起丢掉（A1）。
+  AccountSnapshot copyWith({
+    String? serverBaseUrl,
+    AccountSession? session,
+    AccountProfile? profile,
+    bool? autoSync,
+    bool? usesDefaultServer,
+  }) => AccountSnapshot(
+    serverBaseUrl: serverBaseUrl ?? this.serverBaseUrl,
+    session: session ?? this.session,
+    profile: profile ?? this.profile,
+    autoSync: autoSync ?? this.autoSync,
+    usesDefaultServer: usesDefaultServer ?? this.usesDefaultServer,
+  );
 }
 
 /// 账号与登录：注册、登录、刷新令牌、退出、删除账号与请求服务端清除数据。
@@ -253,6 +271,17 @@ class AccountService {
   Future<bool> autoSync() => preferences.autoSync();
 
   Future<void> setAutoSync(bool value) => preferences.setAutoSync(value);
+
+  /// 保存自动同步开关，返回保存之后的整份快照。
+  ///
+  /// 页面只接收这里的结果，不再用当前快照拼一份只含服务地址、会话、开关与默认
+  /// 地址四项的快照：那样会把资料与登录方式列表变成空值，页面当场回到“登录方式
+  /// 暂时无法读取”，额度购买入口也随之消失（A1）。
+  Future<AccountSnapshot> withAutoSync(bool value) async {
+    final current = await snapshot();
+    await preferences.setAutoSync(value);
+    return current.copyWith(autoSync: value);
+  }
 
   /// 注册并登录当前设备；这种登录方式已经被占用时抛出 `identifier_taken`。
   ///
