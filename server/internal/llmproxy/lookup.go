@@ -33,20 +33,6 @@ func backgroundWorkload(workload *string) bool {
 // 重新嵌入，不该拖住请求。
 const embeddingCacheTimeout = 15 * time.Second
 
-// embeddingLookupResult 是查找接口的响应。字段与 api/openapi.yaml 的
-// EmbeddingLookupResult 对齐；这里单独定义是因为处理器按原始 JSON 解析请求、
-// 自己拼响应，与聊天、嵌入接口的写法一致。
-type embeddingLookupResult struct {
-	Model      string                  `json:"model"`
-	Dimensions *int                    `json:"dimensions,omitempty"`
-	Vectors    []embeddingLookupVector `json:"vectors"`
-}
-
-type embeddingLookupVector struct {
-	Hash      string `json:"hash"`
-	Embedding string `json:"embedding"`
-}
-
 // EmbeddingLookup 回答客户端对一批文本哈希的向量查找。鉴权、未验证邮箱与并发
 // 上限与嵌入接口相同；查找不消耗额度，也不写 llm_usage。响应只含命中的条目，
 // 全部未命中不是错误，客户端据此只嵌入剩下的文本。
@@ -81,7 +67,7 @@ func (p *Proxy) EmbeddingLookup(w http.ResponseWriter, r *http.Request, params a
 			return
 		}
 	}
-	out := embeddingLookupResult{Model: m.Name, Vectors: make([]embeddingLookupVector, 0, len(cached))}
+	out := api.EmbeddingLookupResult{Model: m.Name, Vectors: make([]api.EmbeddingLookupVector, 0, len(cached))}
 	// 维度以模型配置为准；模型没有配置维度时取第一条命中行，客户端据此核对
 	// 解码出来的长度。全部未命中时省略，没有可以说明的维度。
 	var dimensions int
@@ -95,7 +81,7 @@ func (p *Proxy) EmbeddingLookup(w http.ResponseWriter, r *http.Request, params a
 				dimensions = v.Dim
 			}
 		}
-		out.Vectors = append(out.Vectors, embeddingLookupVector{
+		out.Vectors = append(out.Vectors, api.EmbeddingLookupVector{
 			Hash:      v.Hash,
 			Embedding: base64.StdEncoding.EncodeToString(v.Vector),
 		})

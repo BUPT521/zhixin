@@ -1112,13 +1112,16 @@ type EmbeddingLookupResult struct {
 	Model string `json:"model"`
 
 	// Vectors 命中的条目，顺序与请求无关
-	Vectors []struct {
-		// Embedding 小端序 FP16 的 base64
-		Embedding string `json:"embedding"`
+	Vectors []EmbeddingLookupVector `json:"vectors"`
+}
 
-		// Hash 请求里的文本哈希
-		Hash string `json:"hash"`
-	} `json:"vectors"`
+// EmbeddingLookupVector defines model for EmbeddingLookupVector.
+type EmbeddingLookupVector struct {
+	// Embedding 小端序 FP16 的 base64
+	Embedding string `json:"embedding"`
+
+	// Hash 请求里的文本哈希
+	Hash string `json:"hash"`
 }
 
 // EmbeddingRequest defines model for EmbeddingRequest.
