@@ -10,7 +10,6 @@ import '../../domain/rules/attachments.dart';
 import '../../domain/rules/package_budget.dart';
 import '../db/raw_executor.dart';
 import '../../domain/rules/time_policy.dart';
-import '../revisions/revision_engine.dart' show versionedTableNames;
 import 'backup_manifest.dart';
 import 'restore_inspection.dart';
 import 'restore_journal.dart';
@@ -84,7 +83,9 @@ class DataPackageService {
         schemaVersion: manifest.schemaVersion,
         appVersion: manifest.appVersion,
         exportedAt: manifest.exportedAt,
-        rowCount: counts.values.fold(0, (sum, value) => sum + value),
+        databaseBytes: dbBytes,
+        images: images,
+        expectedRows: counts,
       );
     } catch (error) {
       if (error is BackupException) rethrow;
@@ -94,35 +95,17 @@ class DataPackageService {
     }
   }
 
-  /// 校验并覆盖当前数据；失败时回滚到恢复前的库与图片。
+  /// 用预检过的包覆盖当前数据；失败时回滚到恢复前的库与图片。
   ///
-  /// 成功返回重新打开的连接，调用方用它替换旧的连接。恢复前先让临时库通过
-  /// 版本、结构与业务校验（01 第 7 章），期间把阶段写进 [RestoreJournal]，
+  /// [inspection] 是 [inspectPackage] 或版本库预检的产物：包已经解出并通过版本、
+  /// 结构与业务校验，这里只写入它的库字节与附件，不再解包或重跑校验。成功返回
+  /// 重新打开的连接，调用方用它替换旧的连接。期间把阶段写进 [RestoreJournal]，
   /// 进程中断也能在下次启动回到恢复前的数据。
   Future<RawDatabase> restorePackage(
-    Uint8List bytes, {
+    RestoreInspection inspection, {
     required RawDatabase currentDb,
     required Future<RawDatabase> Function() openDb,
   }) async {
-    final archive = _decodeArchive(bytes);
-    final manifest = _readManifest(archive);
-    if (manifest.schemaVersion != schemaVersion) {
-      final hint = manifest.schemaVersion > schemaVersion
-          ? '请先更新应用再恢复。'
-          : '请用当前版本重新导出。';
-      throw BackupException(
-        '数据包是 schema v${manifest.schemaVersion}，当前只接受 v$schemaVersion；$hint',
-      );
-    }
-
-    final dbFile = archive.findFile(dbEntryName);
-    final dbBytes = dbFile?.readBytes();
-    if (dbBytes == null || dbBytes.isEmpty) {
-      throw const BackupException('数据包中没有可用的 zhixin.db');
-    }
-    final images = _readArchiveImages(archive);
-    _verifyImages(manifest, images);
-
     final journal = RestoreJournal(filesDir);
     final rollbackDir = p.join(
       filesDir,
@@ -131,22 +114,11 @@ class DataPackageService {
     final workDir = await Directory.systemTemp.createTemp('zhixin_restore_');
     final stagedDbPath = p.join(workDir.path, 'staged.db');
     try {
-      await File(stagedDbPath).writeAsBytes(dbBytes, flush: true);
-      await _writeJournal(
-        journal,
-        RestoreStage.preparing,
-        rollbackDir,
-        manifest.schemaVersion,
-      );
-      await StagedRestoreValidator(schemaVersion: schemaVersion).validate(
-        path: stagedDbPath,
-        manifestSchemaVersion: manifest.schemaVersion,
-      );
+      await File(stagedDbPath)
+          .writeAsBytes(inspection.databaseBytes, flush: true);
     } catch (error) {
       await _deleteQuietly(workDir);
-      await _clearJournal(journal, rollbackDir);
-      if (error is BackupException) rethrow;
-      throw BackupException('数据包校验失败，原数据未改动。', detail: '$error');
+      throw BackupException('恢复失败，原数据未改动。', detail: '$error');
     }
 
     var closed = false;
@@ -157,7 +129,7 @@ class DataPackageService {
         journal,
         RestoreStage.snapshotting,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
       await currentDb.rawQuery('PRAGMA wal_checkpoint(TRUNCATE)');
       await _snapshotCurrent(rollbackDir);
@@ -166,27 +138,26 @@ class DataPackageService {
         journal,
         RestoreStage.replacing,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
       await currentDb.close();
       closed = true;
 
       await _replaceDatabase(stagedDbPath);
-      await _replaceImages(images);
+      await _replaceImages(inspection.images);
 
       await _writeJournal(
         journal,
         RestoreStage.reopening,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
       reopened = await openDb();
 
       // 重新打开后核对核心表行数：包里的库在替换或复制时被截断、或打开时
       // 落到新建的空库，这里会发现并退回恢复前的数据，而不是把空库当成功。
-      final expected = await _countRows(stagedDbPath);
       final actual = await _countRowsOf(reopened);
-      for (final entry in expected.entries) {
+      for (final entry in inspection.expectedRows.entries) {
         if ((actual[entry.key] ?? 0) < entry.value) {
           throw BackupException('恢复后的数据不完整（${entry.key} 少了记录），已退回原来的数据');
         }
@@ -198,7 +169,7 @@ class DataPackageService {
         journal,
         RestoreStage.committed,
         rollbackDir,
-        manifest.schemaVersion,
+        inspection.schemaVersion,
       );
       committed = true;
       await _deleteQuietly(Directory(workDir.path));
@@ -411,14 +382,8 @@ class DataPackageService {
     }
   }
 
-  Future<Map<String, int>> _countRowsOf(RawExecutor db) async {
-    final counts = <String, int>{};
-    for (final table in versionedTableNames) {
-      final rows = await db.rawQuery('SELECT COUNT(*) AS n FROM $table');
-      counts[table] = (rows.first['n'] as int?) ?? 0;
-    }
-    return counts;
-  }
+  Future<Map<String, int>> _countRowsOf(RawExecutor db) =>
+      versionedRowCounts(db);
 
   Future<void> _snapshotCurrent(String rollbackDir) async {
     await Directory(rollbackDir).create(recursive: true);

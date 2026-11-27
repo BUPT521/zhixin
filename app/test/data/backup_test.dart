@@ -169,7 +169,7 @@ void main() {
       schemaVersion: zhixinSchemaVersion,
     );
     final restored = await service2.restorePackage(
-      bytes,
+      inspection,
       currentDb: db2,
       openDb: () => openZhixinDatabase(path: path2),
     );
@@ -444,11 +444,7 @@ void main() {
           ArchiveFile.bytes(dbEntryName, Uint8List.fromList([1, 2, 3])),
         );
       await expectLater(
-        service.restorePackage(
-          ZipEncoder().encodeBytes(archive),
-          currentDb: db,
-          openDb: () => openZhixinDatabase(path: path),
-        ),
+        service.inspectPackage(ZipEncoder().encodeBytes(archive)),
         throwsA(isA<BackupException>()),
         reason: 'v$oldVersion 的包应当在替换前被拒绝',
       );
@@ -481,11 +477,7 @@ void main() {
         budget: budget,
       );
       await expectLater(
-        service.restorePackage(
-          bytes,
-          currentDb: db,
-          openDb: () => openZhixinDatabase(path: path),
-        ),
+        service.inspectPackage(bytes),
         throwsA(
           isA<BackupException>().having(
             (error) => error.message,

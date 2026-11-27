@@ -232,14 +232,7 @@ class RevisionPackageService {
     }
   }
 
-  /// 恢复版本库之前先在暂存处核对：完整性、schema、`HEAD`、可重建性与附件。
-  ///
-  /// 返回 false 表示这不是版本库备份（仍可交给旧的当前数据包恢复流程）；
-  /// 声明为版本库但校验失败时直接抛错，调用方不得覆盖当前库。
-  Future<bool> validateRepositoryBytes(Uint8List bytes) async =>
-      await inspectRepository(bytes) != null;
-
-  /// 预检版本库备份：校验通过后返回包内规模与导出信息。
+  /// 预检版本库备份：校验通过后返回包内规模、导出信息与可以恢复的字节。
   ///
   /// 不是版本库备份时返回 null；声明为版本库但校验失败时抛出 [FormatException]。
   /// 恢复入口先调用它，向用户说明包内规模，再决定是否覆盖当前库。结果与当前
@@ -274,10 +267,10 @@ class RevisionPackageService {
     RawDatabase? copy;
     try {
       await File(path).writeAsBytes(data, flush: true);
-      final stagedProblem = await _stagedProblem(path);
-      if (stagedProblem != null) {
-        throw FormatException('版本库备份校验失败：$stagedProblem');
-      }
+      // 恢复入口不再重跑校验：版本、对象白名单、物理完整性、外键与表结构都在
+      // 这里一次做完，恢复只写入已经通过的字节。
+      await StagedRestoreValidator(schemaVersion: schemaVersion)
+          .validate(path: path, manifestSchemaVersion: version);
       copy = openReadOnlyDatabase(path);
       final head = await engine.headId(copy);
       final declaredHead = manifest['head'];
@@ -307,10 +300,18 @@ class RevisionPackageService {
         namedCount: countOf(names),
         exportedAt: exportedAt is String ? exportedAt : '',
         appVersion: appVersionOfBackup is String ? appVersionOfBackup : '',
+        databaseBytes: data,
+        expectedRows: await versionedRowCounts(copy),
       );
     } finally {
       await copy?.close();
-      if (await dir.exists()) await dir.delete(recursive: true);
+      // 清理失败不能顶替校验结论：按当前结构打开失败时文件句柄可能还没归还，
+      // 临时目录留给系统清理，预检仍然按发现的问题报告。
+      try {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      } catch (_) {
+        // 忽略清理失败。
+      }
     }
   }
 
