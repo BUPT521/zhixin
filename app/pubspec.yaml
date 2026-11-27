@@ -2,7 +2,7 @@ name: zhixin
 description: "知新 · 一个懂你的学习搭子"
 publish_to: 'none'
 
-version: 0.3.0+4
+version: 0.4.0+5
 
 environment:
   sdk: ^3.14.0
