@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // spec 只取契约里与本包有关的部分：paths 下每个路径的方法与 security 声明。

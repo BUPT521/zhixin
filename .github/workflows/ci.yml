@@ -16,7 +16,7 @@ on:
 
 env:
   # Flutter 版本的唯一来源：升级只改这一行，再同步 docs 里的说法。
-  FLUTTER_VERSION: '3.50.0'
+  FLUTTER_VERSION: '3.50.1'
 
 permissions:
   contents: read
