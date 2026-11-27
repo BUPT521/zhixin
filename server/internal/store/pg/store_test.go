@@ -57,10 +57,6 @@ func newTestStoreWith(t *testing.T, objects objectstore.Store) *Store {
 	if err := st.ApplySchema(ctx); err != nil {
 		t.Fatalf("schema: %v", err)
 	}
-	// 生产里只有配置了即刻收商品、装好 meter 之后才会调用 ReservePoints，装配时
-	// 一定会 SetNowPay；用例大多数按一千 tokens 一积分写，这里给一个默认执行器，
-	// 需要别的换算比例或要观察调用记录的用例再覆盖。
-	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	return st
 }
 
