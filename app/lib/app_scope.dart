@@ -15,7 +15,6 @@ import 'application/active_report_service.dart';
 import 'application/cloud_backup_service.dart';
 import 'application/context_service.dart';
 import 'application/brought_sources.dart';
-import 'application/capacity_service.dart';
 import 'application/continue_service.dart';
 import 'application/cross_session_service.dart';
 import 'application/embedding_settings.dart';
@@ -71,7 +70,6 @@ import 'data/repository/evidence_repository.dart';
 import 'data/repository/material_repository.dart';
 import 'data/repository/memory_repository.dart';
 import 'data/repository/plugin_metadata_store.dart';
-import 'data/repository/schedule_repository.dart';
 import 'data/repository/settings_repository.dart';
 import 'data/repository/study_repository.dart';
 import 'data/repository/study_plan_repository.dart';
@@ -242,7 +240,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   late ConversationRepository _conversations;
   late AttemptRepository _attempts;
   late TaskRepository _tasks;
-  late ScheduleRepository _schedule;
   late MemoryRepository _memories;
   late StudyRepository _studyRecords;
   late AssessmentRepository _assessments;
@@ -302,7 +299,7 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     tasks: {
       PrefetchArea.now: [_warmMemoryPage],
       PrefetchArea.records: [_warmRecordsSearchOptions, _warmEmbeddingSettings],
-      PrefetchArea.plan: [_warmPlanSearchOptions, _warmCapacityPlan],
+      PrefetchArea.plan: [_warmPlanSearchOptions],
       PrefetchArea.mine: [
         _warmMemoryPage,
         _warmDataVersionPage,
@@ -346,14 +343,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   /// 安排查找的目标选项。
   Future<void> _warmPlanSearchOptions() async {
     await _prefetch.warm(PrefetchKey.planSearchGoals, _plan.goals);
-  }
-
-  /// “这周还能做什么”面板：按本周课表与已排时间先算一次，打开时直接有结果。
-  Future<void> _warmCapacityPlan() async {
-    await _prefetch.warm(
-      PrefetchKey.capacityPlan,
-      () => _capacity.watchThisWeek().first,
-    );
   }
 
   /// 设置页本机读取的一组结果：模型配置、账号、可选模型与索引概况。
@@ -561,7 +550,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     study: StudyServices(
       plan: _plan,
       systemPlan: _systemPlan,
-      capacity: _capacity,
       continueLast: _continueLast,
     ),
     library: LibraryServices(
@@ -618,7 +606,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   late final ContextService _context = ContextService(
     tasks: _tasks,
     attempts: _attempts,
-    schedule: _schedule,
     memories: _memories,
     conversations: _conversations,
     materials: _materials,
@@ -645,14 +632,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
 
   late final SearchService _search = SearchService(evidence: _evidence);
 
-  late final CapacityService _capacity = CapacityService(
-    settings: _settings,
-    tasks: _tasks,
-    schedule: _schedule,
-    runtime: _runtime,
-    transactions: _transactions,
-  );
-
   late final ContinueService _continueLast = ContinueService(
     conversations: _conversations,
     plans: _studyPlans,
@@ -672,7 +651,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     ai: _ai,
     context: _context,
     conversations: _conversations,
-    schedule: _schedule,
     study: _studyRecords,
     transactions: _transactions,
     runtime: _runtime,
@@ -700,7 +678,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     study: _studyRecords,
     memories: _memories,
     revisions: _revisions,
-    schedule: _schedule,
     tasks: _tasks,
     assessments: _assessments,
     ai: _ai,
@@ -712,8 +689,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
 
   late final PlanService _plan = PlanService(
     tasks: _tasks,
-    schedule: _schedule,
-    revisions: _revisions,
     runtime: _runtime,
     studyPlans: _studyPlans,
     transactions: _transactions,
@@ -1140,7 +1115,6 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
     _conversations = ConversationRepository(connection, clock: clock);
     _attempts = AttemptRepository(connection, clock: clock);
     _tasks = TaskRepository(connection, clock: clock);
-    _schedule = ScheduleRepository(connection, clock: clock);
     _memories = MemoryRepository(connection, clock: clock);
     _studyRecords = StudyRepository(connection, clock: clock);
     _assessments = AssessmentRepository(connection, clock: clock);
@@ -1377,7 +1351,6 @@ final class AppScopeTesting {
   ConversationRepository get conversations => _state._conversations;
   AttemptRepository get attempts => _state._attempts;
   TaskRepository get tasks => _state._tasks;
-  ScheduleRepository get schedule => _state._schedule;
   MemoryRepository get memories => _state._memories;
   StudyRepository get studyRecords => _state._studyRecords;
   AssessmentRepository get assessments => _state._assessments;

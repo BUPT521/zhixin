@@ -11,8 +11,6 @@ import 'package:zhixin/ui/materials_list.dart';
 import 'package:zhixin/ui/mine_page.dart';
 import 'package:zhixin/ui/plan_goals_tab.dart';
 import 'package:zhixin/ui/plan_items_tab.dart';
-import 'package:zhixin/ui/plan_operations_tab.dart';
-import 'package:zhixin/ui/plan_schedule_tab.dart';
 import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
@@ -70,15 +68,10 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('预读放行后安排的四个页签都已建好', (tester) async {
+  testWidgets('预读放行后安排的两个页签都已建好', (tester) async {
     await openApp(tester);
 
-    for (final view in <Type>[
-      PlanScheduleTab,
-      PlanItemsTab,
-      PlanGoalsTab,
-      PlanOperationsTab,
-    ]) {
+    for (final view in <Type>[PlanItemsTab, PlanGoalsTab]) {
       expect(
         find.byType(view, skipOffstage: false),
         findsOneWidget,
@@ -149,21 +142,6 @@ void main() {
 
     expect(find.byType(AccountPage), findsOneWidget);
     expect(find.byType(ListSkeleton), findsNothing);
-    await settle(tester);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('进入安排之后容量面板已经算好，打开不再出现骨架', (tester) async {
-    await openApp(tester);
-    await tester.tap(find.text('安排').last);
-    await settle(tester);
-    await tester.tap(find.text('这周能做什么'));
-    await tester.pump();
-    await tester.pump();
-
-    expect(find.text('这周还能做什么'), findsOneWidget);
-    expect(find.byType(ListSkeleton), findsNothing);
-    expect(find.textContaining('本周剩余'), findsOneWidget);
     await settle(tester);
     expect(tester.takeException(), isNull);
   });

@@ -32,9 +32,6 @@ class PrefetchKey {
   /// 账号与云同步页的首屏：账号、同步状态与今日额度。
   static const accountPage = PrefetchKey._('account_page');
 
-  /// “这周还能做什么”面板的结果；只算当前自然周。
-  static const capacityPlan = PrefetchKey._('capacity_plan');
-
   /// 记录查找的范围选项：目标与材料。
   static const recordsSearchOptions = PrefetchKey._('records_search_options');
 

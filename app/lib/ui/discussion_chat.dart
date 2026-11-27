@@ -29,13 +29,11 @@ import 'goal_picker.dart';
 import 'live_view.dart';
 import 'material_picker.dart';
 import 'navigation.dart';
-import 'plan_dialogs.dart';
 import 'study_plan_setup.dart';
 import 'undo_feedback.dart';
 import 'voice_input_button.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_chip.dart';
-import 'zhixin_dialog.dart';
 import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_menu.dart';
@@ -934,7 +932,7 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   Future<void> _accept(
     PendingSuggestion suggestion, {
-    bool schedule = false,
+    bool start = false,
   }) async {
     final id = _conversationId;
     if (id == null) return;
@@ -943,72 +941,25 @@ class DiscussionChatState extends State<DiscussionChat> {
       goals: _goals,
       initialGoalId: _record?.goalId,
       title: '选择目标',
-      note: '可选择目标，也可将安排单独保留。',
+      note: '可选择目标，也可保存为独立事项。',
     );
     if (choice == null || !mounted) return;
     try {
       final scope = AppScope.of(context);
-      BlockDraft? timing;
-      if (schedule) {
-        // 先让用户选时间；取消选时就不保存事项，避免“保存并预约”留下半个结果。
-        timing = await showZhixinDialog<BlockDraft>(
-          context: context,
-          builder: (_) => BlockDialog(
-            items: [PlanItem(id: '', title: suggestion.draft.title)],
-            initialMinutes: suggestion.draft.minutes,
-          ),
-        );
-        if (timing == null || !mounted) return;
-      }
       final result = await scope.chat.discussion.acceptNextStep(
         conversationId: id,
         messageId: suggestion.messageId,
         draft: suggestion.draft,
         stepId: suggestion.stepId,
         goalId: choice.goalId,
+        start: start,
       );
       if (!mounted) return;
-      var scheduled = false;
-      var scheduledCommitId = 0;
-      if (timing != null) {
-        try {
-          final scheduleResult = await scope.study.plan.scheduleItem(
-            planItemId: result.item.id,
-            start: timing.start,
-            end: timing.start.add(Duration(minutes: timing.minutes)),
-            source: PlanItemSource.ai,
-          );
-          scheduledCommitId = scheduleResult.commitId!;
-          scheduled = true;
-        } catch (error, stack) {
-          if (mounted) {
-            setState(
-              () => _notice = describeFailure(
-                context,
-                error,
-                stack,
-                action: '保存预约时间',
-                kind: 'discussion_schedule',
-                kept: '学习事项已经保存',
-                next: '可以点「查看并安排」再选时间',
-              ),
-            );
-          }
-        }
-      }
-      if (!mounted) return;
-      final message = scheduled
-          ? '已保存并预约时间'
-          : schedule
-          ? '已保存为学习事项，尚未预约时间'
-          : '已保存为学习事项';
       showActionToast(
         context,
-        message,
-        label: scheduled ? '撤销预约' : '查看并安排',
-        onPressed: scheduled
-            ? () => undoCommitWithFeedback(context, scheduledCommitId)
-            : () => openPlanDetail(context, result.item.id),
+        start ? '事项已开始' : '已保存为学习事项',
+        label: '查看事项',
+        onPressed: () => openPlanDetail(context, result.item.id),
       );
     } catch (error, stack) {
       if (!mounted) return;
@@ -1017,7 +968,7 @@ class DiscussionChatState extends State<DiscussionChat> {
           context,
           error,
           stack,
-          action: '保存这条学习安排',
+          action: '保存这条学习事项',
           kind: 'discussion_accept_step',
           kept: '建议还在讨论里',
           next: '可以再试一次',
@@ -1742,10 +1693,8 @@ class _DiscussionTimeline extends BuddyTimelineAdapter {
   void undoMemory(MemoryItemView item) => _state._undoMemory(item);
 
   @override
-  void acceptSuggestion(
-    PendingSuggestion suggestion, {
-    bool schedule = false,
-  }) => _state._accept(suggestion, schedule: schedule);
+  void acceptSuggestion(PendingSuggestion suggestion, {bool start = false}) =>
+      _state._accept(suggestion, start: start);
 
   @override
   void dismissSuggestion(PendingSuggestion suggestion) =>

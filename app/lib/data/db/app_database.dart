@@ -15,7 +15,7 @@ import 'sql.dart';
 /// 缓冲表，附件引用列与列组显式声明，删掉恒等的列与重复索引，提交类型不再
 /// 区分远端（S16 至 S23、V16 至 V18）。
 const String zhixinDbFileName = 'zhixin.db';
-const int zhixinSchemaVersion = 32;
+const int zhixinSchemaVersion = 33;
 
 /// 与库文件同名的附属文件：回滚日志、WAL 与共享内存。
 const List<String> zhixinDbSideFiles = ['-journal', '-wal', '-shm'];

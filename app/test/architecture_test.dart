@@ -78,38 +78,7 @@ void main() {
     }
   });
 
-  test('周视图只接收传入的数据与回调，不直接读业务数据', () {
-    final lib = Directory('lib').absolute;
-    final view = File(p.join(lib.path, 'ui', 'plan_week_view.dart'));
-    expect(view.existsSync(), isTrue, reason: '安排页的周视图应拆成单独组件');
-
-    final scopeFile = p.normalize(p.join(lib.path, 'app_scope.dart'));
-    for (final target in _reachableFiles(lib, view)) {
-      final path = p.normalize(target.absolute.path);
-      expect(
-        p.equals(path, scopeFile),
-        isFalse,
-        reason: '${view.path} 不能通过 AppScope 取数据，周视图只接收调用方传入的周数据',
-      );
-      expect(
-        p.isWithin(p.join(lib.path, 'data', 'repository'), path),
-        isFalse,
-        reason: '${view.path} 不能直接读仓库，读写留给安排页通过服务完成',
-      );
-      expect(
-        p.isWithin(p.join(lib.path, 'application'), path),
-        isFalse,
-        reason: '${view.path} 不调用应用服务，选周读取与写入留在安排页',
-      );
-      expect(
-        path.endsWith('_page.dart'),
-        isFalse,
-        reason: '${view.path} 不能依赖页面，页面单向依赖周视图',
-      );
-    }
-  });
-
-  test('安排页的四个页签是独立组件，不依赖页面本身', () {
+  test('安排页的两个页签是独立组件，不依赖页面本身', () {
     final lib = Directory('lib').absolute;
     final page = File(p.join(lib.path, 'ui', 'plan_page.dart'));
     expect(page.existsSync(), isTrue, reason: '安排页应保留页面壳');
@@ -117,14 +86,12 @@ void main() {
     expect(
       source.contains('CustomScrollView('),
       isFalse,
-      reason: '页面壳只负责周订阅与页签切换，列表与卡片放进各自的页签组件',
+      reason: '页面壳只负责安排数据订阅与页签切换，列表与卡片放进各自的页签组件',
     );
 
     const tabs = {
-      'plan_schedule_tab.dart': 'PlanScheduleTab',
       'plan_items_tab.dart': 'PlanItemsTab',
       'plan_goals_tab.dart': 'PlanGoalsTab',
-      'plan_operations_tab.dart': 'PlanOperationsTab',
     };
     final pagePath = p.normalize(page.absolute.path);
     for (final entry in tabs.entries) {
@@ -234,8 +201,6 @@ const _uiDataAllowlist = <String>{
   'feedback_page.dart',
   'integrity_check.dart',
   'mine_page.dart',
-  'plan_actions.dart',
-  'plan_operations_tab.dart',
   'restore_flow.dart',
   'settings_page.dart',
   'update_notice.dart',
@@ -249,7 +214,6 @@ const _repositoryMembers = [
   'conversations',
   'attempts',
   'tasks',
-  'schedule',
   'memories',
   'studyRecords',
   'assessments',

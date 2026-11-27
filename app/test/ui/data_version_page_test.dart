@@ -8,9 +8,12 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
+import 'package:zhixin/data/revisions/revision_actions.dart';
 import 'package:zhixin/data/revisions/revision_digest.dart';
 import 'package:zhixin/data/revisions/revision_models.dart';
 import 'package:zhixin/data/revisions/revision_service.dart';
+import 'package:zhixin/domain/models/buddy_protocol.dart';
+import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/ui/data_version_page.dart';
 import 'package:zhixin/ui/theme.dart';
@@ -98,6 +101,39 @@ void main() {
     await tester.scrollUntilVisible(finder, 300, scrollable: pageScrollable());
     await settle(tester);
   }
+
+  testWidgets('数据版本可以单独查看 AI 改动', (tester) async {
+    final appScope = (await openPage(tester)).scope;
+    await tester.runAsync(() async {
+      final discussion = await appScope.chat.discussion.createConversation(
+        title: '准备复习',
+      );
+      final message = await appScope.testing.conversations.append(
+        discussion,
+        role: MessageRole.assistant,
+        content: '复习第八题。',
+      );
+      await appScope.chat.discussion.acceptNextStep(
+        conversationId: discussion,
+        messageId: message.id,
+        draft: const NextStepDraft(title: '复习第八题', action: '重做一次'),
+      );
+      await appScope.study.plan.addGoal(title: '准备期末');
+    });
+    await settle(tester);
+    await scrollTo(tester, find.text('筛选 AI 改动'));
+    expect(find.textContaining(acceptNextStepAction), findsOneWidget);
+    expect(find.textContaining('新建目标'), findsOneWidget);
+
+    await tester.tap(find.text('筛选 AI 改动'));
+    await settle(tester);
+    expect(find.textContaining(acceptNextStepAction), findsOneWidget);
+    expect(find.textContaining('新建目标'), findsNothing);
+
+    await tester.tap(find.text('显示全部'));
+    await settle(tester);
+    expect(find.textContaining('新建目标'), findsOneWidget);
+  });
 
   testWidgets('没有未处理的同步覆盖时不显示这一节', (tester) async {
     await openPage(tester);

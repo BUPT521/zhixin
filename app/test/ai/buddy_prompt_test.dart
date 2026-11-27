@@ -301,7 +301,7 @@ void main() {
       BuddyContext(now: DateTime(2026, 11, 7, 20), mode: BuddyMode.plan),
     );
     expect(plan, contains('学习步骤'));
-    expect(plan, contains('今天已排的时间块'));
+    expect(plan, contains('已接受的学习事项'));
     expect(plan, isNot(contains('next_steps')));
     expect(plan, isNot(contains('学习判断')));
 
@@ -311,7 +311,7 @@ void main() {
     expect(check, contains('学习判断'));
     expect(check, isNot(contains('学习步骤')));
     expect(check, isNot(contains('next_steps')));
-    expect(check, isNot(contains('今天已排的时间块')));
+    expect(plan, isNot(contains('时间块')));
   });
 
   test('讨论明确选择目标时，提示里写清归属', () async {

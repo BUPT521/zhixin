@@ -12,7 +12,6 @@ import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/chat_message_payload.dart';
 import 'package:zhixin/domain/models/memory.dart';
@@ -48,7 +47,6 @@ void main() {
 
     final conversations = ConversationRepository(rig.db);
     final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
     final memories = MemoryRepository(rig.db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 10, 10));
     final service = DiscussionService(
@@ -57,7 +55,6 @@ void main() {
       context: ContextService(
         tasks: tasks,
         attempts: AttemptRepository(rig.db),
-        schedule: schedule,
         memories: memories,
         conversations: conversations,
         materials: MaterialRepository(rig.db),

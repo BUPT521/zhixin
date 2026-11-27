@@ -60,7 +60,7 @@ memories 只有三类：episodic（发生过的一件事，带时间与对象）
 
 ## system.rule.next_steps
 
-next_steps 只是建议，不创建待办、不改动日程；用户接受之后才由程序保存。只给 1–3 条能直接开始的下一步，用户没有问下一步时不要提交。
+next_steps 只是建议，用户选择开始或保存为事项之后才由程序写入。只给 1–3 条能直接开始的下一步，用户没有问下一步时不要提交。
 
 ## system.rule.no_goal
 
@@ -309,14 +309,6 @@ citations 只在依据了下面材料原文时提交，quote 必须逐字摘录�
 ## system.plan_due
 
 ；截止：{{date}}
-
-## system.today_blocks
-
-今天已排的时间块（只读）：
-
-## system.block_line
-
-- {{start}}–{{end}} {{title}}
 
 ## system.recent_attempts
 

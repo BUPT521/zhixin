@@ -387,8 +387,9 @@ class _NowPageState extends State<NowPage> {
       EntryTile(
         icon: FLucideIcons.route,
         title: '系统学习',
-        subtitle: '查看学习进度与预约',
-        onTap: widget.onOpenPlan,
+        subtitle: '查看计划与学习进度',
+        onTap: () =>
+            openStudyPlanList(context, onOpenMaterials: widget.onOpenMaterials),
       ),
     ];
     // 单列行：窄屏与放大文字时不必再换排法。
@@ -497,73 +498,17 @@ class _NowPageState extends State<NowPage> {
     return line == null || line.isEmpty ? null : line;
   }
 
-  /// 正在进行与接下来各占一节；没有预约时，最近到期的待办放在“接下来”。
-  /// 排在最前的一项用主色卡片突出，其余用普通卡片。
   List<Widget> _activitySections(ZhixinTheme theme, NowActivity activity) {
-    final sections = <Widget>[];
-    final ongoing = activity.ongoing;
-    if (ongoing != null) {
-      sections.add(
-        SectionHeading(title: '正在进行', action: _planAction(), first: true),
-      );
-      sections.add(
-        _scheduledActivityCard(theme, ongoing, ongoing: true, feature: true),
-      );
-    }
-    final next = activity.next;
-    if (next != null) {
-      sections.add(
-        SectionHeading(
-          title: '接下来',
-          action: ongoing == null ? _planAction() : null,
-          first: ongoing == null,
-        ),
-      );
-      sections.add(
-        _scheduledActivityCard(
-          theme,
-          next,
-          ongoing: false,
-          feature: ongoing == null,
-        ),
-      );
-    } else if (activity.pending case final pending?) {
-      sections.add(
-        SectionHeading(
-          title: '接下来',
-          action: ongoing == null ? _planAction() : null,
-          first: ongoing == null,
-        ),
-      );
-      sections.add(
-        _pendingActivityCard(theme, pending, feature: ongoing == null),
-      );
-    }
-    return sections;
-  }
-
-  Widget _planAction() =>
-      SectionLink(label: '查看安排', onPressed: widget.onOpenPlan);
-
-  Widget _scheduledActivityCard(
-    ZhixinTheme theme,
-    ActivityEntry entry, {
-    required bool ongoing,
-    required bool feature,
-  }) {
-    final block = entry.scheduled.block;
-    final minutes = block.endAt.difference(block.startAt).inMinutes;
-    final status =
-        '${ongoing ? '正在进行' : '接下来'} · '
-        '${shortTime(block.startAt)}–${clockOf(block.endAt)}';
-    return _activityCard(
-      theme,
-      entry.item,
-      label: status,
-      duration: minutes > 0 ? '$minutes 分钟' : null,
-      note: entry.item.note ?? entry.scheduled.itemNote,
-      feature: feature,
-    );
+    final pending = activity.pending;
+    if (pending == null) return const [];
+    return [
+      SectionHeading(
+        title: '接下来',
+        first: true,
+        action: SectionLink(label: '查看安排', onPressed: widget.onOpenPlan),
+      ),
+      _pendingActivityCard(theme, pending, feature: true),
+    ];
   }
 
   Widget _pendingActivityCard(

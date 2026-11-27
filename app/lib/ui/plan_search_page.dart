@@ -21,10 +21,10 @@ import 'zhixin_header.dart';
 import 'zhixin_icon_button.dart';
 import 'zhixin_toast.dart';
 
-/// 安排里的查找：按标题、目标、状态与日期查学习事项、计划步骤与预约。
+/// 安排里的查找：按标题、目标、状态与截止日期查找事项与计划步骤。
 ///
 /// 关键词匹配事项标题与说明；目标按编号、状态按 [PlanItemStatus] 筛；日期用
-/// 同一个自然日区间同时筛事项截止时间与预约开始时间，这一点写在筛选行下面。
+/// 日期按事项的截止日期筛选。
 /// 结果按时间从晚到早排，分页继续加载，超过四十条时也能翻到最早一条；查询
 /// 全部在本机完成，断网或没有配置模型时同样可用。查询或筛选变化只显示最后
 /// 一次请求的结果（[RequestGate]）。
@@ -201,17 +201,9 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
 
   /// 点开一条结果：学习步骤按继续位置规则打开，其余事项打开事项详情。
   ///
-  /// 预约命中时先按编号补读整条事项，再走同一条判断；不另造导航逻辑。
   Future<void> _openHit(PlanSearchHit hit) async {
     try {
-      final item =
-          hit.item ??
-          await AppScope.of(context).study.plan.itemById(hit.planItemId);
-      if (!mounted) return;
-      if (item == null) {
-        showToast(context, '这件事项已经不存在，可能刚被删除或恢复了数据。');
-        return;
-      }
+      final item = hit.item;
       if (item.isStudyStep) {
         await openPlanItem(context, item);
       } else {
@@ -296,10 +288,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
           ),
           Padding(
             padding: EdgeInsets.only(top: theme.space.xs),
-            child: Text(
-              '日期按事项截止时间或预约开始时间筛选，两者用同一个日期条件。',
-              style: theme.text.bodySmall,
-            ),
+            child: Text('日期按事项的截止日期筛选。', style: theme.text.bodySmall),
           ),
         ],
       ),
@@ -320,7 +309,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
     );
   }
 
-  /// 目标筛选：全部目标与每个目标各一项，按目标编号筛事项与预约。
+  /// 目标筛选：全部目标与每个目标各一项，按目标编号筛选事项。
   Widget _goalMenu() {
     final label = _goalId.isEmpty ? '目标：全部' : '目标：${_goalLabel(_goalId)}';
     return forui.FPopoverMenu.tiles(
@@ -349,7 +338,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
             children: [
               forui.FTile(
                 title: const Text('按目标筛选'),
-                subtitle: const Text('同时筛选学习事项、计划步骤与预约。'),
+                subtitle: const Text('适用于学习事项与计划步骤。'),
                 enabled: false,
               ),
             ],
@@ -400,7 +389,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
             children: [
               forui.FTile(
                 title: const Text('按状态筛选'),
-                subtitle: const Text('状态取所属事项的状态，预约也按它筛。'),
+                subtitle: const Text('按事项当前状态筛选。'),
                 enabled: false,
               ),
             ],
@@ -445,7 +434,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
             children: [
               forui.FTile(
                 title: const Text('按日期筛选'),
-                subtitle: const Text('事项按截止时间、预约按开始时间落在这一天，两者用同一个条件。'),
+                subtitle: const Text('只显示截止日期为所选日期的事项。'),
                 enabled: false,
               ),
             ],
@@ -520,7 +509,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
           icon: FLucideIcons.search,
           title: '查找安排',
           description:
-              '按标题、说明、目标、状态或日期，查学习事项、计划步骤与预约。'
+              '按标题、说明、目标、状态或截止日期，查学习事项与计划步骤。'
               '关键词与筛选都在本机完成，断网也能用。',
         ),
       );
@@ -569,33 +558,17 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
 
   /// 一条结果：类型、状态与时间先写清，再给标题与说明摘要。
   Widget _hitTile(ZhixinTheme theme, PlanSearchHit hit) {
-    final block = hit.scheduled?.block;
-    final isStep = hit.item?.isStudyStep ?? false;
+    final isStep = hit.item.isStudyStep;
+    final leading = isStep ? FLucideIcons.route : FLucideIcons.listChecks;
     final tags = <Widget>[
-      if (block != null)
-        const StatusTag('预约', icon: FLucideIcons.calendarClock)
-      else if (isStep)
-        const StatusTag('计划步骤', icon: FLucideIcons.route)
-      else
-        const StatusTag('学习事项', icon: FLucideIcons.listChecks),
+      StatusTag(isStep ? '计划步骤' : '学习事项', icon: leading),
       StatusTag(
         hit.status.label,
         tone: hit.status.open ? TagTone.accent : TagTone.muted,
       ),
-      if (block != null && block.status != ScheduleBlockStatus.planned)
-        StatusTag(block.status.label, tone: TagTone.muted),
     ];
     final at = hit.at;
-    final time = at == null
-        ? '没有日期'
-        : block == null
-        ? '截止 ${shortTime(at)}'
-        : '预约 ${shortTime(block.startAt)}–${clockOf(block.endAt)}';
-    final leading = block != null
-        ? FLucideIcons.calendarClock
-        : isStep
-        ? FLucideIcons.route
-        : FLucideIcons.listChecks;
+    final time = at == null ? '无截止日期' : '截止 ${shortTime(at)}';
     return Padding(
       padding: EdgeInsets.only(top: theme.space.tight),
       child: forui.FTile(

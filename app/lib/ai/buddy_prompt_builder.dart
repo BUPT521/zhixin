@@ -327,24 +327,6 @@ BuddyPrompt buildBuddyPrompt(BuddyContext context) {
         );
       }
     }
-
-    lines.add(text['system.today_blocks']);
-    if (context.todayBlocks.isEmpty) {
-      lines.add(text['system.plan_none']);
-    } else {
-      for (final block in uniqueById(
-        context.todayBlocks,
-        (block) => block.block.id,
-      )) {
-        lines.add(
-          text.format('system.block_line', {
-            'start': formatDateTime(block.block.startAt),
-            'end': formatDateTime(block.block.endAt),
-            'title': block.itemTitle,
-          }),
-        );
-      }
-    }
   }
 
   // 普通讨论也要看得到最近作答；这些记录本来已经读进上下文，只列给规划提示

@@ -11,9 +11,9 @@ const int defaultDayCutoffHour = 4;
 /// 自然日：当天零点。页面与规则原先各写一次 DateTime(y, m, d)，统一从这里取。
 DateTime naturalDay(DateTime at) => DateTime(at.year, at.month, at.day);
 
-/// 时间口径：真实发生时刻、日程的自然日期、学习记录的归属日。
+/// 时间口径：真实发生时刻、自然日期与学习记录的归属日。
 ///
-/// 日程与课表始终按自然日期计算，凌晨 2 点的日程仍属于当天；学习记录按
+/// 事项的截止日期按自然日期筛选，学习记录按
 /// [cutoffHour] 归到前一天或当天，只影响记录的展示与分组。两种口径分开计算，
 /// 页面与仓库不再各自拼日期。
 class TimePolicy {
@@ -27,7 +27,7 @@ class TimePolicy {
   /// 真实发生时刻。
   DateTime get now => clock();
 
-  /// 日程与课表用的自然日期（当天零点）。
+  /// 事项截止日期采用的自然日期（当天零点）。
   DateTime naturalDate(DateTime at) => naturalDay(at);
 
   /// 自然日覆盖的真实区间：[当天零点, 次日零点)。

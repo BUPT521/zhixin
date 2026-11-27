@@ -1,8 +1,6 @@
 /// 安排查找的条件、命中与分页规则（docs/02 第 3.14 节、V10）。
 ///
-/// 查找覆盖学习事项（含系统学习步骤）与预约：关键词匹配事项标题与说明，
-/// 目标按 `goalId`、状态按 [PlanItemStatus] 筛，日期用同一个自然日区间同时
-/// 筛事项截止时间与预约开始时间。全部读取本机库，不调用模型与网络。
+/// 查找覆盖学习事项（含系统学习步骤），可按标题、说明、目标、状态与截止日期筛选。
 library;
 
 import '../domain/models/study.dart';
@@ -59,33 +57,17 @@ bool planSearchMatches(String keyword, {required String title, String? note}) {
   return terms.every((term) => haystack.contains(term.toLowerCase()));
 }
 
-/// 一条查找结果：事项本身，或它的一次预约。
-///
-/// 预约命中时只带预约与所属事项的摘要，打开之前按 [planItemId] 补读整条
-/// 事项：继续位置规则由 `openPlanItem` 决定，这里不另存一份判断。
+/// 一条事项查找结果。
 class PlanSearchHit {
-  const PlanSearchHit.item(PlanItem this.item) : scheduled = null;
-  const PlanSearchHit.block(ScheduledItem this.scheduled) : item = null;
+  const PlanSearchHit.item(this.item);
 
-  final PlanItem? item;
-  final ScheduledItem? scheduled;
+  final PlanItem item;
 
-  bool get isBlock => scheduled != null;
-
-  /// 结果在列表里的唯一键：同一事项的两次预约各占一条。
-  String get id =>
-      isBlock ? 'block:${scheduled!.block.id}' : 'item:${item!.id}';
-
-  String get planItemId => isBlock ? scheduled!.block.planItemId : item!.id;
-
-  String get title => isBlock ? scheduled!.itemTitle : item!.title;
-
-  String? get note => isBlock ? scheduled!.itemNote : item!.note;
-
-  PlanItemStatus get status => isBlock ? scheduled!.itemStatus : item!.status;
-
-  /// 排序与展示用的一次时间：预约取开始时间，事项取截止时间。
-  DateTime? get at => isBlock ? scheduled!.block.startAt : item!.dueAt;
+  String get id => item.id;
+  String get title => item.title;
+  String? get note => item.note;
+  PlanItemStatus get status => item.status;
+  DateTime? get at => item.dueAt;
 }
 
 /// 一页安排查找结果；还有更早的命中时按 [nextOffset] 继续读。

@@ -116,7 +116,7 @@ class ChatMessagePayload {
         : [
             for (final receipt in operations)
               if (receipt.commitId != commitId) receipt,
-            ChatOperationReceipt(commitId: commitId, text: '已添加安排：$title'),
+            ChatOperationReceipt(commitId: commitId, text: '已添加事项：$title'),
           ];
     return ChatMessagePayload(
       fromModel: fromModel,

@@ -12,7 +12,7 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 void main() {
-  test('新库是 v32，14 张业务表与版本元数据就位', () async {
+  test('新库是 v33，12 张业务表与版本元数据就位', () async {
     final db = await openTestDb();
     addTearDown(db.close);
 
@@ -34,10 +34,10 @@ void main() {
     );
     expect(
       versionedTableNames,
-      hasLength(14),
-      reason: '业务表 14 张：记忆使用统计 memory_usage 参与采集，local_memory_use 是本机缓冲',
+      hasLength(12),
+      reason: '采集表 12 张：记忆使用统计 memory_usage 参与采集，local_memory_use 是本机缓冲',
     );
-    expect(schemaTableNames(), hasLength(28), reason: 'schema 32 共 28 张表');
+    expect(schemaTableNames(), hasLength(26), reason: 'schema 33 共 26 张表');
     final classified = {
       ...versionedTableNames,
       ...revisionMetadataTables,
@@ -128,9 +128,6 @@ void main() {
     // 计划当前页由 plan_item 算出，不再写在计划行里。
     expect(await columns('study_plan'), containsAll(['material_id', 'status']));
     expect(await columns('study_plan'), isNot(contains('current_page')));
-    final scheduleColumns = await columns('schedule_block');
-    expect(scheduleColumns, contains('locked'));
-    expect(scheduleColumns, isNot(contains('authorized')));
     expect(await columns('attempt'), contains('delayed'));
     expect(
       await columns('plan_item'),
@@ -506,7 +503,6 @@ void main() {
       'conversation',
       'study_plan',
       'plan_item',
-      'schedule_block',
       'attempt',
       'memory',
     ]) {
@@ -516,6 +512,13 @@ void main() {
         reason: '$table 的旧数据应当随重建丢弃',
       );
     }
+    expect(
+      await rebuilt.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table' "
+        "AND name IN ('schedule_block', 'timetable_entry')",
+      ),
+      isEmpty,
+    );
     final legacyStep = await rebuilt.rawQuery(
       "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'study_step'",
     );

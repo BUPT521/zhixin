@@ -7,7 +7,6 @@ import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/buddy_protocol.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
@@ -18,72 +17,6 @@ import '../support/test_db.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 void main() {
-  test('深夜的当天时间块只取自然日之内的安排', () async {
-    final db = await openTestDb();
-    addTearDown(db.close);
-    final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
-    final now = DateTime(2026, 11, 7, 23, 30);
-    final policy = TimePolicy(clock: () => now);
-    final service = ContextService(
-      tasks: tasks,
-      attempts: AttemptRepository(db),
-      schedule: schedule,
-      memories: MemoryRepository(db),
-      conversations: ConversationRepository(db),
-      materials: MaterialRepository(db),
-      runtime: testRuntime(policy: () => policy),
-    );
-    final item = await tasks.createItem(title: '复习');
-    final today = await schedule.addBlock(
-      planItemId: item,
-      start: DateTime(2026, 11, 7, 22),
-      end: DateTime(2026, 11, 7, 23),
-    );
-    await schedule.addBlock(
-      planItemId: item,
-      start: DateTime(2026, 11, 8, 0, 30),
-      end: DateTime(2026, 11, 8, 1),
-    );
-
-    final context = await service.load(const ContextRequest());
-
-    expect(context.todayBlocks.map((block) => block.block.id), [today]);
-  });
-
-  test('凌晨的当天时间块不取前一天的安排', () async {
-    final db = await openTestDb();
-    addTearDown(db.close);
-    final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
-    final now = DateTime(2026, 11, 7, 2);
-    final policy = TimePolicy(clock: () => now);
-    final service = ContextService(
-      tasks: tasks,
-      attempts: AttemptRepository(db),
-      schedule: schedule,
-      memories: MemoryRepository(db),
-      conversations: ConversationRepository(db),
-      materials: MaterialRepository(db),
-      runtime: testRuntime(policy: () => policy),
-    );
-    final item = await tasks.createItem(title: '复习');
-    await schedule.addBlock(
-      planItemId: item,
-      start: DateTime(2026, 11, 6, 20),
-      end: DateTime(2026, 11, 6, 21),
-    );
-    final today = await schedule.addBlock(
-      planItemId: item,
-      start: DateTime(2026, 11, 7, 10),
-      end: DateTime(2026, 11, 7, 11),
-    );
-
-    final context = await service.load(const ContextRequest());
-
-    expect(context.todayBlocks.map((block) => block.block.id), [today]);
-  });
-
   test('回答上下文只做一次检索，材料页、较早讨论与作答一起取五条左右', () async {
     final db = await openTestDb();
     addTearDown(db.close);
@@ -97,7 +30,6 @@ void main() {
     final service = ContextService(
       tasks: tasks,
       attempts: attempts,
-      schedule: ScheduleRepository(db),
       memories: MemoryRepository(db),
       conversations: conversations,
       materials: materials,
@@ -161,7 +93,6 @@ void main() {
     final service = ContextService(
       tasks: tasks,
       attempts: AttemptRepository(db),
-      schedule: ScheduleRepository(db),
       memories: MemoryRepository(db),
       conversations: ConversationRepository(db),
       materials: materials,
@@ -203,7 +134,6 @@ void main() {
     final service = ContextService(
       tasks: tasks,
       attempts: attempts,
-      schedule: ScheduleRepository(db),
       memories: MemoryRepository(db),
       conversations: conversations,
       materials: MaterialRepository(db),
@@ -252,7 +182,6 @@ void main() {
     final service = ContextService(
       tasks: tasks,
       attempts: attempts,
-      schedule: ScheduleRepository(db),
       memories: MemoryRepository(db),
       conversations: conversations,
       materials: MaterialRepository(db),
@@ -298,7 +227,6 @@ void main() {
     final service = ContextService(
       tasks: tasks,
       attempts: attempts,
-      schedule: ScheduleRepository(db),
       memories: MemoryRepository(db),
       conversations: conversations,
       materials: materials,
@@ -394,7 +322,6 @@ void main() {
     final service = ContextService(
       tasks: tasks,
       attempts: AttemptRepository(db),
-      schedule: ScheduleRepository(db),
       memories: MemoryRepository(db),
       conversations: conversations,
       materials: MaterialRepository(db),
@@ -432,105 +359,7 @@ void main() {
     expect(seen, isNot(contains(linearRecord)));
   });
 
-  test('首页活动卡不把次日凌晨的安排当成今天', () async {
-    final db = await openTestDb();
-    addTearDown(db.close);
-    final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
-    final now = DateTime(2026, 11, 7, 23, 30);
-    final policy = TimePolicy(clock: () => now);
-    final service = ContextService(
-      tasks: tasks,
-      attempts: AttemptRepository(db),
-      schedule: schedule,
-      memories: MemoryRepository(db),
-      conversations: ConversationRepository(db),
-      materials: MaterialRepository(db),
-      runtime: testRuntime(policy: () => policy),
-    );
-    final item = await tasks.createItem(title: '复习');
-    await schedule.addBlock(
-      planItemId: item,
-      start: DateTime(2026, 11, 8, 0, 10),
-      end: DateTime(2026, 11, 8, 0, 40),
-    );
-
-    final activity = await service.loadActivity();
-
-    expect(activity.ongoing, isNull);
-    expect(activity.next, isNull);
-    expect(activity.pending!.title, '复习');
-  });
-
-  test('首页活动卡把晚些时候的预约放在接下来', () async {
-    final db = await openTestDb();
-    addTearDown(db.close);
-    final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
-    final now = DateTime(2026, 11, 7, 9);
-    final policy = TimePolicy(clock: () => now);
-    final service = ContextService(
-      tasks: tasks,
-      attempts: AttemptRepository(db),
-      schedule: schedule,
-      memories: MemoryRepository(db),
-      conversations: ConversationRepository(db),
-      materials: MaterialRepository(db),
-      runtime: testRuntime(policy: () => policy),
-    );
-    final item = await tasks.createItem(title: '晚间复习');
-    final block = await schedule.addBlock(
-      planItemId: item,
-      start: DateTime(2026, 11, 7, 19),
-      end: DateTime(2026, 11, 7, 20),
-    );
-
-    final activity = await service.loadActivity();
-
-    expect(activity.ongoing, isNull);
-    expect(activity.next!.scheduled.block.id, block);
-    expect(activity.next!.item.title, '晚间复习');
-    expect(activity.pending, isNull);
-  });
-
-  test('首页活动卡分开正在进行与接下来', () async {
-    final db = await openTestDb();
-    addTearDown(db.close);
-    final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
-    final now = DateTime(2026, 11, 7, 9);
-    final policy = TimePolicy(clock: () => now);
-    final service = ContextService(
-      tasks: tasks,
-      attempts: AttemptRepository(db),
-      schedule: schedule,
-      memories: MemoryRepository(db),
-      conversations: ConversationRepository(db),
-      materials: MaterialRepository(db),
-      runtime: testRuntime(policy: () => policy),
-    );
-    final doingItem = await tasks.createItem(title: '正在复习');
-    final doingBlock = await schedule.addBlock(
-      planItemId: doingItem,
-      start: DateTime(2026, 11, 7, 8, 30),
-      end: DateTime(2026, 11, 7, 9, 30),
-    );
-    final laterItem = await tasks.createItem(title: '晚间复习');
-    final laterBlock = await schedule.addBlock(
-      planItemId: laterItem,
-      start: DateTime(2026, 11, 7, 19),
-      end: DateTime(2026, 11, 7, 20),
-    );
-
-    final activity = await service.loadActivity();
-
-    expect(activity.ongoing!.scheduled.block.id, doingBlock);
-    expect(activity.ongoing!.item.title, '正在复习');
-    expect(activity.next!.scheduled.block.id, laterBlock);
-    expect(activity.next!.item.title, '晚间复习');
-  });
-
-  test('首页活动卡在没有预约时给出待开始事项', () async {
+  test('首页活动卡给出待开始事项', () async {
     final db = await openTestDb();
     addTearDown(db.close);
     final tasks = TaskRepository(db);
@@ -539,7 +368,6 @@ void main() {
     final service = ContextService(
       tasks: tasks,
       attempts: AttemptRepository(db),
-      schedule: ScheduleRepository(db),
       memories: MemoryRepository(db),
       conversations: ConversationRepository(db),
       materials: MaterialRepository(db),
@@ -549,8 +377,6 @@ void main() {
 
     final activity = await service.loadActivity();
 
-    expect(activity.ongoing, isNull);
-    expect(activity.next, isNull);
     expect(activity.pending!.title, '整理笔记');
     expect(activity.pending!.estMinutes, 25);
   });

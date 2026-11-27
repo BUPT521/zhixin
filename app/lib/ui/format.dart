@@ -29,7 +29,7 @@ String dayLabel(DateTime time) =>
 
 /// 日期分组的标题：今天与昨天写相对说法，其余写日期与星期。
 ///
-/// 记录页按日期分组、安排页按天列预约都用这一份，两处不再各写一套。
+/// 记录页按日期分组时用这一份。
 String relativeDayHeading(DateTime date, {DateTime? now}) {
   final current = now ?? DateTime.now();
   final today = DateTime(current.year, current.month, current.day);

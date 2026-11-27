@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'revision_actions.dart';
+
 import '../../domain/rules/coded_enum.dart';
 import '../../domain/rules/time_format.dart';
 
@@ -135,6 +137,9 @@ class RevisionCommit {
   final String actor;
   final String action;
   final RevisionKind kind;
+
+  bool get isAiChange =>
+      kind == RevisionKind.write && receiptActions.contains(action);
   final int? restoredCommitId;
   final int? revertedCommitId;
 

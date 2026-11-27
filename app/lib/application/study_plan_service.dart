@@ -4,7 +4,6 @@ import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/repository/conversation_repository.dart';
 import '../data/repository/material_repository.dart';
-import '../data/repository/schedule_repository.dart';
 import '../data/repository/study_plan_repository.dart';
 import '../data/repository/study_repository.dart';
 import '../domain/models/material.dart';
@@ -29,21 +28,14 @@ class StudyPlanView {
   PlanItem? get currentStep => currentStudyStep(steps);
 }
 
-/// 系统学习页的一屏：计划与步骤、每一步下一次预约、最近一次结束的场次。
+/// 系统学习页的一屏：计划、步骤及每一步最近一次结束的场次。
 ///
-/// 三段都按同一份步骤读回，订阅之后由数据层在相关表被写入时整份重读，页面
-/// 不再在推进步骤、预约与打开讨论之后自己重读（ADR-0014）。
+/// 场次按同一份步骤读回，订阅之后由数据层在相关表被写入时整份重读，页面
+/// 不再在推进步骤与打开讨论之后自己重读（ADR-0014）。
 class StudyPlanScreen {
-  const StudyPlanScreen({
-    required this.view,
-    required this.nextBlocks,
-    required this.sessions,
-  });
+  const StudyPlanScreen({required this.view, required this.sessions});
 
   final StudyPlanView view;
-
-  /// 每一步接下来的一次预约，没有预约的步骤不在表里。
-  final Map<String, ScheduleBlock> nextBlocks;
 
   /// 每一步最近一次结束的场次，用来显示完成时间、结果与困难。
   final Map<String, StudySession> sessions;
@@ -115,7 +107,6 @@ class StudyPlanService {
     required this.ai,
     required this.context,
     required this.conversations,
-    required this.schedule,
     required this.study,
     required this.transactions,
     required this.runtime,
@@ -127,8 +118,6 @@ class StudyPlanService {
   final ContextService context;
   final ConversationRepository conversations;
 
-  /// 每一步的下一次预约从日程仓库读，与计划、场次一起组成系统学习页的一屏。
-  final ScheduleRepository schedule;
   final StudyRepository study;
   final WriteTransactions transactions;
   final ServiceRuntime runtime;
@@ -148,7 +137,6 @@ class StudyPlanService {
     'study_plan',
     'plan_item',
     'material',
-    'schedule_block',
     'study_session',
   };
 
@@ -156,19 +144,17 @@ class StudyPlanService {
   Stream<StudyPlanScreen> watchScreen(String planId) =>
       runtime.watch(tables: _screenTables, read: () => loadScreen(planId));
 
-  /// 读一屏：计划与步骤、每一步下一次预约与最近一次结束的场次同时发出。
-  ///
-  /// 三段读的是同一份步骤，同时发出之后页面等的是最慢的一段；预约按当前
-  /// 时间口径判断“下一次”，截止小时变化之后重读会得到新的结果。
+  /// 读取计划、步骤和各步骤最近一次结束的场次。
   Future<StudyPlanScreen> loadScreen(String planId) async {
     final view = await this.view(planId);
-    final stepIds = view.steps.map((step) => step.id);
-    final (blocks, sessions) = await (
-      schedule.nextBlocksForItems(stepIds, runtime.policy.now),
-      latestSessionsForSteps(stepIds),
-    ).wait;
-    return StudyPlanScreen(view: view, nextBlocks: blocks, sessions: sessions);
+    final sessions = await latestSessionsForSteps(
+      view.steps.map((step) => step.id),
+    );
+    return StudyPlanScreen(view: view, sessions: sessions);
   }
+
+  Stream<List<StudyPlan>> watchList() =>
+      runtime.watch(tables: _screenTables, read: () => list());
 
   /// 每个步骤最近一次结束的场次，给步骤卡显示完成时间、结果与困难。
   Future<Map<String, StudySession>> latestSessionsForSteps(
@@ -177,7 +163,7 @@ class StudyPlanService {
 
   /// 这一步上次停在哪里：有作答时回到原题，有讨论时回到讨论，否则打开材料。
   ///
-  /// 计划页、预约与事项详情共用这一条判断，入口只负责打开对应内容，不再
+  /// 计划页与事项详情共用这一条判断，入口只负责打开对应内容，不再
   /// 各自决定是新建讨论还是直接进入材料。步骤绑定的讨论被删除时退回材料。
   Future<StudyStepResume> resumePoint(String planId, String stepId) async {
     final view = await this.view(planId);
@@ -210,7 +196,7 @@ class StudyPlanService {
 
   /// 从这一步的材料页开始讨论，并把新讨论记为这一步的继续位置。
   ///
-  /// 讨论与步骤绑定放在同一个事务里，之后从计划页或预约进入都会回到这条
+  /// 讨论与步骤绑定放在同一个事务里，之后从计划页或事项入口进入都会回到这条
   /// 讨论，而不是重新打开材料页。
   Future<String> startDiscussionAtStep({
     required String planId,

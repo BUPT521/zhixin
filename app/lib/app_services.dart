@@ -1,7 +1,6 @@
 import 'ai/ai_chat_service.dart';
 import 'application/account_service.dart';
 import 'application/active_report_service.dart';
-import 'application/capacity_service.dart';
 import 'application/cloud_backup_service.dart';
 import 'application/continue_service.dart';
 import 'application/context_service.dart';
@@ -65,18 +64,16 @@ class ChatServices {
   final ContextService context;
 }
 
-/// 安排与系统学习：事项、预约、时间预算与首页的继续入口。
+/// 安排与系统学习：事项、目标与首页的继续入口。
 class StudyServices {
   const StudyServices({
     required this.plan,
     required this.systemPlan,
-    required this.capacity,
     required this.continueLast,
   });
 
   final PlanService plan;
   final StudyPlanService systemPlan;
-  final CapacityService capacity;
   final ContinueService continueLast;
 }
 

@@ -88,7 +88,7 @@ const _checkSteps = [
 ];
 
 /// 本地可给的一步：用户当次问的是具体问题时不另给建议，避免把话题转到
-/// 已有的待办上；明确在问安排，或者没有当次问题时，才看今天的预约与待办。
+/// 已有的待办上；明确在问安排，或者没有当次问题时，才看待办。
 List<NextStepDraft> localNextStep(
   BuddyContext context, {
   String text = '',
@@ -101,20 +101,8 @@ List<NextStepDraft> localNextStep(
   return _planStep(context);
 }
 
-/// 今天还没结束的时间块优先，其次待办，最后是最近一道没做对的题。
+/// 优先建议待办，其次是最近一道没做对的题。
 List<NextStepDraft> _planStep(BuddyContext context) {
-  for (final block in context.todayBlocks) {
-    if (!block.block.planned || block.block.endAt.isBefore(context.now)) {
-      continue;
-    }
-    return [
-      NextStepDraft(
-        title: block.itemTitle,
-        action: block.itemNote,
-        minutes: block.block.endAt.difference(block.block.startAt).inMinutes,
-      ),
-    ];
-  }
   if (context.openItems.isNotEmpty) {
     final item = context.openItems.first;
     return [

@@ -54,12 +54,12 @@ class ContinueService {
   final ConversationRepository conversations;
   final StudyPlanRepository plans;
 
-  /// 首页活动摘要的读法：正在进行的预约、今天的下一次预约或最近到期的待办。
+  /// 首页活动摘要的读法：最近到期的待办。
   final Future<NowActivity> Function() activity;
 
   final ServiceRuntime runtime;
 
-  /// 首页摘要读到的表：计划行、步骤、材料、目标、讨论、消息、作答与当天预约。
+  /// 首页摘要读到的表：计划行、步骤、材料、目标、讨论、消息、作答与待办。
   ///
   /// 一次提交常同时改到其中几张表，整屏读法只重跑一次，回填的也一定是同一
   /// 时刻的数据（ADR-0014）。
@@ -71,7 +71,6 @@ class ContinueService {
     'conversation',
     'message',
     'attempt',
-    'schedule_block',
   };
 
   /// 跟随写入更新的首页摘要；页面订阅之后不再在写入或跳转返回之后重读。

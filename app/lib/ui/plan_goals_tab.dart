@@ -16,7 +16,7 @@ import 'zhixin_menu.dart';
 class PlanGoalsTab extends StatelessWidget {
   const PlanGoalsTab({super.key, required this.week, required this.actions});
 
-  final PlanWeek week;
+  final PlanOverview week;
   final PlanActions actions;
 
   @override

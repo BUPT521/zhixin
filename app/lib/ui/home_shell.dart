@@ -48,7 +48,7 @@ class _HomeShellState extends State<HomeShell> {
       ValueNotifier<RecordsRequest>(
         const RecordsRequest(RecordsTab.learning, 0),
       );
-  final ValueNotifier<int> _scheduleRequest = ValueNotifier<int>(0);
+  final ValueNotifier<int> _planRequest = ValueNotifier<int>(0);
 
   /// 其余三栏能否在后台预读；首页首读完成或到 [preloadDelay] 时置真，之后不再变。
   final ValueNotifier<bool> _preload = ValueNotifier<bool>(false);
@@ -106,7 +106,7 @@ class _HomeShellState extends State<HomeShell> {
         activeTab: _index,
         tabIndex: 0,
         onOpenLearning: _openLearning,
-        onOpenPlan: _openSchedule,
+        onOpenPlan: _openPlan,
         onOpenRecords: () => _openRecords(RecordsTab.learning),
         onOpenMaterials: () => _openRecords(RecordsTab.materials),
         onOpenMemory: _openMemory,
@@ -127,8 +127,7 @@ class _HomeShellState extends State<HomeShell> {
         key: const ValueKey('plan'),
         activeTab: _index,
         tabIndex: 2,
-        request: _scheduleRequest,
-        onOpenMaterials: () => _openRecords(RecordsTab.materials),
+        request: _planRequest,
         preload: _preload,
       ),
       MinePage(
@@ -204,8 +203,8 @@ class _HomeShellState extends State<HomeShell> {
     _open(1);
   }
 
-  void _openSchedule() {
-    _scheduleRequest.value++;
+  void _openPlan() {
+    _planRequest.value++;
     _open(2);
   }
 

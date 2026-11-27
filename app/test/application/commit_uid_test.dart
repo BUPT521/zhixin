@@ -13,7 +13,6 @@ import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -64,7 +63,6 @@ void main() {
     final study = StudyRepository(rig.db);
     final memories = MemoryRepository(rig.db);
     final assessments = AssessmentRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
     final tasks = TaskRepository(rig.db);
     final materials = MaterialRepository(rig.db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 11, 20));
@@ -74,7 +72,6 @@ void main() {
       study: study,
       memories: memories,
       revisions: rig.revisions,
-      schedule: schedule,
       tasks: tasks,
       assessments: assessments,
       ai: _SilentAi(
@@ -86,7 +83,6 @@ void main() {
       context: ContextService(
         tasks: tasks,
         attempts: attempts,
-        schedule: schedule,
         memories: memories,
         conversations: conversations,
         materials: materials,
@@ -128,7 +124,6 @@ void main() {
     final study = StudyRepository(rig.db);
     final memories = MemoryRepository(rig.db);
     final assessments = AssessmentRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
     final tasks = TaskRepository(rig.db);
     final materials = MaterialRepository(rig.db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 11, 20));
@@ -138,14 +133,12 @@ void main() {
       study: study,
       memories: memories,
       revisions: rig.revisions,
-      schedule: schedule,
       tasks: tasks,
       assessments: assessments,
       ai: _SilentAi(),
       context: ContextService(
         tasks: tasks,
         attempts: attempts,
-        schedule: schedule,
         memories: memories,
         conversations: conversations,
         materials: materials,
@@ -257,43 +250,6 @@ void main() {
     expect((await tasks.byId(itemId))!.status, PlanItemStatus.done);
   });
 
-  test('同一时段重复预约按冲突拒绝，换时间另起一条提交', () async {
-    final rig = await openTestRigWithUndoRules();
-    addTearDown(rig.close);
-    final tasks = TaskRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
-    final policy = TimePolicy(clock: () => DateTime(2026, 11, 12, 9));
-    final service = _planService(rig, policy);
-    final itemId = await tasks.createItem(title: '看材料');
-    final start = DateTime(2026, 11, 13, 19);
-    final end = start.add(const Duration(minutes: 30));
-
-    final scheduled = await service.scheduleItem(
-      planItemId: itemId,
-      start: start,
-      end: end,
-    );
-    expect(scheduled.changed, isTrue);
-    final head = await rig.engine.headId(rig.raw);
-    // 参数完全相同的第二次调用由界面另起一个 uid，不再按“同参数两分钟内算重试”
-    // 合并；这一次撞上同一时段的已有预约，被冲突校验拒绝，不形成提交。
-    await expectLater(
-      service.scheduleItem(planItemId: itemId, start: start, end: end),
-      throwsA(anything),
-    );
-    expect(await rig.engine.headId(rig.raw), head);
-    expect(await schedule.nextBlocksForItems([itemId], start), hasLength(1));
-
-    // 换一个时间就是另一个动作，各自形成一条提交。
-    final later = await service.scheduleItem(
-      planItemId: itemId,
-      start: start.add(const Duration(hours: 2)),
-      end: end.add(const Duration(hours: 2)),
-    );
-    expect(later.commitId, isNot(scheduled.commitId));
-    expect(later.changed, isTrue);
-  });
-
   test('同参数的暂停、恢复、再暂停各自生效', () async {
     var now = DateTime(2026, 11, 12, 9);
     final rig = await openTestRigWithUndoRules(clock: () => now);
@@ -337,8 +293,6 @@ void main() {
 
 PlanService _planService(TestRig rig, TimePolicy policy) => PlanService(
   tasks: TaskRepository(rig.db),
-  schedule: ScheduleRepository(rig.db),
-  revisions: rig.revisions,
   runtime: testRuntime(policy: () => policy),
   studyPlans: StudyPlanRepository(rig.db),
   transactions: WriteTransactions(rig.db, revisions: rig.engine),

@@ -19,22 +19,15 @@ import 'zhixin_menu.dart';
 const _skeletonPadding = 12.0;
 
 /// 安排页的事项页签：未完成的事项与按页展开的已完成事项。
-///
-/// 已完成事项跟一条订阅，只在这个页签可见且展开时续读下一页；换周时收起并
-/// 重新订阅。写入之后的重读由订阅带回，这里不自己刷新。
 class PlanItemsTab extends StatefulWidget {
   const PlanItemsTab({
     super.key,
     required this.week,
-    required this.weekStart,
     required this.actions,
     required this.visible,
   });
 
-  final PlanWeek week;
-
-  /// 这一份数据属于哪一周的周一；换周时收起已完成。
-  final DateTime weekStart;
+  final PlanOverview week;
 
   final PlanActions actions;
 
@@ -67,7 +60,7 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
     ];
   }
 
-  /// 还没读到的已完成事项数量由整周数据的总数决定，写入之后跟着一起更新。
+  /// 还没读到的已完成事项数量由安排页的总数决定，写入之后跟着一起更新。
   bool get _hasMoreDone => _doneItems.length < widget.week.doneItemCount;
 
   bool get _canLoadMoreDone =>
@@ -78,27 +71,9 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
       !_doneLoadFailed;
 
   @override
-  void didUpdateWidget(covariant PlanItemsTab oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // 换周之后收起已完成：那一页按新的目标周与新的写入重新订阅。
-    if (oldWidget.weekStart != widget.weekStart) _resetDone();
-  }
-
-  @override
   void dispose() {
     _doneSubscription?.cancel();
     super.dispose();
-  }
-
-  /// 换周与刷新之后收起已完成：那一页按目标周与新的写入重新订阅。
-  void _resetDone() {
-    _doneSubscription?.cancel();
-    _doneSubscription = null;
-    _doneFirst = const [];
-    _doneOlder = const [];
-    _doneExpanded = false;
-    _loadingDone = false;
-    _doneLoadFailed = false;
   }
 
   /// 展开或收起已完成事项；展开时订阅第一页，收起时退订。

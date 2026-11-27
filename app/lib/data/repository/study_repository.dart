@@ -9,7 +9,7 @@ import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/uuid_v7.dart';
 import '../db/write_transactions.dart';
 
-/// 一次学习（01 `study_session`）：从搭子、题目或日程开始，多次尝试共用一个结果。
+/// 一次学习（01 `study_session`）：从搭子、题目或事项开始，多次尝试共用一个结果。
 class StudyRepository {
   StudyRepository(this._db, {this._clock = systemClock});
 

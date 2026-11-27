@@ -1,7 +1,6 @@
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../data/cloud/server_client.dart';
-import '../data/repository/schedule_repository.dart';
 import '../data/revisions/revision_engine.dart';
 import '../domain/models/backup_error.dart';
 import '../domain/models/material.dart';
@@ -36,7 +35,6 @@ String failureNotice(
 /// 已经是给人看的错误，直接保留它的说法；其余异常由调用方按动作改写。
 String? _knownMessage(Object error) => switch (error) {
   BackupException(:final message) => message,
-  ScheduleConflictException() => error.toString(),
   PageNumberTaken() => error.toString(),
   RevisionStaleHead() => error.toString(),
   LlmException(:final shortText) => '模型调用失败（$shortText）',

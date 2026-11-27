@@ -1,7 +1,7 @@
 /// 数据版本提交里表示界面回执的动作名称。
 ///
 /// 讨论里的记忆写入、确认记忆与接受下一步建议会在提交历史里留下可撤销的
-/// 回执，安排页按这三个动作挑出“AI 的改动”。材料页更正单独登记，撤销时
+/// 回执，数据版本页据此筛选 AI 改动。材料页更正单独登记，撤销时
 /// 据此开放更正提交里的材料行更新时间。名称同时是写进提交的说明，改动这里
 /// 要同步全部写入点，否则回执会从对应页面消失。
 const String writeMemoryAction = '写入记忆';
@@ -15,7 +15,7 @@ const String confirmAttemptMemoryAction = '确认作答记忆';
 /// 材料页更正；撤销这个动作时还允许回写材料行的更新时间。
 const String correctMaterialPageAction = '更正材料页';
 
-/// 记忆页的手工写入；与讨论里的 AI 记忆动作分开，不进入安排页的“AI 的改动”。
+/// 记忆页的手工写入；与讨论里的 AI 记忆动作分开，在完整提交历史中查看。
 /// 删除是软删除，撤销时按反向规则把状态改回 active；确认保留只写
 /// `reviewed_at`，撤销之后回到原来的确认时间（ADR-0051 决定第 9 条）。
 const String addMemoryAction = '新增记忆';
@@ -40,7 +40,7 @@ const String clearDeadReceiptsAction = '清理失效回执';
 /// 不带回执、不可撤销，也不进“AI 的改动”（ADR-0051 决定第 8 条）。
 const String flushMemoryUsageAction = '记录记忆使用';
 
-/// 安排页展示的可撤销动作。
+/// 数据版本页筛选的 AI 写入动作。
 const Set<String> receiptActions = {
   writeMemoryAction,
   confirmMemoryAction,

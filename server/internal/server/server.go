@@ -38,7 +38,7 @@ import (
 // ClientSchemaVersion is the client data schema this server accepts for
 // sync commits and backups. It must equal the schema number at the top of
 // docs/01; both sides move together and old versions are rejected (ADR-0002).
-const ClientSchemaVersion = 32
+const ClientSchemaVersion = 33
 
 // RetentionStore 既写入活跃数据（公开上报与鉴权中间件），也读取管理后台的
 // 留存视图。PostgreSQL 与内存两种实现都满足，装配处因此不用做类型断言。

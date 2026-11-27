@@ -19,7 +19,6 @@ import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -102,14 +101,12 @@ class _Harness {
       study: study,
       memories: memories,
       revisions: rig.revisions,
-      schedule: ScheduleRepository(db),
       tasks: TaskRepository(db),
       assessments: assessments,
       ai: ai,
       context: ContextService(
         tasks: TaskRepository(db),
         attempts: attempts,
-        schedule: ScheduleRepository(db),
         memories: memories,
         conversations: conversations,
         materials: materials,

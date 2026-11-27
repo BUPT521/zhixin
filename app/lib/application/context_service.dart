@@ -3,7 +3,6 @@ import '../data/repository/attempt_repository.dart';
 import '../data/repository/conversation_repository.dart';
 import '../data/repository/material_repository.dart';
 import '../data/repository/memory_repository.dart';
-import '../data/repository/schedule_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/evidence_id.dart';
@@ -30,14 +29,10 @@ const int maxContextEvidenceHits = 5;
 /// 目标列表。材料按本次页码与当前问题检索，较早记录只取同一目标或同样无归属
 /// 的讨论，避免其他课程的内容参加判断。记忆与材料页只在当前有效时进入上下文；
 /// 纠正记录只用于界面追溯，不在这里读取，以免删除或过期之后的旧说法重新参与回答。
-///
-/// 当天时间块按自然日期读取；夜间学习记录另按截止小时归到前一天，只影响记录
-/// 展示与分组。
 class ContextService {
   ContextService({
     required this.tasks,
     required this.attempts,
-    required this.schedule,
     required this.memories,
     required this.conversations,
     required this.materials,
@@ -49,7 +44,6 @@ class ContextService {
 
   final TaskRepository tasks;
   final AttemptRepository attempts;
-  final ScheduleRepository schedule;
   final MemoryRepository memories;
   final ConversationRepository conversations;
   final MaterialRepository materials;
@@ -83,18 +77,14 @@ class ContextService {
     final includeEarlier = request.includeEarlier;
     final current = runtime.policy;
     final now = current.now;
-    final range = current.naturalDayRange(now);
     final goals = await tasks.activeGoals();
     final goal = goalId == null ? null : await tasks.goalById(goalId);
-    // 待办、当天时间块与最近尝试只服务普通问答的本地兜底和安排学习；
+    // 待办与最近尝试只服务普通问答的本地兜底和安排学习；
     // 提示、讲解与检查用不到它们，因此不读。
     final withPlanContext = mode == BuddyMode.chat || mode == BuddyMode.plan;
     final openItems = withPlanContext
         ? await tasks.items(openOnly: true, onlyActiveGoals: true)
         : const <PlanItem>[];
-    final blocks = withPlanContext
-        ? await schedule.blocksBetween(range.start, range.endExclusive)
-        : const <ScheduledItem>[];
     final recent = withPlanContext
         ? await conversations.recentSubmitted(
             limit: null,
@@ -283,7 +273,6 @@ class ContextService {
       goal: goal,
       goals: goals,
       openItems: openItems,
-      todayBlocks: blocks,
       recentAttempts: recent,
       memories: recalled.all,
       priorFeedback: earlier,
@@ -330,84 +319,16 @@ class ContextService {
     return ids;
   }
 
-  /// 给首页活动卡用：正在进行的预约、今天的下一次预约，或没有排期的待办。
-  ///
-  /// 当天时间块按自然日期读取，只有状态为 `planned` 且事项仍未完成的预约参与
-  /// 推荐。开始时间已到、结束时间未到的算“正在进行”；开始时间还在后面的算
-  /// “接下来”，不再把晚些时候的预约当成当前活动。没有下一次预约时才取最近
-  /// 到期的待办，并且不重复展示已经在进行的那一项。
-  Future<NowActivity> loadActivity() async {
-    final current = runtime.policy;
-    final now = current.now;
-    final range = current.naturalDayRange(now);
-    // 当天时间块与最近到期的待办互不依赖，同时发出，首屏少一次平台通道往返。
-    final (blocks, pendingItem) = await (
-      schedule.blocksBetween(range.start, range.endExclusive),
-      tasks.nextDue(),
-    ).wait;
-    final open = blocks
-        .where((block) => block.block.planned && block.itemStatus.open)
-        .toList(growable: false);
-    final ongoingScheduled = open
-        .where(
-          (block) =>
-              !block.block.startAt.isAfter(now) &&
-              block.block.endAt.isAfter(now),
-        )
-        .firstOrNull;
-    final nextScheduled = open
-        .where(
-          (block) =>
-              block.block.startAt.isAfter(now) &&
-              block.block.planItemId != ongoingScheduled?.block.planItemId,
-        )
-        .firstOrNull;
-    // 两项预约对应的事项一次取回，不为每条预约再查一次。
-    final items = await tasks.byIds([
-      if (ongoingScheduled != null) ongoingScheduled.block.planItemId,
-      if (nextScheduled != null) nextScheduled.block.planItemId,
-    ]);
-    ActivityEntry? entryFor(ScheduledItem? scheduled) {
-      if (scheduled == null) return null;
-      final item = items[scheduled.block.planItemId];
-      if (item == null || !item.open) return null;
-      return ActivityEntry(scheduled: scheduled, item: item);
-    }
-
-    final ongoing = entryFor(ongoingScheduled);
-    final next = entryFor(nextScheduled);
-    return NowActivity(
-      ongoing: ongoing,
-      next: next,
-      // 没有下一次预约时才用最近的待办；与正在进行的是同一项时不重复显示。
-      pending: next != null || pendingItem == null
-          ? null
-          : pendingItem.id == ongoing?.item.id
-          ? null
-          : pendingItem,
-    );
-  }
+  /// 给首页提供最近到期的待办。
+  Future<NowActivity> loadActivity() async =>
+      NowActivity(pending: await tasks.nextDue());
 }
 
-/// 首页活动卡的一项：一条预约与它对应的事项。
-class ActivityEntry {
-  const ActivityEntry({required this.scheduled, required this.item});
-
-  final ScheduledItem scheduled;
-  final PlanItem item;
-}
-
-/// 首页“正在进行”与“接下来”的内容。
-///
-/// [ongoing] 是当前时间落在其中的预约，[next] 是今天接下来的一次预约，
-/// [pending] 是没有下一次预约时最近到期的事项。三者互不重复，界面按状态
-/// 分节显示，不再把晚些时候的预约称为“当前安排”。
+/// 首页“接下来”的待办。
 class NowActivity {
-  const NowActivity({this.ongoing, this.next, this.pending});
+  const NowActivity({this.pending});
 
-  final ActivityEntry? ongoing;
-  final ActivityEntry? next;
   final PlanItem? pending;
 
-  bool get isEmpty => ongoing == null && next == null && pending == null;
+  bool get isEmpty => pending == null;
 }

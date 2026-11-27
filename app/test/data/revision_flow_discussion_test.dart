@@ -23,7 +23,6 @@ import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/rules/time_policy.dart';
 
@@ -87,7 +86,6 @@ class _Rig {
     final conversations = ConversationRepository(db);
     this.conversations = conversations;
     final tasks = TaskRepository(db);
-    final schedule = ScheduleRepository(db);
     final memories = MemoryRepository(db);
     final attempts = AttemptRepository(db);
     final materials = MaterialRepository(db);
@@ -98,7 +96,6 @@ class _Rig {
       context: ContextService(
         tasks: tasks,
         attempts: attempts,
-        schedule: schedule,
         memories: memories,
         conversations: conversations,
         materials: materials,

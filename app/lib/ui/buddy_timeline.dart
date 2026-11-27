@@ -124,10 +124,7 @@ abstract class BuddyTimelineAdapter {
   void undoMemory(MemoryItemView item);
 
   /// 下一步建议与回执只有讨论页会出现；学习页不需要实现。
-  void acceptSuggestion(
-    PendingSuggestion suggestion, {
-    bool schedule = false,
-  }) {}
+  void acceptSuggestion(PendingSuggestion suggestion, {bool start = false}) {}
   void dismissSuggestion(PendingSuggestion suggestion) {}
   void undoChange(AppliedChange change) {}
 }
@@ -251,8 +248,8 @@ class BuddyTimelineEntryView extends StatelessWidget {
       ),
       BuddySuggestionEntry(:final suggestion) => SuggestionCard(
         suggestion: suggestion,
-        onAccept: () => adapter.acceptSuggestion(suggestion, schedule: false),
-        onSchedule: () => adapter.acceptSuggestion(suggestion, schedule: true),
+        onAccept: () => adapter.acceptSuggestion(suggestion),
+        onStart: () => adapter.acceptSuggestion(suggestion, start: true),
         onDismiss: () => adapter.dismissSuggestion(suggestion),
       ),
       BuddyChangesEntry(:final changes) => ChangeReceiptCard(

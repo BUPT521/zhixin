@@ -12,7 +12,6 @@ import 'failure_feedback.dart';
 import 'format.dart';
 import 'live_view.dart';
 import 'navigation.dart';
-import 'plan_dialogs.dart';
 import 'undo_feedback.dart';
 import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
@@ -31,12 +30,12 @@ class StudyPlanPage extends StatefulWidget {
 }
 
 class _StudyPlanPageState extends State<StudyPlanPage> {
-  /// 一屏订阅：计划、步骤、每一步的预约与场次随写入更新（ADR-0014）。
+  /// 一屏订阅：计划、步骤与场次随写入更新（ADR-0014）。
   ///
-  /// 推进步骤、预约与打开讨论之后的重读都由数据层完成，页面不再自己重读。
+  /// 推进步骤与打开讨论之后的重读都由数据层完成，页面不再自己重读。
   Stream<StudyPlanScreen>? _stream;
 
-  /// 最近一次读回的一屏；动作处理从这里取当前计划与预约。
+  /// 最近一次读回的一屏；动作处理从这里取当前计划。
   StudyPlanScreen? _screen;
   bool _busy = false;
   String? _notice;
@@ -156,51 +155,6 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
       );
     } finally {
       if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _schedule(PlanItem step) async {
-    final block = _screen?.nextBlocks[step.id];
-    final draft = await showZhixinDialog<BlockDraft>(
-      context: context,
-      builder: (_) => BlockDialog(
-        items: [step],
-        initialStart: block?.startAt,
-        initialMinutes: block?.endAt.difference(block.startAt).inMinutes,
-      ),
-    );
-    if (draft == null || !mounted) return;
-    try {
-      final service = AppScope.of(context).study.plan;
-      final end = draft.start.add(Duration(minutes: draft.minutes));
-      final result = block == null
-          ? await service.scheduleItem(
-              planItemId: step.id,
-              start: draft.start,
-              end: end,
-            )
-          : await service.moveBlock(block.id, start: draft.start, end: end);
-      if (!mounted || !result.changed) return;
-      showActionToast(
-        context,
-        block == null ? '已为这一步预约时间' : '已改约这一步的时间',
-        label: '撤销',
-        // 撤销写回之后的重读由订阅完成，这里不再手动刷新这一屏。
-        onPressed: () => undoCommitWithFeedback(context, result.commitId!),
-      );
-    } catch (error, stack) {
-      if (!mounted) return;
-      setState(
-        () => _notice = describeFailure(
-          context,
-          error,
-          stack,
-          action: '预约这一步',
-          kind: 'study_plan_schedule',
-          kept: '这次没有写入',
-          next: '可以换一个时间再试',
-        ),
-      );
     }
   }
 
@@ -368,7 +322,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
             ),
           if (current != null) ...[
             SizedBox(height: theme.space.md),
-            _nextStepCard(theme, screen, current),
+            _nextStepCard(theme, current),
           ],
           const SectionHeading(title: '全部步骤'),
           if (view.steps.isEmpty)
@@ -421,12 +375,7 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
   }
 
   /// 下一步卡：这一份计划只有一个主按钮，别的步骤不再各排三个同级按钮。
-  Widget _nextStepCard(
-    ZhixinTheme theme,
-    StudyPlanScreen screen,
-    PlanItem step,
-  ) {
-    final block = screen.nextBlocks[step.id];
+  Widget _nextStepCard(ZhixinTheme theme, PlanItem step) {
     return forui.FCard(
       child: Padding(
         padding: EdgeInsets.all(theme.space.lg),
@@ -446,13 +395,6 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
               SizedBox(height: theme.space.xs),
               Text(step.note!, style: theme.text.bodySmall),
             ],
-            if (block != null) ...[
-              SizedBox(height: theme.space.xs),
-              Text(
-                '预约：${shortTime(block.startAt)}–${clockOf(block.endAt)}',
-                style: theme.text.bodySmall,
-              ),
-            ],
             SizedBox(height: theme.space.md),
             Row(
               children: [
@@ -460,13 +402,6 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
                   mainAxisSize: MainAxisSize.min,
                   onPress: _busy ? null : () => _studyStep(step),
                   child: const Text('学这一步'),
-                ),
-                SizedBox(width: theme.space.sm),
-                forui.FButton(
-                  variant: forui.FButtonVariant.outline,
-                  mainAxisSize: MainAxisSize.min,
-                  onPress: _busy ? null : () => _schedule(step),
-                  child: Text(block == null ? '预约时间' : '改期'),
                 ),
               ],
             ),
@@ -476,15 +411,12 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
     );
   }
 
-  /// 全部步骤里的每一步：状态用标签，完成与改期收进行尾菜单。
+  /// 全部步骤里的每一步：状态用标签，状态调整收进行尾菜单。
   Widget _stepRow(ZhixinTheme theme, StudyPlanScreen screen, PlanItem step) {
     final isCurrent = screen.view.currentStep?.id == step.id;
-    final block = screen.nextBlocks[step.id];
     final session = screen.sessions[step.id];
     final label = step.status == PlanItemStatus.todo ? '待学' : step.status.label;
     final details = <String>[
-      if (block != null)
-        '预约：${shortTime(block.startAt)}–${clockOf(block.endAt)}',
       if (step.done && step.completedAt != null)
         '完成于 ${shortTime(step.completedAt!)}',
       if (step.done && session != null)
@@ -500,12 +432,6 @@ class _StudyPlanPageState extends State<StudyPlanPage> {
           label: '学这一步',
           enabled: !_busy,
           onSelected: () => _studyStep(step),
-        ),
-      if (!step.done)
-        ZhixinMenuItem(
-          label: block == null ? '预约时间' : '改期',
-          enabled: !_busy,
-          onSelected: () => _schedule(step),
         ),
       if (!step.done)
         ZhixinMenuItem(

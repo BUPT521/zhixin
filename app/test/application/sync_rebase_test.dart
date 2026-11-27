@@ -10,7 +10,6 @@ import 'package:zhixin/application/plan_service.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/study.dart';
@@ -92,8 +91,6 @@ void main() {
     final tasks = TaskRepository(a.rig.db);
     final plans = PlanService(
       tasks: tasks,
-      schedule: ScheduleRepository(a.rig.db),
-      revisions: a.rig.revisions,
       runtime: testRuntime(policy: () => TimePolicy(clock: clock.call)),
       studyPlans: StudyPlanRepository(a.rig.db),
       transactions: WriteTransactions(a.rig.db, revisions: a.rig.engine),

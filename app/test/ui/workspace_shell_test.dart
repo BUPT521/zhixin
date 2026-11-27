@@ -6,7 +6,6 @@ import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/ui/learning_page.dart';
 import 'package:zhixin/ui/materials_list.dart';
 import 'package:zhixin/ui/now_page.dart';
-import 'package:zhixin/ui/plan_page.dart';
 import 'package:zhixin/ui/records_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
@@ -42,14 +41,7 @@ void main() {
     await preview(tester, 'now-typed');
     await tester.tap(find.text('系统学习').first);
     await settle(tester);
-    final planList = find
-        .descendant(
-          of: find.byType(PlanPage),
-          matching: find.byType(Scrollable),
-        )
-        .first;
-    await tester.drag(planList, const Offset(0, -1200));
-    await settle(tester);
+    expect(find.text('还没有学习计划'), findsOneWidget);
     final materialButton = find.text('选择学习材料').last;
     expect(materialButton, findsOneWidget);
     await tester.ensureVisible(materialButton);
@@ -222,13 +214,12 @@ void main() {
     await tester.runAsync(
       () => scope!.testing.tasks.createItem(title: '整理第三章笔记', estMinutes: 30),
     );
-    await tester.tap(find.text('这周能做什么'));
     await settle(tester);
-    expect(find.text('这周还能做什么'), findsOneWidget);
+    await tester.tap(find.text('整理第三章笔记').hitTestable());
+    await settle(tester);
+    expect(find.text('完成事项'), findsOneWidget);
     expect(tester.takeException(), isNull);
-    final completeButton = find.widgetWithText(forui.FButton, '完成');
-    await tester.ensureVisible(completeButton);
-    await tester.tap(completeButton.hitTestable());
+    await tester.tap(find.text('完成事项').hitTestable());
     await settle(tester);
     await tester.tap(find.text('现在').last);
     await settle(tester);

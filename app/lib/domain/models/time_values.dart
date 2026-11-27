@@ -1,4 +1,4 @@
-/// 时刻与时段的值对象：容量窗口、课表与预约共用同一套表示。
+/// 用于展示时间的时刻值。
 library;
 
 /// 一天里的时刻，格式 `HH:MM`；不绑定日期与时区。
@@ -54,16 +54,4 @@ class ClockTime implements Comparable<ClockTime> {
 
   @override
   String toString() => format();
-}
-
-/// 一段连续时间；时段本身不带业务含义，容量、预约与统计共用。
-class TimeRange {
-  const TimeRange({required this.start, required this.end});
-
-  final DateTime start;
-  final DateTime end;
-
-  int get minutes => end.difference(start).inMinutes;
-
-  bool get isEmpty => !end.isAfter(start);
 }

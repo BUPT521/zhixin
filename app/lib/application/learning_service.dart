@@ -10,7 +10,6 @@ import '../data/repository/assessment_repository.dart';
 import '../data/repository/attempt_repository.dart';
 import '../data/repository/conversation_repository.dart';
 import '../data/repository/memory_repository.dart';
-import '../data/repository/schedule_repository.dart';
 import '../data/repository/study_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/assessment.dart';
@@ -129,7 +128,6 @@ class LearningService {
     required this.study,
     required this.memories,
     required this.revisions,
-    required this.schedule,
     required this.tasks,
     required this.assessments,
     required this.ai,
@@ -146,7 +144,6 @@ class LearningService {
 
   /// 记忆建议写入后是否仍可撤销，由提交历史判断。
   final RevisionService revisions;
-  final ScheduleRepository schedule;
   final TaskRepository tasks;
   final AssessmentRepository assessments;
   final BuddyAi ai;

@@ -11,14 +11,6 @@ import '../plugins/runtime/plugin_manifest.dart';
 /// 这个角色。
 const buddyName = '搭子';
 
-/// 安排页的板块名：模型写入的变更。
-///
-/// 02 文档把它写作「AI 的改动」，这里的“AI”指写入者而不是角色，所以与
-/// [buddyName] 分开保留；板块标题用这一份完整写法，安排页的页签为了四项等分
-/// 只显示“AI”，读屏仍读这一份，见 `plan_page.dart`。
-/// 用户在记忆页手动改的记忆不算模型写入，由 `plan_service.dart` 的动作名单排除。
-const aiChanges = 'AI 的改动';
-
 /// 底栏四个入口；页面标题引用同一组常量，不另写一份。
 const tabNow = '现在';
 const tabRecords = '记录';
@@ -31,8 +23,7 @@ const tabMine = '我的';
 const recordsTabLearning = '学习记录';
 const recordsTabMaterials = '材料';
 
-/// 安排页的四个页签。
-const planTabSchedule = '日程';
+/// 安排页的两个页签。
 const planTabItems = '事项';
 const planTabGoals = '目标';
 
@@ -55,8 +46,6 @@ String tableLabel(String table) => switch (table) {
   'message' => '消息',
   'study_plan' => '学习计划',
   'plan_item' => planItemName,
-  'timetable_entry' => '课表',
-  'schedule_block' => '预约',
   'study_session' => '学习场次',
   'attempt' => '作答',
   'assessment' => '学习判断',
@@ -67,13 +56,11 @@ String tableLabel(String table) => switch (table) {
 
 /// 空态标题的句式：写“还没有 X”，不写“暂无 X”，说明里再给下一步。
 ///
-/// 记录页的学习记录、事项页的两处、安排页的 [aiChanges] 与本周预约、记忆页
+/// 记录页的学习记录、事项页与记忆页
 /// 都用这一组，句式一致。
 const emptyRecords = '还没有学习记录';
 const emptyPlanItems = '还没有学习事项';
 const emptyPlanItemsNoneOpen = '还没有未完成的学习事项';
-const emptyWeekAppointments = '本周还没有预约';
-const emptyOtherWeekAppointments = '这一周还没有预约';
 const emptyMemory = '还没有学习记忆';
 const emptyChangesTitle = '还没有改动';
 const emptyChangesDescription = '$buddyName执行过的变更会出现在这里。';

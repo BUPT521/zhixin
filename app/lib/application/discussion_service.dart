@@ -128,7 +128,7 @@ class ConversationView {
 /// 从文字或图片开始的一次讨论。
 ///
 /// 讨论不要求先有目标，普通求助只写消息与记忆：不写 `plan_item`，不改动既有
-/// `schedule_block`。带入材料时按页码读取原文，回答里的引用先由程序核对再显示；
+/// 事项。带入材料时按页码读取原文，回答里的引用先由程序核对再显示；
 /// 材料的原文只在材料页更正，回答读到的始终是当前保存的原文。
 class DiscussionService {
   DiscussionService({
@@ -856,7 +856,7 @@ class DiscussionService {
   /// 接受一条下一步建议：创建学习事项，记下回执，并在原消息里标记已接受。
   ///
   /// 归属只取用户在选择表里明确选中的目标，未选择时 `goalId` 为空；
-  /// 这里不写时间块，安排由用户在“安排”页自己排。编号按消息与建议生成，
+  /// 编号按消息与建议生成，
   /// 同一条建议连点两次只形成一条提交。
   Future<AcceptedSuggestion> acceptNextStep({
     required String conversationId,
@@ -864,6 +864,7 @@ class DiscussionService {
     required NextStepDraft draft,
     String? stepId,
     String? goalId,
+    bool start = false,
     String? uid,
   }) {
     return _acceptNextStepOnce(
@@ -872,6 +873,7 @@ class DiscussionService {
       draft: draft,
       stepId: stepId,
       goalId: goalId,
+      start: start,
       uid: uid ?? newUuidV7(),
     );
   }
@@ -882,6 +884,7 @@ class DiscussionService {
     required NextStepDraft draft,
     String? stepId,
     String? goalId,
+    required bool start,
     String? uid,
   }) async {
     try {
@@ -895,7 +898,7 @@ class DiscussionService {
           if (goalId != null) {
             final goal = await tasks.goalById(goalId, transaction: txn);
             if (goal == null) throw ArgumentError('未找到这个目标');
-            if (!goal.active) throw ArgumentError('这个目标已暂停，请先恢复后再添加安排');
+            if (!goal.active) throw ArgumentError('这个目标已暂停，请先恢复后再添加事项');
           }
 
           final message = await conversations.messageById(
@@ -910,13 +913,13 @@ class DiscussionService {
               ? payload.acceptedStepIds.contains(stepId)
               : payload.acceptedTitles.contains(draft.title);
           if (accepted) {
-            throw StateError('这条建议已加入安排');
+            throw StateError('这条建议已保存为事项');
           }
           final dismissed = stepId != null
               ? payload.dismissedStepIds.contains(stepId)
               : payload.dismissedTitles.contains(draft.title);
           if (dismissed) {
-            throw StateError('这条建议已暂不安排');
+            throw StateError('这条建议已暂缓');
           }
 
           final id = await tasks.createItem(
@@ -925,6 +928,7 @@ class DiscussionService {
             conversationId: conversationId,
             note: _stepNote(draft),
             estMinutes: draft.minutes,
+            start: start,
             source: PlanItemSource.ai,
             origin: {
               'conversation_id': conversationId,
@@ -1003,7 +1007,7 @@ class DiscussionService {
         ? payload.acceptedTitles.contains(title)
         : payload.acceptedStepIds.contains(stepId);
     if (accepted) {
-      throw StateError('这条建议已经加入安排');
+      throw StateError('这条建议已经保存为事项');
     }
     await conversations.markNextStepDismissed(messageId, title, stepId: stepId);
   }

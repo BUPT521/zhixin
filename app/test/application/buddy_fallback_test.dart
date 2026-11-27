@@ -10,7 +10,6 @@ BuddyContext _context({
   String? question,
   Attempt? attempt,
   List<PlanItem> openItems = const [],
-  List<ScheduledItem> todayBlocks = const [],
   List<AttemptWithQuestion> recentAttempts = const [],
   List<Memory> memories = const [],
   Material? material,
@@ -22,7 +21,6 @@ BuddyContext _context({
     question: question == null ? null : Question(id: 'conv-1', stem: question),
     attempt: attempt,
     openItems: openItems,
-    todayBlocks: todayBlocks,
     recentAttempts: recentAttempts,
     memories: memories,
     material: material,
@@ -165,64 +163,7 @@ void main() {
     expect(attempt, contains('当时自评有误'));
   });
 
-  test('下一步建议只在问安排或没有当次问题时给，不转到已有待办上', () {
-    final question = localNextStep(_context(), text: '解方程 3x+2=8，求 x');
-    expect(question, isEmpty);
-
-    final todayBlock = ScheduledItem(
-      block: ScheduleBlock(
-        id: 'block-1',
-        planItemId: 'item-5',
-        startAt: DateTime(2026, 11, 10, 20),
-        endAt: DateTime(2026, 11, 10, 20, 30),
-      ),
-      itemTitle: '第三章作业',
-      itemNote: '做完第 3 节',
-    );
-    final plan = localNextStep(
-      _context(
-        openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],
-      ),
-      text: '接下来做什么',
-    );
-    expect(plan.single.title, '第三章作业');
-
-    final withoutPlan = localNextStep(_context(), text: '接下来做什么');
-    expect(withoutPlan, isEmpty);
-
-    final withBlock = localNextStep(
-      _context(
-        todayBlocks: [todayBlock],
-        openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],
-      ),
-      text: '接下来做什么',
-    );
-    expect(withBlock.single.title, '第三章作业');
-    expect(withBlock.single.minutes, 30);
-  });
-
-  test('用户问的是具体问题时，本地不另推已有的待办', () {
-    final steps = localNextStep(
-      _context(
-        openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],
-        todayBlocks: [
-          ScheduledItem(
-            block: ScheduleBlock(
-              id: 'block-2',
-              planItemId: 'item-5',
-              startAt: DateTime(2026, 11, 10, 20),
-              endAt: DateTime(2026, 11, 10, 20, 30),
-            ),
-            itemTitle: '第三章作业',
-          ),
-        ],
-      ),
-      text: '为什么这里需要独立性？',
-    );
-    expect(steps, isEmpty);
-  });
-
-  test('没有当次文字问题时，仍按当天预约与待办给建议', () {
+  test('没有当次文字问题时，仍按待办给建议', () {
     final step = localNextStep(
       _context(
         openItems: [const PlanItem(id: 'item-5', title: '第三章作业')],

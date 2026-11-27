@@ -322,7 +322,7 @@ class TaskRepository {
     return id;
   }
 
-  /// 暂停目标只改状态；相关未来安排与已完成记录保持原样。
+  /// 暂停目标只更新目标状态。
   Future<void> pauseGoal(String id, {WriteTransaction? transaction}) =>
       _setGoalStatus(id, LearningGoalStatus.paused, transaction: transaction);
 
@@ -435,8 +435,7 @@ class TaskRepository {
 
   /// 按编号批量读取事项，按编号索引返回。
   ///
-  /// 首页活动卡要在“正在进行”与“接下来”两条预约里各取一项，原先为此逐条
-  /// 查询；这里用一次 `IN` 查询取回，读取次数与预约条数无关。
+  /// 按编号批量读取事项。
   Future<Map<String, PlanItem>> byIds(Iterable<String> ids) async {
     final keys = {...ids};
     if (keys.isEmpty) return const {};
@@ -492,6 +491,7 @@ class TaskRepository {
     DateTime? dueAt,
     int? estMinutes,
     PlanItemSource source = PlanItemSource.user,
+    bool start = false,
     Map<String, Object?>? origin,
     WriteTransaction? transaction,
   }) async {
@@ -506,7 +506,7 @@ class TaskRepository {
         nullableText(note),
         dueAt == null ? null : formatDateTime(dueAt),
         estMinutes,
-        PlanItemStatus.todo.value,
+        (start ? PlanItemStatus.doing : PlanItemStatus.todo).value,
         source.value,
         origin == null ? null : jsonEncode(origin),
         formatDateTime(now),
@@ -515,7 +515,7 @@ class TaskRepository {
     return id;
   }
 
-  /// 0 普通、1 优先、2 最高；容量不足时按它排序。
+  /// 0 普通、1 优先、2 最高；首页推荐时按它排序。
   Future<void> setPriority(
     String id,
     int priority, {

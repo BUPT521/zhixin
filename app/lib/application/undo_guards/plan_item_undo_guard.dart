@@ -4,7 +4,7 @@ import '../../data/revisions/revision_undo.dart';
 
 /// 学习事项的撤销要避开级联删除后续数据。
 ///
-/// 撤销新建会删除这项事项，已有预约、学习场次或系统学习计划归属时不删；
+/// 撤销新建会删除这项事项，已有学习场次或系统学习计划归属时不删；
 /// 撤销删除会重新插入，原来的目标、讨论或计划已经不存在时不插。
 class PlanItemUndoGuard implements UndoGuard {
   const PlanItemUndoGuard();
@@ -25,15 +25,6 @@ class PlanItemUndoGuard implements UndoGuard {
       if (planId != null && !planId.isNull) {
         return '这项任务已归入系统学习计划，不能撤销';
       }
-      final blocks = await selectRows(
-        check.executor,
-        'schedule_block',
-        columns: ['id'],
-        where: 'plan_item_id = ?',
-        whereArgs: [change.rowKey],
-        limit: 1,
-      );
-      if (blocks.isNotEmpty) return '这项任务已有预约，不能撤销';
       final sessions = await selectRows(
         check.executor,
         'study_session',

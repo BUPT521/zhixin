@@ -164,7 +164,7 @@ void main() {
 
     await openPlanSearch(tester);
     // 空查询先给入口提示，不发起查找。
-    expect(find.textContaining('按标题、说明、目标、状态或日期'), findsOneWidget);
+    expect(find.textContaining('按标题、说明、目标、状态或截止日期'), findsOneWidget);
 
     await searchKeyword(tester, '矩阵');
     await pumpUntil(tester, find.text('矩阵求迹练习'));
@@ -177,7 +177,7 @@ void main() {
     expect(find.textContaining('关键词「完全没有出现过的词」'), findsOneWidget);
     await tester.tap(find.text('清除筛选'));
     await settle(tester);
-    expect(find.textContaining('按标题、说明、目标、状态或日期'), findsOneWidget);
+    expect(find.textContaining('按标题、说明、目标、状态或截止日期'), findsOneWidget);
 
     // 点开一条结果：普通事项打开事项详情面板。
     await searchKeyword(tester, '矩阵求迹');
@@ -241,7 +241,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('日期筛选按截止时间或预约开始时间筛，两者用同一个条件', (tester) async {
+  testWidgets('日期筛选按事项截止时间', (tester) async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day, 12);
     final tomorrow = DateTime(now.year, now.month, now.day + 1, 12);
@@ -249,12 +249,6 @@ void main() {
     await tester.runAsync(() async {
       await scope!.testing.tasks.createItem(title: '今天截止的事项', dueAt: today);
       await scope!.testing.tasks.createItem(title: '明天截止的事项', dueAt: tomorrow);
-      final item = await scope!.testing.tasks.createItem(title: '今天预约的事项');
-      await scope!.testing.schedule.addBlock(
-        planItemId: item,
-        start: DateTime(now.year, now.month, now.day, 10),
-        end: DateTime(now.year, now.month, now.day, 11),
-      );
     });
 
     await openPlanSearch(tester);
@@ -262,9 +256,6 @@ void main() {
     final dateFilter = find.byIcon(FLucideIcons.calendarDays);
     await chooseFilter(tester, dateFilter, '今天');
     await pumpUntil(tester, find.text('今天截止的事项'));
-    // 预约按开始时间命中，和按截止时间命中用同一个日期条件。
-    expect(find.text('今天预约的事项'), findsWidgets);
-    expect(find.text('预约'), findsWidgets);
     expect(find.text('明天截止的事项'), findsNothing);
 
     await chooseFilter(tester, dateFilter, '明天');

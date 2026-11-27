@@ -38,6 +38,7 @@ import 'question_crop_page.dart';
 import 'records_search_page.dart';
 import 'settings_page.dart';
 import 'study_plan_page.dart';
+import 'study_plan_list_page.dart';
 import 'zhixin_toast.dart';
 
 /// 打开学习页：原题、历次尝试与这一次的提示。
@@ -118,13 +119,22 @@ Future<void> openPlanDetail(BuildContext context, String itemId) {
 }
 
 /// 打开一份系统学习计划。
+Future<void> openStudyPlanList(
+  BuildContext context, {
+  required VoidCallback onOpenMaterials,
+}) => Navigator.of(context).push(
+  MaterialPageRoute<void>(
+    builder: (_) => StudyPlanListPage(onOpenMaterials: onOpenMaterials),
+  ),
+);
+
 Future<void> openStudyPlan(BuildContext context, String planId) {
   return Navigator.of(context).push(
     MaterialPageRoute<void>(builder: (_) => StudyPlanPage(planId: planId)),
   );
 }
 
-/// 打开安排查找：按标题、目标、状态与日期查事项、计划步骤与预约。
+/// 打开安排查找：按标题、目标、状态与截止日期查事项和计划步骤。
 ///
 /// 页面里的结果点开仍走本文件的 [openPlanDetail] 与 [openPlanItem]，查找入口
 /// 不另造导航逻辑。
@@ -287,11 +297,11 @@ Future<QuestionCropResult?> openQuestionCrop(
   );
 }
 
-/// 从日程、预约或事项详情直接打开这一步的学习内容。
+/// 从事项详情直接打开这一步的学习内容。
 ///
 /// 系统学习步骤的继续位置统一由 `StudyPlanService.resumePoint` 推出：已经
 /// 开始作答时回到原题，有讨论时打开讨论，否则打开这一步的材料页码。计划页
-/// 与预约入口都走这里，入口不再各自决定打开哪种内容。普通事项没有学习步骤
+/// 共用这里的继续位置。普通事项没有学习步骤
 /// 时沿用讨论与原题判断；没有可打开的内容时只给提示，不跳到空页面。
 Future<void> openPlanItem(BuildContext context, PlanItem item) async {
   final scope = AppScope.of(context);
@@ -339,7 +349,7 @@ Future<void> openPlanItem(BuildContext context, PlanItem item) async {
       }
       return;
     }
-    showToast(context, '这件事项还没有可以打开的内容，可以先查看说明或预约时间。');
+    showToast(context, '这件事项还没有可以打开的内容，可以先查看事项说明。');
   } catch (error, stack) {
     if (!context.mounted) return;
     final message = describeFailure(

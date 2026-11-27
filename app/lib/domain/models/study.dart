@@ -1,4 +1,4 @@
-/// 目标、学习事项、一次学习、时间块与课表（01 第 4 章）。
+/// 目标、学习事项、一次学习（01 第 4 章）。
 library;
 
 import '../rules/coded_enum.dart';
@@ -184,91 +184,6 @@ class StudySession {
   String? get outcomeLabel => outcome?.label;
 }
 
-/// 时间块状态（01 `schedule_block.status`）。
-enum ScheduleBlockStatus implements CodedEnum {
-  planned('planned', '待开始'),
-  done('done', '已结束'),
-  cancelled('cancelled', '已取消'),
-  unknown('', '状态未知');
-
-  const ScheduleBlockStatus(this.value, this.label);
-
-  @override
-  final String value;
-
-  @override
-  final String label;
-
-  static ScheduleBlockStatus fromValue(String? value) =>
-      codedValueOr(ScheduleBlockStatus.values, value, unknown: unknown);
-}
-
-/// 学习事项占用的时间块（01 `schedule_block`）。
-class ScheduleBlock {
-  const ScheduleBlock({
-    required this.id,
-    required this.planItemId,
-    required this.startAt,
-    required this.endAt,
-    this.source = PlanItemSource.user,
-    this.status = ScheduleBlockStatus.planned,
-    this.locked = false,
-  });
-
-  final String id;
-  final String planItemId;
-  final DateTime startAt;
-  final DateTime endAt;
-
-  /// 这条预约由谁建立，AI 只改自己的块。
-  final PlanItemSource source;
-
-  /// 时间块状态；读库时认不出的值回落到 [ScheduleBlockStatus.unknown]。
-  final ScheduleBlockStatus status;
-
-  /// 固定安排：为真时容量规划不移动它。
-  final bool locked;
-
-  bool get planned => status == ScheduleBlockStatus.planned;
-}
-
-/// 时间块及其所属事项摘要；查询结果供应用服务和界面共同使用。
-class ScheduledItem {
-  const ScheduledItem({
-    required this.block,
-    required this.itemTitle,
-    this.itemNote,
-    this.itemStatus = PlanItemStatus.todo,
-  });
-
-  final ScheduleBlock block;
-  final String itemTitle;
-
-  /// 事项的一段说明。
-  final String? itemNote;
-  final PlanItemStatus itemStatus;
-}
-
-/// 课表（01 `timetable_entry`）。
-class TimetableEntry {
-  const TimetableEntry({
-    required this.id,
-    required this.weekday,
-    required this.startTime,
-    required this.endTime,
-    required this.title,
-    this.location,
-  });
-
-  final String id;
-  final int weekday;
-  final String startTime;
-  final String endTime;
-  final String title;
-  final String? location;
-}
-
-/// 一次学习的最终结果；数据库里存的是 [value]。
 enum SessionOutcome {
   done('done', '完成'),
   partial('partial', '部分完成'),

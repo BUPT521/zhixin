@@ -509,7 +509,7 @@ class _SettingsPageState extends State<SettingsPage> {
       context: context,
       title: '清空全部记录',
       content: const Text(
-        '将删除目标、题目、作答、日程、记忆、讨论记录、图片和保存的版本，'
+        '将删除目标、题目、作答、事项、记忆、讨论记录、图片和保存的版本，'
         '以及本机语义索引，且无法撤销。模型配置与外观会保留，人格、截止时间'
         '等设置回到默认。确定清空？',
       ),

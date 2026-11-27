@@ -177,16 +177,16 @@ class RevisionService {
     Iterable<RevisionCommit> commits,
   ) => undo.undoBlockReasons(db.raw, commits);
 
-  /// 当前代次里还没撤销的提交，安排页从中挑出要展示的 AI 改动。
+  /// 读取当前代次尚未撤销的提交。
   ///
   /// 与回执同一口径：重做之后原提交重新进入结果，撤销提交本身不在这里。
   Future<List<RevisionCommit>> undoableCommits() =>
       undo.undoableCommits(db.raw);
 
-  /// 安排页的回执：指定动作且改到指定表的提交，一次查询取回。
+  /// 按动作和实际改动的表筛选可撤销的回执提交。
   ///
   /// 撤销链的判断在撤销服务里：撤销提交可以再撤销（重做），重做之后原提交
-  /// 重新可撤销，安排页据此重新给出回执。
+  /// 重新可撤销，界面据此重新判断能否撤销。
   Future<List<RevisionCommit>> receiptCommits({
     required Set<String> actions,
     required Set<String> tables,

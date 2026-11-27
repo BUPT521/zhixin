@@ -48,7 +48,6 @@ class BuddyContext {
     this.goal,
     this.goals = const [],
     this.openItems = const [],
-    this.todayBlocks = const [],
     this.recentAttempts = const [],
     this.memories = const [],
     this.priorFeedback = const [],
@@ -79,7 +78,6 @@ class BuddyContext {
   /// 同时有效的其他目标，只用于让回答知道背景，不替用户归类。
   final List<LearningGoal> goals;
   final List<PlanItem> openItems;
-  final List<ScheduledItem> todayBlocks;
   final List<AttemptWithQuestion> recentAttempts;
   final List<Memory> memories;
 

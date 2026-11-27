@@ -114,28 +114,6 @@ void main() {
       'updated_at': '2026-11-10T09:00:00',
     });
     expect(await lastTables(), {'plan_item'});
-    await insertRow(rig.db, 'timetable_entry', {
-      'id': 'entry-1',
-      'weekday': 1,
-      'start_time': '08:00',
-      'end_time': '09:00',
-      'title': '课',
-      'created_at': '2026-11-10T09:00:00',
-      'updated_at': '2026-11-10T09:00:00',
-    });
-    expect(await lastTables(), {'timetable_entry'});
-    final block = await insertRow(rig.db, 'schedule_block', {
-      'id': 'block-1',
-      'plan_item_id': planItem,
-      'start_at': '2026-11-10T10:00:00',
-      'end_at': '2026-11-10T11:00:00',
-      'source': 'user',
-      'status': 'planned',
-      'locked': 0,
-      'created_at': '2026-11-10T09:00:00',
-      'updated_at': '2026-11-10T09:00:00',
-    });
-    expect(await lastTables(), {'schedule_block'});
     const session = 'session-1';
     await insertRow(rig.db, 'study_session', {
       'id': session,
@@ -185,7 +163,6 @@ void main() {
       await lastTables(),
       containsAll({'conversation', 'message', 'attempt', 'assessment'}),
     );
-    expect(block, isPositive);
   });
 
   test('命名版本跨裁剪保留，附件不被提前回收', () async {

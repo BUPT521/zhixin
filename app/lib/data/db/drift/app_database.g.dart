@@ -3,780 +3,6 @@
 part of 'app_database.dart';
 
 // ignore_for_file: type=lint
-class $TimetableEntriesTable extends TimetableEntries
-    with TableInfo<$TimetableEntriesTable, TimetableEntryRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $TimetableEntriesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<String> id = GeneratedColumn<String>(
-    'id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _weekdayMeta = const VerificationMeta(
-    'weekday',
-  );
-  @override
-  late final GeneratedColumn<int> weekday = GeneratedColumn<int>(
-    'weekday',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(weekday).isBetweenValues(1, 7),
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _startTimeMeta = const VerificationMeta(
-    'startTime',
-  );
-  @override
-  late final GeneratedColumn<String> startTime = GeneratedColumn<String>(
-    'start_time',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _endTimeMeta = const VerificationMeta(
-    'endTime',
-  );
-  @override
-  late final GeneratedColumn<String> endTime = GeneratedColumn<String>(
-    'end_time',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _titleMeta = const VerificationMeta('title');
-  @override
-  late final GeneratedColumn<String> title = GeneratedColumn<String>(
-    'title',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _locationMeta = const VerificationMeta(
-    'location',
-  );
-  @override
-  late final GeneratedColumn<String> location = GeneratedColumn<String>(
-    'location',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    weekday,
-    startTime,
-    endTime,
-    title,
-    location,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'timetable_entry';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<TimetableEntryRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    } else if (isInserting) {
-      context.missing(_idMeta);
-    }
-    if (data.containsKey('weekday')) {
-      context.handle(
-        _weekdayMeta,
-        weekday.isAcceptableOrUnknown(data['weekday']!, _weekdayMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_weekdayMeta);
-    }
-    if (data.containsKey('start_time')) {
-      context.handle(
-        _startTimeMeta,
-        startTime.isAcceptableOrUnknown(data['start_time']!, _startTimeMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_startTimeMeta);
-    }
-    if (data.containsKey('end_time')) {
-      context.handle(
-        _endTimeMeta,
-        endTime.isAcceptableOrUnknown(data['end_time']!, _endTimeMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_endTimeMeta);
-    }
-    if (data.containsKey('title')) {
-      context.handle(
-        _titleMeta,
-        title.isAcceptableOrUnknown(data['title']!, _titleMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_titleMeta);
-    }
-    if (data.containsKey('location')) {
-      context.handle(
-        _locationMeta,
-        location.isAcceptableOrUnknown(data['location']!, _locationMeta),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  TimetableEntryRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return TimetableEntryRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}id'],
-      )!,
-      weekday: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}weekday'],
-      )!,
-      startTime: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}start_time'],
-      )!,
-      endTime: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}end_time'],
-      )!,
-      title: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}title'],
-      )!,
-      location: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}location'],
-      ),
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $TimetableEntriesTable createAlias(String alias) {
-    return $TimetableEntriesTable(attachedDatabase, alias);
-  }
-}
-
-class TimetableEntryRow extends DataClass
-    implements Insertable<TimetableEntryRow> {
-  final String id;
-  final int weekday;
-  final String startTime;
-  final String endTime;
-  final String title;
-  final String? location;
-  final String createdAt;
-  final String updatedAt;
-  const TimetableEntryRow({
-    required this.id,
-    required this.weekday,
-    required this.startTime,
-    required this.endTime,
-    required this.title,
-    this.location,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<String>(id);
-    map['weekday'] = Variable<int>(weekday);
-    map['start_time'] = Variable<String>(startTime);
-    map['end_time'] = Variable<String>(endTime);
-    map['title'] = Variable<String>(title);
-    if (!nullToAbsent || location != null) {
-      map['location'] = Variable<String>(location);
-    }
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  TimetableEntriesCompanion toCompanion(bool nullToAbsent) {
-    return TimetableEntriesCompanion(
-      id: Value(id),
-      weekday: Value(weekday),
-      startTime: Value(startTime),
-      endTime: Value(endTime),
-      title: Value(title),
-      location: location == null && nullToAbsent
-          ? const Value.absent()
-          : Value(location),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory TimetableEntryRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return TimetableEntryRow(
-      id: serializer.fromJson<String>(json['id']),
-      weekday: serializer.fromJson<int>(json['weekday']),
-      startTime: serializer.fromJson<String>(json['startTime']),
-      endTime: serializer.fromJson<String>(json['endTime']),
-      title: serializer.fromJson<String>(json['title']),
-      location: serializer.fromJson<String?>(json['location']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<String>(id),
-      'weekday': serializer.toJson<int>(weekday),
-      'startTime': serializer.toJson<String>(startTime),
-      'endTime': serializer.toJson<String>(endTime),
-      'title': serializer.toJson<String>(title),
-      'location': serializer.toJson<String?>(location),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  TimetableEntryRow copyWith({
-    String? id,
-    int? weekday,
-    String? startTime,
-    String? endTime,
-    String? title,
-    Value<String?> location = const Value.absent(),
-    String? createdAt,
-    String? updatedAt,
-  }) => TimetableEntryRow(
-    id: id ?? this.id,
-    weekday: weekday ?? this.weekday,
-    startTime: startTime ?? this.startTime,
-    endTime: endTime ?? this.endTime,
-    title: title ?? this.title,
-    location: location.present ? location.value : this.location,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  TimetableEntryRow copyWithCompanion(TimetableEntriesCompanion data) {
-    return TimetableEntryRow(
-      id: data.id.present ? data.id.value : this.id,
-      weekday: data.weekday.present ? data.weekday.value : this.weekday,
-      startTime: data.startTime.present ? data.startTime.value : this.startTime,
-      endTime: data.endTime.present ? data.endTime.value : this.endTime,
-      title: data.title.present ? data.title.value : this.title,
-      location: data.location.present ? data.location.value : this.location,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('TimetableEntryRow(')
-          ..write('id: $id, ')
-          ..write('weekday: $weekday, ')
-          ..write('startTime: $startTime, ')
-          ..write('endTime: $endTime, ')
-          ..write('title: $title, ')
-          ..write('location: $location, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    weekday,
-    startTime,
-    endTime,
-    title,
-    location,
-    createdAt,
-    updatedAt,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is TimetableEntryRow &&
-          other.id == this.id &&
-          other.weekday == this.weekday &&
-          other.startTime == this.startTime &&
-          other.endTime == this.endTime &&
-          other.title == this.title &&
-          other.location == this.location &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class TimetableEntriesCompanion extends UpdateCompanion<TimetableEntryRow> {
-  final Value<String> id;
-  final Value<int> weekday;
-  final Value<String> startTime;
-  final Value<String> endTime;
-  final Value<String> title;
-  final Value<String?> location;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  final Value<int> rowid;
-  const TimetableEntriesCompanion({
-    this.id = const Value.absent(),
-    this.weekday = const Value.absent(),
-    this.startTime = const Value.absent(),
-    this.endTime = const Value.absent(),
-    this.title = const Value.absent(),
-    this.location = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  TimetableEntriesCompanion.insert({
-    required String id,
-    required int weekday,
-    required String startTime,
-    required String endTime,
-    required String title,
-    this.location = const Value.absent(),
-    required String createdAt,
-    required String updatedAt,
-    this.rowid = const Value.absent(),
-  }) : id = Value(id),
-       weekday = Value(weekday),
-       startTime = Value(startTime),
-       endTime = Value(endTime),
-       title = Value(title),
-       createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<TimetableEntryRow> custom({
-    Expression<String>? id,
-    Expression<int>? weekday,
-    Expression<String>? startTime,
-    Expression<String>? endTime,
-    Expression<String>? title,
-    Expression<String>? location,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (weekday != null) 'weekday': weekday,
-      if (startTime != null) 'start_time': startTime,
-      if (endTime != null) 'end_time': endTime,
-      if (title != null) 'title': title,
-      if (location != null) 'location': location,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  TimetableEntriesCompanion copyWith({
-    Value<String>? id,
-    Value<int>? weekday,
-    Value<String>? startTime,
-    Value<String>? endTime,
-    Value<String>? title,
-    Value<String?>? location,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-    Value<int>? rowid,
-  }) {
-    return TimetableEntriesCompanion(
-      id: id ?? this.id,
-      weekday: weekday ?? this.weekday,
-      startTime: startTime ?? this.startTime,
-      endTime: endTime ?? this.endTime,
-      title: title ?? this.title,
-      location: location ?? this.location,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<String>(id.value);
-    }
-    if (weekday.present) {
-      map['weekday'] = Variable<int>(weekday.value);
-    }
-    if (startTime.present) {
-      map['start_time'] = Variable<String>(startTime.value);
-    }
-    if (endTime.present) {
-      map['end_time'] = Variable<String>(endTime.value);
-    }
-    if (title.present) {
-      map['title'] = Variable<String>(title.value);
-    }
-    if (location.present) {
-      map['location'] = Variable<String>(location.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('TimetableEntriesCompanion(')
-          ..write('id: $id, ')
-          ..write('weekday: $weekday, ')
-          ..write('startTime: $startTime, ')
-          ..write('endTime: $endTime, ')
-          ..write('title: $title, ')
-          ..write('location: $location, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $AppMetaTable extends AppMeta with TableInfo<$AppMetaTable, AppMetaRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $AppMetaTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _keyMeta = const VerificationMeta('key');
-  @override
-  late final GeneratedColumn<String> key = GeneratedColumn<String>(
-    'key',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _valueMeta = const VerificationMeta('value');
-  @override
-  late final GeneratedColumn<String> value = GeneratedColumn<String>(
-    'value',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [key, value, updatedAt];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'app_meta';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<AppMetaRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('key')) {
-      context.handle(
-        _keyMeta,
-        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_keyMeta);
-    }
-    if (data.containsKey('value')) {
-      context.handle(
-        _valueMeta,
-        value.isAcceptableOrUnknown(data['value']!, _valueMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_valueMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {key};
-  @override
-  AppMetaRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return AppMetaRow(
-      key: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}key'],
-      )!,
-      value: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}value'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $AppMetaTable createAlias(String alias) {
-    return $AppMetaTable(attachedDatabase, alias);
-  }
-}
-
-class AppMetaRow extends DataClass implements Insertable<AppMetaRow> {
-  final String key;
-  final String value;
-  final String updatedAt;
-  const AppMetaRow({
-    required this.key,
-    required this.value,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['key'] = Variable<String>(key);
-    map['value'] = Variable<String>(value);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  AppMetaCompanion toCompanion(bool nullToAbsent) {
-    return AppMetaCompanion(
-      key: Value(key),
-      value: Value(value),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory AppMetaRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return AppMetaRow(
-      key: serializer.fromJson<String>(json['key']),
-      value: serializer.fromJson<String>(json['value']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'key': serializer.toJson<String>(key),
-      'value': serializer.toJson<String>(value),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  AppMetaRow copyWith({String? key, String? value, String? updatedAt}) =>
-      AppMetaRow(
-        key: key ?? this.key,
-        value: value ?? this.value,
-        updatedAt: updatedAt ?? this.updatedAt,
-      );
-  AppMetaRow copyWithCompanion(AppMetaCompanion data) {
-    return AppMetaRow(
-      key: data.key.present ? data.key.value : this.key,
-      value: data.value.present ? data.value.value : this.value,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AppMetaRow(')
-          ..write('key: $key, ')
-          ..write('value: $value, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(key, value, updatedAt);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is AppMetaRow &&
-          other.key == this.key &&
-          other.value == this.value &&
-          other.updatedAt == this.updatedAt);
-}
-
-class AppMetaCompanion extends UpdateCompanion<AppMetaRow> {
-  final Value<String> key;
-  final Value<String> value;
-  final Value<String> updatedAt;
-  final Value<int> rowid;
-  const AppMetaCompanion({
-    this.key = const Value.absent(),
-    this.value = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  AppMetaCompanion.insert({
-    required String key,
-    required String value,
-    required String updatedAt,
-    this.rowid = const Value.absent(),
-  }) : key = Value(key),
-       value = Value(value),
-       updatedAt = Value(updatedAt);
-  static Insertable<AppMetaRow> custom({
-    Expression<String>? key,
-    Expression<String>? value,
-    Expression<String>? updatedAt,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (key != null) 'key': key,
-      if (value != null) 'value': value,
-      if (updatedAt != null) 'updated_at': updatedAt,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  AppMetaCompanion copyWith({
-    Value<String>? key,
-    Value<String>? value,
-    Value<String>? updatedAt,
-    Value<int>? rowid,
-  }) {
-    return AppMetaCompanion(
-      key: key ?? this.key,
-      value: value ?? this.value,
-      updatedAt: updatedAt ?? this.updatedAt,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (key.present) {
-      map['key'] = Variable<String>(key.value);
-    }
-    if (value.present) {
-      map['value'] = Variable<String>(value.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AppMetaCompanion(')
-          ..write('key: $key, ')
-          ..write('value: $value, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
 class $LearningGoalsTable extends LearningGoals
     with TableInfo<$LearningGoalsTable, LearningGoalRow> {
   @override
@@ -1498,270 +724,6 @@ class AssetObjectsCompanion extends UpdateCompanion<AssetObjectRow> {
   }
 }
 
-class $AssetChunksTable extends AssetChunks
-    with TableInfo<$AssetChunksTable, AssetChunkRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $AssetChunksTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _hashMeta = const VerificationMeta('hash');
-  @override
-  late final GeneratedColumn<String> hash = GeneratedColumn<String>(
-    'hash',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES asset_object (hash) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _seqMeta = const VerificationMeta('seq');
-  @override
-  late final GeneratedColumn<int> seq = GeneratedColumn<int>(
-    'seq',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(seq).isBiggerOrEqualValue(0),
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _dataMeta = const VerificationMeta('data');
-  @override
-  late final GeneratedColumn<Uint8List> data = GeneratedColumn<Uint8List>(
-    'data',
-    aliasedName,
-    false,
-    type: DriftSqlType.blob,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [hash, seq, data];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'asset_chunk';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<AssetChunkRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('hash')) {
-      context.handle(
-        _hashMeta,
-        hash.isAcceptableOrUnknown(data['hash']!, _hashMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_hashMeta);
-    }
-    if (data.containsKey('seq')) {
-      context.handle(
-        _seqMeta,
-        seq.isAcceptableOrUnknown(data['seq']!, _seqMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_seqMeta);
-    }
-    if (data.containsKey('data')) {
-      context.handle(
-        _dataMeta,
-        this.data.isAcceptableOrUnknown(data['data']!, _dataMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_dataMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {hash, seq};
-  @override
-  AssetChunkRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return AssetChunkRow(
-      hash: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}hash'],
-      )!,
-      seq: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}seq'],
-      )!,
-      data: attachedDatabase.typeMapping.read(
-        DriftSqlType.blob,
-        data['${effectivePrefix}data'],
-      )!,
-    );
-  }
-
-  @override
-  $AssetChunksTable createAlias(String alias) {
-    return $AssetChunksTable(attachedDatabase, alias);
-  }
-}
-
-class AssetChunkRow extends DataClass implements Insertable<AssetChunkRow> {
-  final String hash;
-  final int seq;
-  final Uint8List data;
-  const AssetChunkRow({
-    required this.hash,
-    required this.seq,
-    required this.data,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['hash'] = Variable<String>(hash);
-    map['seq'] = Variable<int>(seq);
-    map['data'] = Variable<Uint8List>(data);
-    return map;
-  }
-
-  AssetChunksCompanion toCompanion(bool nullToAbsent) {
-    return AssetChunksCompanion(
-      hash: Value(hash),
-      seq: Value(seq),
-      data: Value(data),
-    );
-  }
-
-  factory AssetChunkRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return AssetChunkRow(
-      hash: serializer.fromJson<String>(json['hash']),
-      seq: serializer.fromJson<int>(json['seq']),
-      data: serializer.fromJson<Uint8List>(json['data']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'hash': serializer.toJson<String>(hash),
-      'seq': serializer.toJson<int>(seq),
-      'data': serializer.toJson<Uint8List>(data),
-    };
-  }
-
-  AssetChunkRow copyWith({String? hash, int? seq, Uint8List? data}) =>
-      AssetChunkRow(
-        hash: hash ?? this.hash,
-        seq: seq ?? this.seq,
-        data: data ?? this.data,
-      );
-  AssetChunkRow copyWithCompanion(AssetChunksCompanion data) {
-    return AssetChunkRow(
-      hash: data.hash.present ? data.hash.value : this.hash,
-      seq: data.seq.present ? data.seq.value : this.seq,
-      data: data.data.present ? data.data.value : this.data,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AssetChunkRow(')
-          ..write('hash: $hash, ')
-          ..write('seq: $seq, ')
-          ..write('data: $data')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(hash, seq, $driftBlobEquality.hash(data));
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is AssetChunkRow &&
-          other.hash == this.hash &&
-          other.seq == this.seq &&
-          $driftBlobEquality.equals(other.data, this.data));
-}
-
-class AssetChunksCompanion extends UpdateCompanion<AssetChunkRow> {
-  final Value<String> hash;
-  final Value<int> seq;
-  final Value<Uint8List> data;
-  final Value<int> rowid;
-  const AssetChunksCompanion({
-    this.hash = const Value.absent(),
-    this.seq = const Value.absent(),
-    this.data = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  AssetChunksCompanion.insert({
-    required String hash,
-    required int seq,
-    required Uint8List data,
-    this.rowid = const Value.absent(),
-  }) : hash = Value(hash),
-       seq = Value(seq),
-       data = Value(data);
-  static Insertable<AssetChunkRow> custom({
-    Expression<String>? hash,
-    Expression<int>? seq,
-    Expression<Uint8List>? data,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (hash != null) 'hash': hash,
-      if (seq != null) 'seq': seq,
-      if (data != null) 'data': data,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  AssetChunksCompanion copyWith({
-    Value<String>? hash,
-    Value<int>? seq,
-    Value<Uint8List>? data,
-    Value<int>? rowid,
-  }) {
-    return AssetChunksCompanion(
-      hash: hash ?? this.hash,
-      seq: seq ?? this.seq,
-      data: data ?? this.data,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (hash.present) {
-      map['hash'] = Variable<String>(hash.value);
-    }
-    if (seq.present) {
-      map['seq'] = Variable<int>(seq.value);
-    }
-    if (data.present) {
-      map['data'] = Variable<Uint8List>(data.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AssetChunksCompanion(')
-          ..write('hash: $hash, ')
-          ..write('seq: $seq, ')
-          ..write('data: $data, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
 class $MaterialsTable extends Materials
     with TableInfo<$MaterialsTable, MaterialRow> {
   @override
@@ -2331,470 +1293,6 @@ class MaterialsCompanion extends UpdateCompanion<MaterialRow> {
           ..write('sourceFileName: $sourceFileName, ')
           ..write('sourceFileHash: $sourceFileHash, ')
           ..write('goalId: $goalId, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $MaterialPagesTable extends MaterialPages
-    with TableInfo<$MaterialPagesTable, MaterialPageRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $MaterialPagesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<String> id = GeneratedColumn<String>(
-    'id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _materialIdMeta = const VerificationMeta(
-    'materialId',
-  );
-  @override
-  late final GeneratedColumn<String> materialId = GeneratedColumn<String>(
-    'material_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES material (id) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _pageNoMeta = const VerificationMeta('pageNo');
-  @override
-  late final GeneratedColumn<int> pageNo = GeneratedColumn<int>(
-    'page_no',
-    aliasedName,
-    false,
-    check: () => ComparableExpr(pageNo).isBiggerThanValue(0),
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _labelMeta = const VerificationMeta('label');
-  @override
-  late final GeneratedColumn<String> label = GeneratedColumn<String>(
-    'label',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _contentMeta = const VerificationMeta(
-    'content',
-  );
-  @override
-  late final GeneratedColumn<String> content = GeneratedColumn<String>(
-    'content',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    materialId,
-    pageNo,
-    label,
-    content,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'material_page';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<MaterialPageRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    } else if (isInserting) {
-      context.missing(_idMeta);
-    }
-    if (data.containsKey('material_id')) {
-      context.handle(
-        _materialIdMeta,
-        materialId.isAcceptableOrUnknown(data['material_id']!, _materialIdMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_materialIdMeta);
-    }
-    if (data.containsKey('page_no')) {
-      context.handle(
-        _pageNoMeta,
-        pageNo.isAcceptableOrUnknown(data['page_no']!, _pageNoMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_pageNoMeta);
-    }
-    if (data.containsKey('label')) {
-      context.handle(
-        _labelMeta,
-        label.isAcceptableOrUnknown(data['label']!, _labelMeta),
-      );
-    }
-    if (data.containsKey('content')) {
-      context.handle(
-        _contentMeta,
-        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_contentMeta);
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  List<Set<GeneratedColumn>> get uniqueKeys => [
-    {materialId, pageNo},
-  ];
-  @override
-  MaterialPageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return MaterialPageRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}id'],
-      )!,
-      materialId: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}material_id'],
-      )!,
-      pageNo: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}page_no'],
-      )!,
-      label: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}label'],
-      ),
-      content: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}content'],
-      )!,
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $MaterialPagesTable createAlias(String alias) {
-    return $MaterialPagesTable(attachedDatabase, alias);
-  }
-}
-
-class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
-  final String id;
-  final String materialId;
-  final int pageNo;
-  final String? label;
-  final String content;
-  final String createdAt;
-  final String updatedAt;
-  const MaterialPageRow({
-    required this.id,
-    required this.materialId,
-    required this.pageNo,
-    this.label,
-    required this.content,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<String>(id);
-    map['material_id'] = Variable<String>(materialId);
-    map['page_no'] = Variable<int>(pageNo);
-    if (!nullToAbsent || label != null) {
-      map['label'] = Variable<String>(label);
-    }
-    map['content'] = Variable<String>(content);
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  MaterialPagesCompanion toCompanion(bool nullToAbsent) {
-    return MaterialPagesCompanion(
-      id: Value(id),
-      materialId: Value(materialId),
-      pageNo: Value(pageNo),
-      label: label == null && nullToAbsent
-          ? const Value.absent()
-          : Value(label),
-      content: Value(content),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory MaterialPageRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return MaterialPageRow(
-      id: serializer.fromJson<String>(json['id']),
-      materialId: serializer.fromJson<String>(json['materialId']),
-      pageNo: serializer.fromJson<int>(json['pageNo']),
-      label: serializer.fromJson<String?>(json['label']),
-      content: serializer.fromJson<String>(json['content']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<String>(id),
-      'materialId': serializer.toJson<String>(materialId),
-      'pageNo': serializer.toJson<int>(pageNo),
-      'label': serializer.toJson<String?>(label),
-      'content': serializer.toJson<String>(content),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  MaterialPageRow copyWith({
-    String? id,
-    String? materialId,
-    int? pageNo,
-    Value<String?> label = const Value.absent(),
-    String? content,
-    String? createdAt,
-    String? updatedAt,
-  }) => MaterialPageRow(
-    id: id ?? this.id,
-    materialId: materialId ?? this.materialId,
-    pageNo: pageNo ?? this.pageNo,
-    label: label.present ? label.value : this.label,
-    content: content ?? this.content,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  MaterialPageRow copyWithCompanion(MaterialPagesCompanion data) {
-    return MaterialPageRow(
-      id: data.id.present ? data.id.value : this.id,
-      materialId: data.materialId.present
-          ? data.materialId.value
-          : this.materialId,
-      pageNo: data.pageNo.present ? data.pageNo.value : this.pageNo,
-      label: data.label.present ? data.label.value : this.label,
-      content: data.content.present ? data.content.value : this.content,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('MaterialPageRow(')
-          ..write('id: $id, ')
-          ..write('materialId: $materialId, ')
-          ..write('pageNo: $pageNo, ')
-          ..write('label: $label, ')
-          ..write('content: $content, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode =>
-      Object.hash(id, materialId, pageNo, label, content, createdAt, updatedAt);
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is MaterialPageRow &&
-          other.id == this.id &&
-          other.materialId == this.materialId &&
-          other.pageNo == this.pageNo &&
-          other.label == this.label &&
-          other.content == this.content &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
-  final Value<String> id;
-  final Value<String> materialId;
-  final Value<int> pageNo;
-  final Value<String?> label;
-  final Value<String> content;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  final Value<int> rowid;
-  const MaterialPagesCompanion({
-    this.id = const Value.absent(),
-    this.materialId = const Value.absent(),
-    this.pageNo = const Value.absent(),
-    this.label = const Value.absent(),
-    this.content = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  MaterialPagesCompanion.insert({
-    required String id,
-    required String materialId,
-    required int pageNo,
-    this.label = const Value.absent(),
-    required String content,
-    required String createdAt,
-    required String updatedAt,
-    this.rowid = const Value.absent(),
-  }) : id = Value(id),
-       materialId = Value(materialId),
-       pageNo = Value(pageNo),
-       content = Value(content),
-       createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<MaterialPageRow> custom({
-    Expression<String>? id,
-    Expression<String>? materialId,
-    Expression<int>? pageNo,
-    Expression<String>? label,
-    Expression<String>? content,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (materialId != null) 'material_id': materialId,
-      if (pageNo != null) 'page_no': pageNo,
-      if (label != null) 'label': label,
-      if (content != null) 'content': content,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  MaterialPagesCompanion copyWith({
-    Value<String>? id,
-    Value<String>? materialId,
-    Value<int>? pageNo,
-    Value<String?>? label,
-    Value<String>? content,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-    Value<int>? rowid,
-  }) {
-    return MaterialPagesCompanion(
-      id: id ?? this.id,
-      materialId: materialId ?? this.materialId,
-      pageNo: pageNo ?? this.pageNo,
-      label: label ?? this.label,
-      content: content ?? this.content,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<String>(id.value);
-    }
-    if (materialId.present) {
-      map['material_id'] = Variable<String>(materialId.value);
-    }
-    if (pageNo.present) {
-      map['page_no'] = Variable<int>(pageNo.value);
-    }
-    if (label.present) {
-      map['label'] = Variable<String>(label.value);
-    }
-    if (content.present) {
-      map['content'] = Variable<String>(content.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('MaterialPagesCompanion(')
-          ..write('id: $id, ')
-          ..write('materialId: $materialId, ')
-          ..write('pageNo: $pageNo, ')
-          ..write('label: $label, ')
-          ..write('content: $content, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -3525,495 +2023,6 @@ class ConversationsCompanion extends UpdateCompanion<ConversationRow> {
           ..write('endedAt: $endedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $MessagesTable extends Messages
-    with TableInfo<$MessagesTable, MessageRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $MessagesTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<String> id = GeneratedColumn<String>(
-    'id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
-    'conversationId',
-  );
-  @override
-  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
-    'conversation_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES conversation (id) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _roleMeta = const VerificationMeta('role');
-  @override
-  late final GeneratedColumn<String> role = GeneratedColumn<String>(
-    'role',
-    aliasedName,
-    false,
-    check: () => role.isIn(messageRoles),
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _contentMeta = const VerificationMeta(
-    'content',
-  );
-  @override
-  late final GeneratedColumn<String> content = GeneratedColumn<String>(
-    'content',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _imageHashesJsonMeta = const VerificationMeta(
-    'imageHashesJson',
-  );
-  @override
-  late final GeneratedColumn<String> imageHashesJson = GeneratedColumn<String>(
-    'image_hashes_json',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _structuredJsonMeta = const VerificationMeta(
-    'structuredJson',
-  );
-  @override
-  late final GeneratedColumn<String> structuredJson = GeneratedColumn<String>(
-    'structured_json',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    conversationId,
-    role,
-    content,
-    imageHashesJson,
-    structuredJson,
-    createdAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'message';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<MessageRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    } else if (isInserting) {
-      context.missing(_idMeta);
-    }
-    if (data.containsKey('conversation_id')) {
-      context.handle(
-        _conversationIdMeta,
-        conversationId.isAcceptableOrUnknown(
-          data['conversation_id']!,
-          _conversationIdMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_conversationIdMeta);
-    }
-    if (data.containsKey('role')) {
-      context.handle(
-        _roleMeta,
-        role.isAcceptableOrUnknown(data['role']!, _roleMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_roleMeta);
-    }
-    if (data.containsKey('content')) {
-      context.handle(
-        _contentMeta,
-        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_contentMeta);
-    }
-    if (data.containsKey('image_hashes_json')) {
-      context.handle(
-        _imageHashesJsonMeta,
-        imageHashesJson.isAcceptableOrUnknown(
-          data['image_hashes_json']!,
-          _imageHashesJsonMeta,
-        ),
-      );
-    }
-    if (data.containsKey('structured_json')) {
-      context.handle(
-        _structuredJsonMeta,
-        structuredJson.isAcceptableOrUnknown(
-          data['structured_json']!,
-          _structuredJsonMeta,
-        ),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  MessageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return MessageRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}id'],
-      )!,
-      conversationId: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}conversation_id'],
-      )!,
-      role: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}role'],
-      )!,
-      content: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}content'],
-      )!,
-      imageHashesJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}image_hashes_json'],
-      ),
-      structuredJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}structured_json'],
-      ),
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-    );
-  }
-
-  @override
-  $MessagesTable createAlias(String alias) {
-    return $MessagesTable(attachedDatabase, alias);
-  }
-}
-
-class MessageRow extends DataClass implements Insertable<MessageRow> {
-  final String id;
-  final String conversationId;
-  final String role;
-  final String content;
-
-  /// 图片的附件哈希数组；列名写的是哈希，不是路径（审查 S17）。
-  final String? imageHashesJson;
-  final String? structuredJson;
-  final String createdAt;
-  const MessageRow({
-    required this.id,
-    required this.conversationId,
-    required this.role,
-    required this.content,
-    this.imageHashesJson,
-    this.structuredJson,
-    required this.createdAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<String>(id);
-    map['conversation_id'] = Variable<String>(conversationId);
-    map['role'] = Variable<String>(role);
-    map['content'] = Variable<String>(content);
-    if (!nullToAbsent || imageHashesJson != null) {
-      map['image_hashes_json'] = Variable<String>(imageHashesJson);
-    }
-    if (!nullToAbsent || structuredJson != null) {
-      map['structured_json'] = Variable<String>(structuredJson);
-    }
-    map['created_at'] = Variable<String>(createdAt);
-    return map;
-  }
-
-  MessagesCompanion toCompanion(bool nullToAbsent) {
-    return MessagesCompanion(
-      id: Value(id),
-      conversationId: Value(conversationId),
-      role: Value(role),
-      content: Value(content),
-      imageHashesJson: imageHashesJson == null && nullToAbsent
-          ? const Value.absent()
-          : Value(imageHashesJson),
-      structuredJson: structuredJson == null && nullToAbsent
-          ? const Value.absent()
-          : Value(structuredJson),
-      createdAt: Value(createdAt),
-    );
-  }
-
-  factory MessageRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return MessageRow(
-      id: serializer.fromJson<String>(json['id']),
-      conversationId: serializer.fromJson<String>(json['conversationId']),
-      role: serializer.fromJson<String>(json['role']),
-      content: serializer.fromJson<String>(json['content']),
-      imageHashesJson: serializer.fromJson<String?>(json['imageHashesJson']),
-      structuredJson: serializer.fromJson<String?>(json['structuredJson']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<String>(id),
-      'conversationId': serializer.toJson<String>(conversationId),
-      'role': serializer.toJson<String>(role),
-      'content': serializer.toJson<String>(content),
-      'imageHashesJson': serializer.toJson<String?>(imageHashesJson),
-      'structuredJson': serializer.toJson<String?>(structuredJson),
-      'createdAt': serializer.toJson<String>(createdAt),
-    };
-  }
-
-  MessageRow copyWith({
-    String? id,
-    String? conversationId,
-    String? role,
-    String? content,
-    Value<String?> imageHashesJson = const Value.absent(),
-    Value<String?> structuredJson = const Value.absent(),
-    String? createdAt,
-  }) => MessageRow(
-    id: id ?? this.id,
-    conversationId: conversationId ?? this.conversationId,
-    role: role ?? this.role,
-    content: content ?? this.content,
-    imageHashesJson: imageHashesJson.present
-        ? imageHashesJson.value
-        : this.imageHashesJson,
-    structuredJson: structuredJson.present
-        ? structuredJson.value
-        : this.structuredJson,
-    createdAt: createdAt ?? this.createdAt,
-  );
-  MessageRow copyWithCompanion(MessagesCompanion data) {
-    return MessageRow(
-      id: data.id.present ? data.id.value : this.id,
-      conversationId: data.conversationId.present
-          ? data.conversationId.value
-          : this.conversationId,
-      role: data.role.present ? data.role.value : this.role,
-      content: data.content.present ? data.content.value : this.content,
-      imageHashesJson: data.imageHashesJson.present
-          ? data.imageHashesJson.value
-          : this.imageHashesJson,
-      structuredJson: data.structuredJson.present
-          ? data.structuredJson.value
-          : this.structuredJson,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('MessageRow(')
-          ..write('id: $id, ')
-          ..write('conversationId: $conversationId, ')
-          ..write('role: $role, ')
-          ..write('content: $content, ')
-          ..write('imageHashesJson: $imageHashesJson, ')
-          ..write('structuredJson: $structuredJson, ')
-          ..write('createdAt: $createdAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    conversationId,
-    role,
-    content,
-    imageHashesJson,
-    structuredJson,
-    createdAt,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is MessageRow &&
-          other.id == this.id &&
-          other.conversationId == this.conversationId &&
-          other.role == this.role &&
-          other.content == this.content &&
-          other.imageHashesJson == this.imageHashesJson &&
-          other.structuredJson == this.structuredJson &&
-          other.createdAt == this.createdAt);
-}
-
-class MessagesCompanion extends UpdateCompanion<MessageRow> {
-  final Value<String> id;
-  final Value<String> conversationId;
-  final Value<String> role;
-  final Value<String> content;
-  final Value<String?> imageHashesJson;
-  final Value<String?> structuredJson;
-  final Value<String> createdAt;
-  final Value<int> rowid;
-  const MessagesCompanion({
-    this.id = const Value.absent(),
-    this.conversationId = const Value.absent(),
-    this.role = const Value.absent(),
-    this.content = const Value.absent(),
-    this.imageHashesJson = const Value.absent(),
-    this.structuredJson = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  MessagesCompanion.insert({
-    required String id,
-    required String conversationId,
-    required String role,
-    required String content,
-    this.imageHashesJson = const Value.absent(),
-    this.structuredJson = const Value.absent(),
-    required String createdAt,
-    this.rowid = const Value.absent(),
-  }) : id = Value(id),
-       conversationId = Value(conversationId),
-       role = Value(role),
-       content = Value(content),
-       createdAt = Value(createdAt);
-  static Insertable<MessageRow> custom({
-    Expression<String>? id,
-    Expression<String>? conversationId,
-    Expression<String>? role,
-    Expression<String>? content,
-    Expression<String>? imageHashesJson,
-    Expression<String>? structuredJson,
-    Expression<String>? createdAt,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (conversationId != null) 'conversation_id': conversationId,
-      if (role != null) 'role': role,
-      if (content != null) 'content': content,
-      if (imageHashesJson != null) 'image_hashes_json': imageHashesJson,
-      if (structuredJson != null) 'structured_json': structuredJson,
-      if (createdAt != null) 'created_at': createdAt,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  MessagesCompanion copyWith({
-    Value<String>? id,
-    Value<String>? conversationId,
-    Value<String>? role,
-    Value<String>? content,
-    Value<String?>? imageHashesJson,
-    Value<String?>? structuredJson,
-    Value<String>? createdAt,
-    Value<int>? rowid,
-  }) {
-    return MessagesCompanion(
-      id: id ?? this.id,
-      conversationId: conversationId ?? this.conversationId,
-      role: role ?? this.role,
-      content: content ?? this.content,
-      imageHashesJson: imageHashesJson ?? this.imageHashesJson,
-      structuredJson: structuredJson ?? this.structuredJson,
-      createdAt: createdAt ?? this.createdAt,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<String>(id.value);
-    }
-    if (conversationId.present) {
-      map['conversation_id'] = Variable<String>(conversationId.value);
-    }
-    if (role.present) {
-      map['role'] = Variable<String>(role.value);
-    }
-    if (content.present) {
-      map['content'] = Variable<String>(content.value);
-    }
-    if (imageHashesJson.present) {
-      map['image_hashes_json'] = Variable<String>(imageHashesJson.value);
-    }
-    if (structuredJson.present) {
-      map['structured_json'] = Variable<String>(structuredJson.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('MessagesCompanion(')
-          ..write('id: $id, ')
-          ..write('conversationId: $conversationId, ')
-          ..write('role: $role, ')
-          ..write('content: $content, ')
-          ..write('imageHashesJson: $imageHashesJson, ')
-          ..write('structuredJson: $structuredJson, ')
-          ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -5659,566 +3668,6 @@ class PlanItemsCompanion extends UpdateCompanion<PlanItemRow> {
   }
 }
 
-class $ScheduleBlocksTable extends ScheduleBlocks
-    with TableInfo<$ScheduleBlocksTable, ScheduleBlockRow> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $ScheduleBlocksTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<String> id = GeneratedColumn<String>(
-    'id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _planItemIdMeta = const VerificationMeta(
-    'planItemId',
-  );
-  @override
-  late final GeneratedColumn<String> planItemId = GeneratedColumn<String>(
-    'plan_item_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'REFERENCES plan_item (id) ON DELETE CASCADE',
-    ),
-  );
-  static const VerificationMeta _startAtMeta = const VerificationMeta(
-    'startAt',
-  );
-  @override
-  late final GeneratedColumn<String> startAt = GeneratedColumn<String>(
-    'start_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _endAtMeta = const VerificationMeta('endAt');
-  @override
-  late final GeneratedColumn<String> endAt = GeneratedColumn<String>(
-    'end_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
-  @override
-  late final GeneratedColumn<String> source = GeneratedColumn<String>(
-    'source',
-    aliasedName,
-    false,
-    check: () => source.isIn(sourceValues),
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('user'),
-  );
-  static const VerificationMeta _statusMeta = const VerificationMeta('status');
-  @override
-  late final GeneratedColumn<String> status = GeneratedColumn<String>(
-    'status',
-    aliasedName,
-    false,
-    check: () => status.isIn(scheduleBlockStatuses),
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('planned'),
-  );
-  static const VerificationMeta _lockedMeta = const VerificationMeta('locked');
-  @override
-  late final GeneratedColumn<bool> locked = GeneratedColumn<bool>(
-    'locked',
-    aliasedName,
-    false,
-    type: DriftSqlType.bool,
-    requiredDuringInsert: false,
-    defaultConstraints: GeneratedColumn.constraintIsAlways(
-      'CHECK ("locked" IN (0, 1))',
-    ),
-    defaultValue: const Constant(false),
-  );
-  static const VerificationMeta _createdAtMeta = const VerificationMeta(
-    'createdAt',
-  );
-  @override
-  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
-    'created_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
-    'updatedAt',
-  );
-  @override
-  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
-    'updated_at',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    planItemId,
-    startAt,
-    endAt,
-    source,
-    status,
-    locked,
-    createdAt,
-    updatedAt,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'schedule_block';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<ScheduleBlockRow> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    } else if (isInserting) {
-      context.missing(_idMeta);
-    }
-    if (data.containsKey('plan_item_id')) {
-      context.handle(
-        _planItemIdMeta,
-        planItemId.isAcceptableOrUnknown(
-          data['plan_item_id']!,
-          _planItemIdMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_planItemIdMeta);
-    }
-    if (data.containsKey('start_at')) {
-      context.handle(
-        _startAtMeta,
-        startAt.isAcceptableOrUnknown(data['start_at']!, _startAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_startAtMeta);
-    }
-    if (data.containsKey('end_at')) {
-      context.handle(
-        _endAtMeta,
-        endAt.isAcceptableOrUnknown(data['end_at']!, _endAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_endAtMeta);
-    }
-    if (data.containsKey('source')) {
-      context.handle(
-        _sourceMeta,
-        source.isAcceptableOrUnknown(data['source']!, _sourceMeta),
-      );
-    }
-    if (data.containsKey('status')) {
-      context.handle(
-        _statusMeta,
-        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
-      );
-    }
-    if (data.containsKey('locked')) {
-      context.handle(
-        _lockedMeta,
-        locked.isAcceptableOrUnknown(data['locked']!, _lockedMeta),
-      );
-    }
-    if (data.containsKey('created_at')) {
-      context.handle(
-        _createdAtMeta,
-        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_createdAtMeta);
-    }
-    if (data.containsKey('updated_at')) {
-      context.handle(
-        _updatedAtMeta,
-        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_updatedAtMeta);
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  ScheduleBlockRow map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return ScheduleBlockRow(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}id'],
-      )!,
-      planItemId: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}plan_item_id'],
-      )!,
-      startAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}start_at'],
-      )!,
-      endAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}end_at'],
-      )!,
-      source: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}source'],
-      )!,
-      status: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}status'],
-      )!,
-      locked: attachedDatabase.typeMapping.read(
-        DriftSqlType.bool,
-        data['${effectivePrefix}locked'],
-      )!,
-      createdAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}created_at'],
-      )!,
-      updatedAt: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}updated_at'],
-      )!,
-    );
-  }
-
-  @override
-  $ScheduleBlocksTable createAlias(String alias) {
-    return $ScheduleBlocksTable(attachedDatabase, alias);
-  }
-}
-
-class ScheduleBlockRow extends DataClass
-    implements Insertable<ScheduleBlockRow> {
-  final String id;
-  final String planItemId;
-  final String startAt;
-  final String endAt;
-  final String source;
-  final String status;
-  final bool locked;
-  final String createdAt;
-  final String updatedAt;
-  const ScheduleBlockRow({
-    required this.id,
-    required this.planItemId,
-    required this.startAt,
-    required this.endAt,
-    required this.source,
-    required this.status,
-    required this.locked,
-    required this.createdAt,
-    required this.updatedAt,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<String>(id);
-    map['plan_item_id'] = Variable<String>(planItemId);
-    map['start_at'] = Variable<String>(startAt);
-    map['end_at'] = Variable<String>(endAt);
-    map['source'] = Variable<String>(source);
-    map['status'] = Variable<String>(status);
-    map['locked'] = Variable<bool>(locked);
-    map['created_at'] = Variable<String>(createdAt);
-    map['updated_at'] = Variable<String>(updatedAt);
-    return map;
-  }
-
-  ScheduleBlocksCompanion toCompanion(bool nullToAbsent) {
-    return ScheduleBlocksCompanion(
-      id: Value(id),
-      planItemId: Value(planItemId),
-      startAt: Value(startAt),
-      endAt: Value(endAt),
-      source: Value(source),
-      status: Value(status),
-      locked: Value(locked),
-      createdAt: Value(createdAt),
-      updatedAt: Value(updatedAt),
-    );
-  }
-
-  factory ScheduleBlockRow.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return ScheduleBlockRow(
-      id: serializer.fromJson<String>(json['id']),
-      planItemId: serializer.fromJson<String>(json['planItemId']),
-      startAt: serializer.fromJson<String>(json['startAt']),
-      endAt: serializer.fromJson<String>(json['endAt']),
-      source: serializer.fromJson<String>(json['source']),
-      status: serializer.fromJson<String>(json['status']),
-      locked: serializer.fromJson<bool>(json['locked']),
-      createdAt: serializer.fromJson<String>(json['createdAt']),
-      updatedAt: serializer.fromJson<String>(json['updatedAt']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<String>(id),
-      'planItemId': serializer.toJson<String>(planItemId),
-      'startAt': serializer.toJson<String>(startAt),
-      'endAt': serializer.toJson<String>(endAt),
-      'source': serializer.toJson<String>(source),
-      'status': serializer.toJson<String>(status),
-      'locked': serializer.toJson<bool>(locked),
-      'createdAt': serializer.toJson<String>(createdAt),
-      'updatedAt': serializer.toJson<String>(updatedAt),
-    };
-  }
-
-  ScheduleBlockRow copyWith({
-    String? id,
-    String? planItemId,
-    String? startAt,
-    String? endAt,
-    String? source,
-    String? status,
-    bool? locked,
-    String? createdAt,
-    String? updatedAt,
-  }) => ScheduleBlockRow(
-    id: id ?? this.id,
-    planItemId: planItemId ?? this.planItemId,
-    startAt: startAt ?? this.startAt,
-    endAt: endAt ?? this.endAt,
-    source: source ?? this.source,
-    status: status ?? this.status,
-    locked: locked ?? this.locked,
-    createdAt: createdAt ?? this.createdAt,
-    updatedAt: updatedAt ?? this.updatedAt,
-  );
-  ScheduleBlockRow copyWithCompanion(ScheduleBlocksCompanion data) {
-    return ScheduleBlockRow(
-      id: data.id.present ? data.id.value : this.id,
-      planItemId: data.planItemId.present
-          ? data.planItemId.value
-          : this.planItemId,
-      startAt: data.startAt.present ? data.startAt.value : this.startAt,
-      endAt: data.endAt.present ? data.endAt.value : this.endAt,
-      source: data.source.present ? data.source.value : this.source,
-      status: data.status.present ? data.status.value : this.status,
-      locked: data.locked.present ? data.locked.value : this.locked,
-      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
-      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ScheduleBlockRow(')
-          ..write('id: $id, ')
-          ..write('planItemId: $planItemId, ')
-          ..write('startAt: $startAt, ')
-          ..write('endAt: $endAt, ')
-          ..write('source: $source, ')
-          ..write('status: $status, ')
-          ..write('locked: $locked, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    planItemId,
-    startAt,
-    endAt,
-    source,
-    status,
-    locked,
-    createdAt,
-    updatedAt,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is ScheduleBlockRow &&
-          other.id == this.id &&
-          other.planItemId == this.planItemId &&
-          other.startAt == this.startAt &&
-          other.endAt == this.endAt &&
-          other.source == this.source &&
-          other.status == this.status &&
-          other.locked == this.locked &&
-          other.createdAt == this.createdAt &&
-          other.updatedAt == this.updatedAt);
-}
-
-class ScheduleBlocksCompanion extends UpdateCompanion<ScheduleBlockRow> {
-  final Value<String> id;
-  final Value<String> planItemId;
-  final Value<String> startAt;
-  final Value<String> endAt;
-  final Value<String> source;
-  final Value<String> status;
-  final Value<bool> locked;
-  final Value<String> createdAt;
-  final Value<String> updatedAt;
-  final Value<int> rowid;
-  const ScheduleBlocksCompanion({
-    this.id = const Value.absent(),
-    this.planItemId = const Value.absent(),
-    this.startAt = const Value.absent(),
-    this.endAt = const Value.absent(),
-    this.source = const Value.absent(),
-    this.status = const Value.absent(),
-    this.locked = const Value.absent(),
-    this.createdAt = const Value.absent(),
-    this.updatedAt = const Value.absent(),
-    this.rowid = const Value.absent(),
-  });
-  ScheduleBlocksCompanion.insert({
-    required String id,
-    required String planItemId,
-    required String startAt,
-    required String endAt,
-    this.source = const Value.absent(),
-    this.status = const Value.absent(),
-    this.locked = const Value.absent(),
-    required String createdAt,
-    required String updatedAt,
-    this.rowid = const Value.absent(),
-  }) : id = Value(id),
-       planItemId = Value(planItemId),
-       startAt = Value(startAt),
-       endAt = Value(endAt),
-       createdAt = Value(createdAt),
-       updatedAt = Value(updatedAt);
-  static Insertable<ScheduleBlockRow> custom({
-    Expression<String>? id,
-    Expression<String>? planItemId,
-    Expression<String>? startAt,
-    Expression<String>? endAt,
-    Expression<String>? source,
-    Expression<String>? status,
-    Expression<bool>? locked,
-    Expression<String>? createdAt,
-    Expression<String>? updatedAt,
-    Expression<int>? rowid,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (planItemId != null) 'plan_item_id': planItemId,
-      if (startAt != null) 'start_at': startAt,
-      if (endAt != null) 'end_at': endAt,
-      if (source != null) 'source': source,
-      if (status != null) 'status': status,
-      if (locked != null) 'locked': locked,
-      if (createdAt != null) 'created_at': createdAt,
-      if (updatedAt != null) 'updated_at': updatedAt,
-      if (rowid != null) 'rowid': rowid,
-    });
-  }
-
-  ScheduleBlocksCompanion copyWith({
-    Value<String>? id,
-    Value<String>? planItemId,
-    Value<String>? startAt,
-    Value<String>? endAt,
-    Value<String>? source,
-    Value<String>? status,
-    Value<bool>? locked,
-    Value<String>? createdAt,
-    Value<String>? updatedAt,
-    Value<int>? rowid,
-  }) {
-    return ScheduleBlocksCompanion(
-      id: id ?? this.id,
-      planItemId: planItemId ?? this.planItemId,
-      startAt: startAt ?? this.startAt,
-      endAt: endAt ?? this.endAt,
-      source: source ?? this.source,
-      status: status ?? this.status,
-      locked: locked ?? this.locked,
-      createdAt: createdAt ?? this.createdAt,
-      updatedAt: updatedAt ?? this.updatedAt,
-      rowid: rowid ?? this.rowid,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<String>(id.value);
-    }
-    if (planItemId.present) {
-      map['plan_item_id'] = Variable<String>(planItemId.value);
-    }
-    if (startAt.present) {
-      map['start_at'] = Variable<String>(startAt.value);
-    }
-    if (endAt.present) {
-      map['end_at'] = Variable<String>(endAt.value);
-    }
-    if (source.present) {
-      map['source'] = Variable<String>(source.value);
-    }
-    if (status.present) {
-      map['status'] = Variable<String>(status.value);
-    }
-    if (locked.present) {
-      map['locked'] = Variable<bool>(locked.value);
-    }
-    if (createdAt.present) {
-      map['created_at'] = Variable<String>(createdAt.value);
-    }
-    if (updatedAt.present) {
-      map['updated_at'] = Variable<String>(updatedAt.value);
-    }
-    if (rowid.present) {
-      map['rowid'] = Variable<int>(rowid.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('ScheduleBlocksCompanion(')
-          ..write('id: $id, ')
-          ..write('planItemId: $planItemId, ')
-          ..write('startAt: $startAt, ')
-          ..write('endAt: $endAt, ')
-          ..write('source: $source, ')
-          ..write('status: $status, ')
-          ..write('locked: $locked, ')
-          ..write('createdAt: $createdAt, ')
-          ..write('updatedAt: $updatedAt, ')
-          ..write('rowid: $rowid')
-          ..write(')'))
-        .toString();
-  }
-}
-
 class $StudySessionsTable extends StudySessions
     with TableInfo<$StudySessionsTable, StudySessionRow> {
   @override
@@ -6847,6 +4296,1484 @@ class StudySessionsCompanion extends UpdateCompanion<StudySessionRow> {
           ..write('endedAt: $endedAt, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $AppMetaTable extends AppMeta with TableInfo<$AppMetaTable, AppMetaRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AppMetaTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _keyMeta = const VerificationMeta('key');
+  @override
+  late final GeneratedColumn<String> key = GeneratedColumn<String>(
+    'key',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _valueMeta = const VerificationMeta('value');
+  @override
+  late final GeneratedColumn<String> value = GeneratedColumn<String>(
+    'value',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [key, value, updatedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'app_meta';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AppMetaRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('key')) {
+      context.handle(
+        _keyMeta,
+        key.isAcceptableOrUnknown(data['key']!, _keyMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyMeta);
+    }
+    if (data.containsKey('value')) {
+      context.handle(
+        _valueMeta,
+        value.isAcceptableOrUnknown(data['value']!, _valueMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_valueMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {key};
+  @override
+  AppMetaRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AppMetaRow(
+      key: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}key'],
+      )!,
+      value: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}value'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $AppMetaTable createAlias(String alias) {
+    return $AppMetaTable(attachedDatabase, alias);
+  }
+}
+
+class AppMetaRow extends DataClass implements Insertable<AppMetaRow> {
+  final String key;
+  final String value;
+  final String updatedAt;
+  const AppMetaRow({
+    required this.key,
+    required this.value,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['key'] = Variable<String>(key);
+    map['value'] = Variable<String>(value);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  AppMetaCompanion toCompanion(bool nullToAbsent) {
+    return AppMetaCompanion(
+      key: Value(key),
+      value: Value(value),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory AppMetaRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AppMetaRow(
+      key: serializer.fromJson<String>(json['key']),
+      value: serializer.fromJson<String>(json['value']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'key': serializer.toJson<String>(key),
+      'value': serializer.toJson<String>(value),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  AppMetaRow copyWith({String? key, String? value, String? updatedAt}) =>
+      AppMetaRow(
+        key: key ?? this.key,
+        value: value ?? this.value,
+        updatedAt: updatedAt ?? this.updatedAt,
+      );
+  AppMetaRow copyWithCompanion(AppMetaCompanion data) {
+    return AppMetaRow(
+      key: data.key.present ? data.key.value : this.key,
+      value: data.value.present ? data.value.value : this.value,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AppMetaRow(')
+          ..write('key: $key, ')
+          ..write('value: $value, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(key, value, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AppMetaRow &&
+          other.key == this.key &&
+          other.value == this.value &&
+          other.updatedAt == this.updatedAt);
+}
+
+class AppMetaCompanion extends UpdateCompanion<AppMetaRow> {
+  final Value<String> key;
+  final Value<String> value;
+  final Value<String> updatedAt;
+  final Value<int> rowid;
+  const AppMetaCompanion({
+    this.key = const Value.absent(),
+    this.value = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AppMetaCompanion.insert({
+    required String key,
+    required String value,
+    required String updatedAt,
+    this.rowid = const Value.absent(),
+  }) : key = Value(key),
+       value = Value(value),
+       updatedAt = Value(updatedAt);
+  static Insertable<AppMetaRow> custom({
+    Expression<String>? key,
+    Expression<String>? value,
+    Expression<String>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (key != null) 'key': key,
+      if (value != null) 'value': value,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AppMetaCompanion copyWith({
+    Value<String>? key,
+    Value<String>? value,
+    Value<String>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return AppMetaCompanion(
+      key: key ?? this.key,
+      value: value ?? this.value,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (key.present) {
+      map['key'] = Variable<String>(key.value);
+    }
+    if (value.present) {
+      map['value'] = Variable<String>(value.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AppMetaCompanion(')
+          ..write('key: $key, ')
+          ..write('value: $value, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $AssetChunksTable extends AssetChunks
+    with TableInfo<$AssetChunksTable, AssetChunkRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $AssetChunksTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _hashMeta = const VerificationMeta('hash');
+  @override
+  late final GeneratedColumn<String> hash = GeneratedColumn<String>(
+    'hash',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES asset_object (hash) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _seqMeta = const VerificationMeta('seq');
+  @override
+  late final GeneratedColumn<int> seq = GeneratedColumn<int>(
+    'seq',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(seq).isBiggerOrEqualValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _dataMeta = const VerificationMeta('data');
+  @override
+  late final GeneratedColumn<Uint8List> data = GeneratedColumn<Uint8List>(
+    'data',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [hash, seq, data];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_chunk';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<AssetChunkRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('hash')) {
+      context.handle(
+        _hashMeta,
+        hash.isAcceptableOrUnknown(data['hash']!, _hashMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_hashMeta);
+    }
+    if (data.containsKey('seq')) {
+      context.handle(
+        _seqMeta,
+        seq.isAcceptableOrUnknown(data['seq']!, _seqMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_seqMeta);
+    }
+    if (data.containsKey('data')) {
+      context.handle(
+        _dataMeta,
+        this.data.isAcceptableOrUnknown(data['data']!, _dataMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_dataMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {hash, seq};
+  @override
+  AssetChunkRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return AssetChunkRow(
+      hash: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}hash'],
+      )!,
+      seq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}seq'],
+      )!,
+      data: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}data'],
+      )!,
+    );
+  }
+
+  @override
+  $AssetChunksTable createAlias(String alias) {
+    return $AssetChunksTable(attachedDatabase, alias);
+  }
+}
+
+class AssetChunkRow extends DataClass implements Insertable<AssetChunkRow> {
+  final String hash;
+  final int seq;
+  final Uint8List data;
+  const AssetChunkRow({
+    required this.hash,
+    required this.seq,
+    required this.data,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['hash'] = Variable<String>(hash);
+    map['seq'] = Variable<int>(seq);
+    map['data'] = Variable<Uint8List>(data);
+    return map;
+  }
+
+  AssetChunksCompanion toCompanion(bool nullToAbsent) {
+    return AssetChunksCompanion(
+      hash: Value(hash),
+      seq: Value(seq),
+      data: Value(data),
+    );
+  }
+
+  factory AssetChunkRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return AssetChunkRow(
+      hash: serializer.fromJson<String>(json['hash']),
+      seq: serializer.fromJson<int>(json['seq']),
+      data: serializer.fromJson<Uint8List>(json['data']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'hash': serializer.toJson<String>(hash),
+      'seq': serializer.toJson<int>(seq),
+      'data': serializer.toJson<Uint8List>(data),
+    };
+  }
+
+  AssetChunkRow copyWith({String? hash, int? seq, Uint8List? data}) =>
+      AssetChunkRow(
+        hash: hash ?? this.hash,
+        seq: seq ?? this.seq,
+        data: data ?? this.data,
+      );
+  AssetChunkRow copyWithCompanion(AssetChunksCompanion data) {
+    return AssetChunkRow(
+      hash: data.hash.present ? data.hash.value : this.hash,
+      seq: data.seq.present ? data.seq.value : this.seq,
+      data: data.data.present ? data.data.value : this.data,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AssetChunkRow(')
+          ..write('hash: $hash, ')
+          ..write('seq: $seq, ')
+          ..write('data: $data')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(hash, seq, $driftBlobEquality.hash(data));
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is AssetChunkRow &&
+          other.hash == this.hash &&
+          other.seq == this.seq &&
+          $driftBlobEquality.equals(other.data, this.data));
+}
+
+class AssetChunksCompanion extends UpdateCompanion<AssetChunkRow> {
+  final Value<String> hash;
+  final Value<int> seq;
+  final Value<Uint8List> data;
+  final Value<int> rowid;
+  const AssetChunksCompanion({
+    this.hash = const Value.absent(),
+    this.seq = const Value.absent(),
+    this.data = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  AssetChunksCompanion.insert({
+    required String hash,
+    required int seq,
+    required Uint8List data,
+    this.rowid = const Value.absent(),
+  }) : hash = Value(hash),
+       seq = Value(seq),
+       data = Value(data);
+  static Insertable<AssetChunkRow> custom({
+    Expression<String>? hash,
+    Expression<int>? seq,
+    Expression<Uint8List>? data,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (hash != null) 'hash': hash,
+      if (seq != null) 'seq': seq,
+      if (data != null) 'data': data,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  AssetChunksCompanion copyWith({
+    Value<String>? hash,
+    Value<int>? seq,
+    Value<Uint8List>? data,
+    Value<int>? rowid,
+  }) {
+    return AssetChunksCompanion(
+      hash: hash ?? this.hash,
+      seq: seq ?? this.seq,
+      data: data ?? this.data,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (hash.present) {
+      map['hash'] = Variable<String>(hash.value);
+    }
+    if (seq.present) {
+      map['seq'] = Variable<int>(seq.value);
+    }
+    if (data.present) {
+      map['data'] = Variable<Uint8List>(data.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('AssetChunksCompanion(')
+          ..write('hash: $hash, ')
+          ..write('seq: $seq, ')
+          ..write('data: $data, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MaterialPagesTable extends MaterialPages
+    with TableInfo<$MaterialPagesTable, MaterialPageRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MaterialPagesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _materialIdMeta = const VerificationMeta(
+    'materialId',
+  );
+  @override
+  late final GeneratedColumn<String> materialId = GeneratedColumn<String>(
+    'material_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES material (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _pageNoMeta = const VerificationMeta('pageNo');
+  @override
+  late final GeneratedColumn<int> pageNo = GeneratedColumn<int>(
+    'page_no',
+    aliasedName,
+    false,
+    check: () => ComparableExpr(pageNo).isBiggerThanValue(0),
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _labelMeta = const VerificationMeta('label');
+  @override
+  late final GeneratedColumn<String> label = GeneratedColumn<String>(
+    'label',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _contentMeta = const VerificationMeta(
+    'content',
+  );
+  @override
+  late final GeneratedColumn<String> content = GeneratedColumn<String>(
+    'content',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _updatedAtMeta = const VerificationMeta(
+    'updatedAt',
+  );
+  @override
+  late final GeneratedColumn<String> updatedAt = GeneratedColumn<String>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    materialId,
+    pageNo,
+    label,
+    content,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'material_page';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MaterialPageRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('material_id')) {
+      context.handle(
+        _materialIdMeta,
+        materialId.isAcceptableOrUnknown(data['material_id']!, _materialIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_materialIdMeta);
+    }
+    if (data.containsKey('page_no')) {
+      context.handle(
+        _pageNoMeta,
+        pageNo.isAcceptableOrUnknown(data['page_no']!, _pageNoMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_pageNoMeta);
+    }
+    if (data.containsKey('label')) {
+      context.handle(
+        _labelMeta,
+        label.isAcceptableOrUnknown(data['label']!, _labelMeta),
+      );
+    }
+    if (data.containsKey('content')) {
+      context.handle(
+        _contentMeta,
+        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_contentMeta);
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    if (data.containsKey('updated_at')) {
+      context.handle(
+        _updatedAtMeta,
+        updatedAt.isAcceptableOrUnknown(data['updated_at']!, _updatedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_updatedAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {materialId, pageNo},
+  ];
+  @override
+  MaterialPageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MaterialPageRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      materialId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}material_id'],
+      )!,
+      pageNo: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}page_no'],
+      )!,
+      label: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}label'],
+      ),
+      content: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}content'],
+      )!,
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+      updatedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}updated_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MaterialPagesTable createAlias(String alias) {
+    return $MaterialPagesTable(attachedDatabase, alias);
+  }
+}
+
+class MaterialPageRow extends DataClass implements Insertable<MaterialPageRow> {
+  final String id;
+  final String materialId;
+  final int pageNo;
+  final String? label;
+  final String content;
+  final String createdAt;
+  final String updatedAt;
+  const MaterialPageRow({
+    required this.id,
+    required this.materialId,
+    required this.pageNo,
+    this.label,
+    required this.content,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['material_id'] = Variable<String>(materialId);
+    map['page_no'] = Variable<int>(pageNo);
+    if (!nullToAbsent || label != null) {
+      map['label'] = Variable<String>(label);
+    }
+    map['content'] = Variable<String>(content);
+    map['created_at'] = Variable<String>(createdAt);
+    map['updated_at'] = Variable<String>(updatedAt);
+    return map;
+  }
+
+  MaterialPagesCompanion toCompanion(bool nullToAbsent) {
+    return MaterialPagesCompanion(
+      id: Value(id),
+      materialId: Value(materialId),
+      pageNo: Value(pageNo),
+      label: label == null && nullToAbsent
+          ? const Value.absent()
+          : Value(label),
+      content: Value(content),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory MaterialPageRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MaterialPageRow(
+      id: serializer.fromJson<String>(json['id']),
+      materialId: serializer.fromJson<String>(json['materialId']),
+      pageNo: serializer.fromJson<int>(json['pageNo']),
+      label: serializer.fromJson<String?>(json['label']),
+      content: serializer.fromJson<String>(json['content']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+      updatedAt: serializer.fromJson<String>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'materialId': serializer.toJson<String>(materialId),
+      'pageNo': serializer.toJson<int>(pageNo),
+      'label': serializer.toJson<String?>(label),
+      'content': serializer.toJson<String>(content),
+      'createdAt': serializer.toJson<String>(createdAt),
+      'updatedAt': serializer.toJson<String>(updatedAt),
+    };
+  }
+
+  MaterialPageRow copyWith({
+    String? id,
+    String? materialId,
+    int? pageNo,
+    Value<String?> label = const Value.absent(),
+    String? content,
+    String? createdAt,
+    String? updatedAt,
+  }) => MaterialPageRow(
+    id: id ?? this.id,
+    materialId: materialId ?? this.materialId,
+    pageNo: pageNo ?? this.pageNo,
+    label: label.present ? label.value : this.label,
+    content: content ?? this.content,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  MaterialPageRow copyWithCompanion(MaterialPagesCompanion data) {
+    return MaterialPageRow(
+      id: data.id.present ? data.id.value : this.id,
+      materialId: data.materialId.present
+          ? data.materialId.value
+          : this.materialId,
+      pageNo: data.pageNo.present ? data.pageNo.value : this.pageNo,
+      label: data.label.present ? data.label.value : this.label,
+      content: data.content.present ? data.content.value : this.content,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MaterialPageRow(')
+          ..write('id: $id, ')
+          ..write('materialId: $materialId, ')
+          ..write('pageNo: $pageNo, ')
+          ..write('label: $label, ')
+          ..write('content: $content, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode =>
+      Object.hash(id, materialId, pageNo, label, content, createdAt, updatedAt);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MaterialPageRow &&
+          other.id == this.id &&
+          other.materialId == this.materialId &&
+          other.pageNo == this.pageNo &&
+          other.label == this.label &&
+          other.content == this.content &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class MaterialPagesCompanion extends UpdateCompanion<MaterialPageRow> {
+  final Value<String> id;
+  final Value<String> materialId;
+  final Value<int> pageNo;
+  final Value<String?> label;
+  final Value<String> content;
+  final Value<String> createdAt;
+  final Value<String> updatedAt;
+  final Value<int> rowid;
+  const MaterialPagesCompanion({
+    this.id = const Value.absent(),
+    this.materialId = const Value.absent(),
+    this.pageNo = const Value.absent(),
+    this.label = const Value.absent(),
+    this.content = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MaterialPagesCompanion.insert({
+    required String id,
+    required String materialId,
+    required int pageNo,
+    this.label = const Value.absent(),
+    required String content,
+    required String createdAt,
+    required String updatedAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       materialId = Value(materialId),
+       pageNo = Value(pageNo),
+       content = Value(content),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<MaterialPageRow> custom({
+    Expression<String>? id,
+    Expression<String>? materialId,
+    Expression<int>? pageNo,
+    Expression<String>? label,
+    Expression<String>? content,
+    Expression<String>? createdAt,
+    Expression<String>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (materialId != null) 'material_id': materialId,
+      if (pageNo != null) 'page_no': pageNo,
+      if (label != null) 'label': label,
+      if (content != null) 'content': content,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MaterialPagesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? materialId,
+    Value<int>? pageNo,
+    Value<String?>? label,
+    Value<String>? content,
+    Value<String>? createdAt,
+    Value<String>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return MaterialPagesCompanion(
+      id: id ?? this.id,
+      materialId: materialId ?? this.materialId,
+      pageNo: pageNo ?? this.pageNo,
+      label: label ?? this.label,
+      content: content ?? this.content,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (materialId.present) {
+      map['material_id'] = Variable<String>(materialId.value);
+    }
+    if (pageNo.present) {
+      map['page_no'] = Variable<int>(pageNo.value);
+    }
+    if (label.present) {
+      map['label'] = Variable<String>(label.value);
+    }
+    if (content.present) {
+      map['content'] = Variable<String>(content.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<String>(updatedAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MaterialPagesCompanion(')
+          ..write('id: $id, ')
+          ..write('materialId: $materialId, ')
+          ..write('pageNo: $pageNo, ')
+          ..write('label: $label, ')
+          ..write('content: $content, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $MessagesTable extends Messages
+    with TableInfo<$MessagesTable, MessageRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $MessagesTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  @override
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _conversationIdMeta = const VerificationMeta(
+    'conversationId',
+  );
+  @override
+  late final GeneratedColumn<String> conversationId = GeneratedColumn<String>(
+    'conversation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES conversation (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _roleMeta = const VerificationMeta('role');
+  @override
+  late final GeneratedColumn<String> role = GeneratedColumn<String>(
+    'role',
+    aliasedName,
+    false,
+    check: () => role.isIn(messageRoles),
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _contentMeta = const VerificationMeta(
+    'content',
+  );
+  @override
+  late final GeneratedColumn<String> content = GeneratedColumn<String>(
+    'content',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _imageHashesJsonMeta = const VerificationMeta(
+    'imageHashesJson',
+  );
+  @override
+  late final GeneratedColumn<String> imageHashesJson = GeneratedColumn<String>(
+    'image_hashes_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _structuredJsonMeta = const VerificationMeta(
+    'structuredJson',
+  );
+  @override
+  late final GeneratedColumn<String> structuredJson = GeneratedColumn<String>(
+    'structured_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _createdAtMeta = const VerificationMeta(
+    'createdAt',
+  );
+  @override
+  late final GeneratedColumn<String> createdAt = GeneratedColumn<String>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    conversationId,
+    role,
+    content,
+    imageHashesJson,
+    structuredJson,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'message';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<MessageRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    } else if (isInserting) {
+      context.missing(_idMeta);
+    }
+    if (data.containsKey('conversation_id')) {
+      context.handle(
+        _conversationIdMeta,
+        conversationId.isAcceptableOrUnknown(
+          data['conversation_id']!,
+          _conversationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_conversationIdMeta);
+    }
+    if (data.containsKey('role')) {
+      context.handle(
+        _roleMeta,
+        role.isAcceptableOrUnknown(data['role']!, _roleMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_roleMeta);
+    }
+    if (data.containsKey('content')) {
+      context.handle(
+        _contentMeta,
+        content.isAcceptableOrUnknown(data['content']!, _contentMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_contentMeta);
+    }
+    if (data.containsKey('image_hashes_json')) {
+      context.handle(
+        _imageHashesJsonMeta,
+        imageHashesJson.isAcceptableOrUnknown(
+          data['image_hashes_json']!,
+          _imageHashesJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('structured_json')) {
+      context.handle(
+        _structuredJsonMeta,
+        structuredJson.isAcceptableOrUnknown(
+          data['structured_json']!,
+          _structuredJsonMeta,
+        ),
+      );
+    }
+    if (data.containsKey('created_at')) {
+      context.handle(
+        _createdAtMeta,
+        createdAt.isAcceptableOrUnknown(data['created_at']!, _createdAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_createdAtMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  MessageRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return MessageRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}id'],
+      )!,
+      conversationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}conversation_id'],
+      )!,
+      role: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}role'],
+      )!,
+      content: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}content'],
+      )!,
+      imageHashesJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}image_hashes_json'],
+      ),
+      structuredJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}structured_json'],
+      ),
+      createdAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}created_at'],
+      )!,
+    );
+  }
+
+  @override
+  $MessagesTable createAlias(String alias) {
+    return $MessagesTable(attachedDatabase, alias);
+  }
+}
+
+class MessageRow extends DataClass implements Insertable<MessageRow> {
+  final String id;
+  final String conversationId;
+  final String role;
+  final String content;
+
+  /// 图片的附件哈希数组；列名写的是哈希，不是路径（审查 S17）。
+  final String? imageHashesJson;
+  final String? structuredJson;
+  final String createdAt;
+  const MessageRow({
+    required this.id,
+    required this.conversationId,
+    required this.role,
+    required this.content,
+    this.imageHashesJson,
+    this.structuredJson,
+    required this.createdAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<String>(id);
+    map['conversation_id'] = Variable<String>(conversationId);
+    map['role'] = Variable<String>(role);
+    map['content'] = Variable<String>(content);
+    if (!nullToAbsent || imageHashesJson != null) {
+      map['image_hashes_json'] = Variable<String>(imageHashesJson);
+    }
+    if (!nullToAbsent || structuredJson != null) {
+      map['structured_json'] = Variable<String>(structuredJson);
+    }
+    map['created_at'] = Variable<String>(createdAt);
+    return map;
+  }
+
+  MessagesCompanion toCompanion(bool nullToAbsent) {
+    return MessagesCompanion(
+      id: Value(id),
+      conversationId: Value(conversationId),
+      role: Value(role),
+      content: Value(content),
+      imageHashesJson: imageHashesJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(imageHashesJson),
+      structuredJson: structuredJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(structuredJson),
+      createdAt: Value(createdAt),
+    );
+  }
+
+  factory MessageRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return MessageRow(
+      id: serializer.fromJson<String>(json['id']),
+      conversationId: serializer.fromJson<String>(json['conversationId']),
+      role: serializer.fromJson<String>(json['role']),
+      content: serializer.fromJson<String>(json['content']),
+      imageHashesJson: serializer.fromJson<String?>(json['imageHashesJson']),
+      structuredJson: serializer.fromJson<String?>(json['structuredJson']),
+      createdAt: serializer.fromJson<String>(json['createdAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<String>(id),
+      'conversationId': serializer.toJson<String>(conversationId),
+      'role': serializer.toJson<String>(role),
+      'content': serializer.toJson<String>(content),
+      'imageHashesJson': serializer.toJson<String?>(imageHashesJson),
+      'structuredJson': serializer.toJson<String?>(structuredJson),
+      'createdAt': serializer.toJson<String>(createdAt),
+    };
+  }
+
+  MessageRow copyWith({
+    String? id,
+    String? conversationId,
+    String? role,
+    String? content,
+    Value<String?> imageHashesJson = const Value.absent(),
+    Value<String?> structuredJson = const Value.absent(),
+    String? createdAt,
+  }) => MessageRow(
+    id: id ?? this.id,
+    conversationId: conversationId ?? this.conversationId,
+    role: role ?? this.role,
+    content: content ?? this.content,
+    imageHashesJson: imageHashesJson.present
+        ? imageHashesJson.value
+        : this.imageHashesJson,
+    structuredJson: structuredJson.present
+        ? structuredJson.value
+        : this.structuredJson,
+    createdAt: createdAt ?? this.createdAt,
+  );
+  MessageRow copyWithCompanion(MessagesCompanion data) {
+    return MessageRow(
+      id: data.id.present ? data.id.value : this.id,
+      conversationId: data.conversationId.present
+          ? data.conversationId.value
+          : this.conversationId,
+      role: data.role.present ? data.role.value : this.role,
+      content: data.content.present ? data.content.value : this.content,
+      imageHashesJson: data.imageHashesJson.present
+          ? data.imageHashesJson.value
+          : this.imageHashesJson,
+      structuredJson: data.structuredJson.present
+          ? data.structuredJson.value
+          : this.structuredJson,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MessageRow(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('role: $role, ')
+          ..write('content: $content, ')
+          ..write('imageHashesJson: $imageHashesJson, ')
+          ..write('structuredJson: $structuredJson, ')
+          ..write('createdAt: $createdAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    conversationId,
+    role,
+    content,
+    imageHashesJson,
+    structuredJson,
+    createdAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is MessageRow &&
+          other.id == this.id &&
+          other.conversationId == this.conversationId &&
+          other.role == this.role &&
+          other.content == this.content &&
+          other.imageHashesJson == this.imageHashesJson &&
+          other.structuredJson == this.structuredJson &&
+          other.createdAt == this.createdAt);
+}
+
+class MessagesCompanion extends UpdateCompanion<MessageRow> {
+  final Value<String> id;
+  final Value<String> conversationId;
+  final Value<String> role;
+  final Value<String> content;
+  final Value<String?> imageHashesJson;
+  final Value<String?> structuredJson;
+  final Value<String> createdAt;
+  final Value<int> rowid;
+  const MessagesCompanion({
+    this.id = const Value.absent(),
+    this.conversationId = const Value.absent(),
+    this.role = const Value.absent(),
+    this.content = const Value.absent(),
+    this.imageHashesJson = const Value.absent(),
+    this.structuredJson = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  MessagesCompanion.insert({
+    required String id,
+    required String conversationId,
+    required String role,
+    required String content,
+    this.imageHashesJson = const Value.absent(),
+    this.structuredJson = const Value.absent(),
+    required String createdAt,
+    this.rowid = const Value.absent(),
+  }) : id = Value(id),
+       conversationId = Value(conversationId),
+       role = Value(role),
+       content = Value(content),
+       createdAt = Value(createdAt);
+  static Insertable<MessageRow> custom({
+    Expression<String>? id,
+    Expression<String>? conversationId,
+    Expression<String>? role,
+    Expression<String>? content,
+    Expression<String>? imageHashesJson,
+    Expression<String>? structuredJson,
+    Expression<String>? createdAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (conversationId != null) 'conversation_id': conversationId,
+      if (role != null) 'role': role,
+      if (content != null) 'content': content,
+      if (imageHashesJson != null) 'image_hashes_json': imageHashesJson,
+      if (structuredJson != null) 'structured_json': structuredJson,
+      if (createdAt != null) 'created_at': createdAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  MessagesCompanion copyWith({
+    Value<String>? id,
+    Value<String>? conversationId,
+    Value<String>? role,
+    Value<String>? content,
+    Value<String?>? imageHashesJson,
+    Value<String?>? structuredJson,
+    Value<String>? createdAt,
+    Value<int>? rowid,
+  }) {
+    return MessagesCompanion(
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      role: role ?? this.role,
+      content: content ?? this.content,
+      imageHashesJson: imageHashesJson ?? this.imageHashesJson,
+      structuredJson: structuredJson ?? this.structuredJson,
+      createdAt: createdAt ?? this.createdAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<String>(id.value);
+    }
+    if (conversationId.present) {
+      map['conversation_id'] = Variable<String>(conversationId.value);
+    }
+    if (role.present) {
+      map['role'] = Variable<String>(role.value);
+    }
+    if (content.present) {
+      map['content'] = Variable<String>(content.value);
+    }
+    if (imageHashesJson.present) {
+      map['image_hashes_json'] = Variable<String>(imageHashesJson.value);
+    }
+    if (structuredJson.present) {
+      map['structured_json'] = Variable<String>(structuredJson.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<String>(createdAt.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('MessagesCompanion(')
+          ..write('id: $id, ')
+          ..write('conversationId: $conversationId, ')
+          ..write('role: $role, ')
+          ..write('content: $content, ')
+          ..write('imageHashesJson: $imageHashesJson, ')
+          ..write('structuredJson: $structuredJson, ')
+          ..write('createdAt: $createdAt, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -14218,21 +13145,17 @@ class SyncShadowsCompanion extends UpdateCompanion<SyncShadowRow> {
 
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
-  late final $TimetableEntriesTable timetableEntries = $TimetableEntriesTable(
-    this,
-  );
-  late final $AppMetaTable appMeta = $AppMetaTable(this);
   late final $LearningGoalsTable learningGoals = $LearningGoalsTable(this);
   late final $AssetObjectsTable assetObjects = $AssetObjectsTable(this);
-  late final $AssetChunksTable assetChunks = $AssetChunksTable(this);
   late final $MaterialsTable materials = $MaterialsTable(this);
-  late final $MaterialPagesTable materialPages = $MaterialPagesTable(this);
   late final $ConversationsTable conversations = $ConversationsTable(this);
-  late final $MessagesTable messages = $MessagesTable(this);
   late final $StudyPlansTable studyPlans = $StudyPlansTable(this);
   late final $PlanItemsTable planItems = $PlanItemsTable(this);
-  late final $ScheduleBlocksTable scheduleBlocks = $ScheduleBlocksTable(this);
   late final $StudySessionsTable studySessions = $StudySessionsTable(this);
+  late final $AppMetaTable appMeta = $AppMetaTable(this);
+  late final $AssetChunksTable assetChunks = $AssetChunksTable(this);
+  late final $MaterialPagesTable materialPages = $MaterialPagesTable(this);
+  late final $MessagesTable messages = $MessagesTable(this);
   late final $AttemptsTable attempts = $AttemptsTable(this);
   late final $AssessmentsTable assessments = $AssessmentsTable(this);
   late final $MemoriesTable memories = $MemoriesTable(this);
@@ -14312,14 +13235,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_plan_item_study_seq',
     'CREATE UNIQUE INDEX idx_plan_item_study_seq ON plan_item (study_plan_id, seq)',
   );
-  late final Index idxScheduleStart = Index(
-    'idx_schedule_start',
-    'CREATE INDEX idx_schedule_start ON schedule_block (start_at)',
-  );
-  late final Index idxSchedulePlan = Index(
-    'idx_schedule_plan',
-    'CREATE INDEX idx_schedule_plan ON schedule_block (plan_item_id)',
-  );
   late final Index idxSessionPlan = Index(
     'idx_session_plan',
     'CREATE INDEX idx_session_plan ON study_session (plan_item_id, started_at)',
@@ -14392,64 +13307,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_revision_conflict_commit',
     'CREATE INDEX idx_revision_conflict_commit ON revision_conflict (commit_id)',
   );
-  Future<int> insertTimetableEntry(
-    String id,
-    int weekday,
-    String startTime,
-    String endTime,
-    String title,
-    String? location,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO timetable_entry (id, weekday, start_time, end_time, title, location, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)',
-      variables: [
-        Variable<String>(id),
-        Variable<int>(weekday),
-        Variable<String>(startTime),
-        Variable<String>(endTime),
-        Variable<String>(title),
-        Variable<String>(location),
-        Variable<String>(stamp),
-      ],
-      updates: {this.timetableEntries},
-    );
-  }
-
-  Future<int> deleteTimetableEntry(String entryId) {
-    return customUpdate(
-      'DELETE FROM timetable_entry WHERE id = ?1',
-      variables: [Variable<String>(entryId)],
-      updates: {this.timetableEntries},
-      updateKind: UpdateKind.delete,
-    );
-  }
-
-  Selectable<TimetableEntryRow> allTimetableEntries() {
-    return customSelect(
-      'SELECT * FROM timetable_entry ORDER BY weekday, start_time',
-      variables: [],
-      readsFrom: {this.timetableEntries},
-    ).asyncMap(this.timetableEntries.mapFromRow);
-  }
-
-  Selectable<TimetableEntriesOnWeekdayResult> timetableEntriesOnWeekday(
-    int weekday,
-  ) {
-    return customSelect(
-      'SELECT start_time, end_time, title, location FROM timetable_entry WHERE weekday = ?1 ORDER BY start_time',
-      variables: [Variable<int>(weekday)],
-      readsFrom: {this.timetableEntries},
-    ).map(
-      (QueryRow row) => TimetableEntriesOnWeekdayResult(
-        startTime: row.read<String>('start_time'),
-        endTime: row.read<String>('end_time'),
-        title: row.read<String>('title'),
-        location: row.readNullable<String>('location'),
-      ),
-    );
-  }
-
   Selectable<StudySessionRow> openStudySession(
     String? conversationId,
     String? planItemId,
@@ -14700,307 +13557,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     );
   }
 
-  Selectable<BlocksOverlappingResult> blocksOverlapping(
-    String endAt,
-    String startAt,
-  ) {
-    return customSelect(
-      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.start_at < ?1 AND b.end_at > ?2 ORDER BY b.start_at',
-      variables: [Variable<String>(endAt), Variable<String>(startAt)],
-      readsFrom: {this.planItems, this.scheduleBlocks},
-    ).map(
-      (QueryRow row) => BlocksOverlappingResult(
-        id: row.read<String>('id'),
-        planItemId: row.read<String>('plan_item_id'),
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        source: row.read<String>('source'),
-        status: row.read<String>('status'),
-        locked: row.read<bool>('locked'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        pTitle: row.read<String>('p_title'),
-        pNote: row.readNullable<String>('p_note'),
-        pStatus: row.read<String>('p_status'),
-      ),
-    );
-  }
-
-  Selectable<SearchPlanBlocksResult> searchPlanBlocks(
-    String goalId,
-    String status,
-    String dayStart,
-    String dayEnd,
-  ) {
-    return customSelect(
-      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE(?1 = \'\' OR p.goal_id = ?1)AND(?2 = \'\' OR p.status = ?2)AND(?3 = \'\' OR(b.start_at >= ?3 AND b.start_at < ?4))ORDER BY b.start_at DESC, b.id DESC',
-      variables: [
-        Variable<String>(goalId),
-        Variable<String>(status),
-        Variable<String>(dayStart),
-        Variable<String>(dayEnd),
-      ],
-      readsFrom: {this.planItems, this.scheduleBlocks},
-    ).map(
-      (QueryRow row) => SearchPlanBlocksResult(
-        id: row.read<String>('id'),
-        planItemId: row.read<String>('plan_item_id'),
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        source: row.read<String>('source'),
-        status: row.read<String>('status'),
-        locked: row.read<bool>('locked'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        pTitle: row.read<String>('p_title'),
-        pNote: row.readNullable<String>('p_note'),
-        pStatus: row.read<String>('p_status'),
-      ),
-    );
-  }
-
-  Selectable<NextPlannedBlockResult> nextPlannedBlock(String now) {
-    return customSelect(
-      'SELECT b.*, p.title AS p_title, p.note AS p_note, p.status AS p_status FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.start_at >= ?1 ORDER BY b.start_at LIMIT 1',
-      variables: [Variable<String>(now)],
-      readsFrom: {this.planItems, this.scheduleBlocks},
-    ).map(
-      (QueryRow row) => NextPlannedBlockResult(
-        id: row.read<String>('id'),
-        planItemId: row.read<String>('plan_item_id'),
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        source: row.read<String>('source'),
-        status: row.read<String>('status'),
-        locked: row.read<bool>('locked'),
-        createdAt: row.read<String>('created_at'),
-        updatedAt: row.read<String>('updated_at'),
-        pTitle: row.read<String>('p_title'),
-        pNote: row.readNullable<String>('p_note'),
-        pStatus: row.read<String>('p_status'),
-      ),
-    );
-  }
-
-  Selectable<PlannedBlockSpansResult> plannedBlockSpans() {
-    return customSelect(
-      'SELECT b.id, b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' ORDER BY b.start_at',
-      variables: [],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).map(
-      (QueryRow row) => PlannedBlockSpansResult(
-        id: row.read<String>('id'),
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        title: row.read<String>('title'),
-      ),
-    );
-  }
-
-  Selectable<ScheduleBlockRow> adjustableBlocksForGoal(
-    String? goalId,
-    String now,
-  ) {
-    return customSelect(
-      'SELECT b.* FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE p.goal_id = ?1 AND b.status = \'planned\' AND b.locked = 0 AND b.start_at >= ?2 ORDER BY b.start_at',
-      variables: [Variable<String>(goalId), Variable<String>(now)],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Selectable<ScheduleBlockRow> blocksByIds(String ids) {
-    return customSelect(
-      'SELECT * FROM schedule_block WHERE id IN (SELECT value FROM json_each(?1))',
-      variables: [Variable<String>(ids)],
-      readsFrom: {this.scheduleBlocks},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Selectable<ScheduleBlockRow> upcomingBlocksForItem(
-    String planItemId,
-    String now,
-  ) {
-    return customSelect(
-      'SELECT * FROM schedule_block WHERE plan_item_id = ?1 AND status = \'planned\' AND start_at >= ?2 ORDER BY start_at',
-      variables: [Variable<String>(planItemId), Variable<String>(now)],
-      readsFrom: {this.scheduleBlocks},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Selectable<ScheduleBlockRow> firstLiveBlockPerItem(
-    String planItemIds,
-    String now,
-  ) {
-    return customSelect(
-      'SELECT * FROM schedule_block WHERE plan_item_id IN (SELECT value FROM json_each(?1)) AND status = \'planned\' AND end_at > ?2 ORDER BY start_at, id',
-      variables: [Variable<String>(planItemIds), Variable<String>(now)],
-      readsFrom: {this.scheduleBlocks},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Selectable<ScheduleBlockRow> upcomingBlocksForItems(
-    String planItemIds,
-    String now,
-  ) {
-    return customSelect(
-      'SELECT * FROM schedule_block WHERE plan_item_id IN (SELECT value FROM json_each(?1)) AND status = \'planned\' AND start_at >= ?2 ORDER BY start_at',
-      variables: [Variable<String>(planItemIds), Variable<String>(now)],
-      readsFrom: {this.scheduleBlocks},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Selectable<ScheduleBlockRow> scheduleBlockById(String id) {
-    return customSelect(
-      'SELECT * FROM schedule_block WHERE id = ?1 LIMIT 1',
-      variables: [Variable<String>(id)],
-      readsFrom: {this.scheduleBlocks},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Selectable<ScheduleBlockRow> blocksForItem(String planItemId) {
-    return customSelect(
-      'SELECT * FROM schedule_block WHERE plan_item_id = ?1 ORDER BY start_at',
-      variables: [Variable<String>(planItemId)],
-      readsFrom: {this.scheduleBlocks},
-    ).asyncMap(this.scheduleBlocks.mapFromRow);
-  }
-
-  Future<int> cancelPlannedBlocksForItem(String stamp, String itemId) {
-    return customUpdate(
-      'UPDATE schedule_block SET status = \'cancelled\', updated_at = ?1 WHERE plan_item_id = ?2 AND status = \'planned\'',
-      variables: [Variable<String>(stamp), Variable<String>(itemId)],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> insertScheduleBlock(
-    String id,
-    String itemId,
-    String startAt,
-    String endAt,
-    String source,
-    bool locked,
-    String stamp,
-  ) {
-    return customInsert(
-      'INSERT INTO schedule_block (id, plan_item_id, start_at, end_at, source, status, locked, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, \'planned\', ?6, ?7, ?7)',
-      variables: [
-        Variable<String>(id),
-        Variable<String>(itemId),
-        Variable<String>(startAt),
-        Variable<String>(endAt),
-        Variable<String>(source),
-        Variable<bool>(locked),
-        Variable<String>(stamp),
-      ],
-      updates: {this.scheduleBlocks},
-    );
-  }
-
-  Future<int> updatePlannedBlockTime(
-    String startAt,
-    String endAt,
-    String stamp,
-    String blockId,
-  ) {
-    return customUpdate(
-      'UPDATE schedule_block SET start_at = ?1, end_at = ?2, status = \'planned\', updated_at = ?3 WHERE id = ?4',
-      variables: [
-        Variable<String>(startAt),
-        Variable<String>(endAt),
-        Variable<String>(stamp),
-        Variable<String>(blockId),
-      ],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> setBlockLocked(bool locked, String stamp, String blockId) {
-    return customUpdate(
-      'UPDATE schedule_block SET locked = ?1, updated_at = ?2 WHERE id = ?3',
-      variables: [
-        Variable<bool>(locked),
-        Variable<String>(stamp),
-        Variable<String>(blockId),
-      ],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> cancelPlannedBlocks(String stamp, String ids) {
-    return customUpdate(
-      'UPDATE schedule_block SET status = \'cancelled\', updated_at = ?1 WHERE id IN (SELECT value FROM json_each(?2)) AND status = \'planned\'',
-      variables: [Variable<String>(stamp), Variable<String>(ids)],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> setScheduleBlockStatus(
-    String status,
-    String stamp,
-    String blockId,
-  ) {
-    return customUpdate(
-      'UPDATE schedule_block SET status = ?1, updated_at = ?2 WHERE id = ?3',
-      variables: [
-        Variable<String>(status),
-        Variable<String>(stamp),
-        Variable<String>(blockId),
-      ],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.update,
-    );
-  }
-
-  Future<int> deleteScheduleBlock(String blockId) {
-    return customUpdate(
-      'DELETE FROM schedule_block WHERE id = ?1',
-      variables: [Variable<String>(blockId)],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.delete,
-    );
-  }
-
-  Selectable<FindOverlappingBlocksResult> findOverlappingBlocks(
-    String endAt,
-    String startAt,
-    String ignoredBlockIds,
-  ) {
-    return customSelect(
-      'SELECT b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.start_at < ?1 AND b.end_at > ?2 AND b.id NOT IN (SELECT value FROM json_each(?3)) ORDER BY b.start_at LIMIT 1',
-      variables: [
-        Variable<String>(endAt),
-        Variable<String>(startAt),
-        Variable<String>(ignoredBlockIds),
-      ],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).map(
-      (QueryRow row) => FindOverlappingBlocksResult(
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        title: row.read<String>('title'),
-      ),
-    );
-  }
-
-  Selectable<PlannedBlocksAfterResult> plannedBlocksAfter(String after) {
-    return customSelect(
-      'SELECT b.start_at, b.end_at, p.title FROM schedule_block AS b JOIN plan_item AS p ON p.id = b.plan_item_id WHERE b.status = \'planned\' AND b.end_at > ?1 ORDER BY b.start_at',
-      variables: [Variable<String>(after)],
-      readsFrom: {this.scheduleBlocks, this.planItems},
-    ).map(
-      (QueryRow row) => PlannedBlocksAfterResult(
-        startAt: row.read<String>('start_at'),
-        endAt: row.read<String>('end_at'),
-        title: row.read<String>('title'),
-      ),
-    );
-  }
-
   Selectable<ItemByConversationAndTitleResult> itemByConversationAndTitle(
     String? conversationId,
     String title,
@@ -15199,27 +13755,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         updatedAt: row.read<String>('updated_at'),
         sourceFileName: row.readNullable<String>('source_file_name'),
       ),
-    );
-  }
-
-  Future<int> settleBlocksOnStepDone(
-    String now,
-    String doneStatus,
-    String cancelledStatus,
-    String itemId,
-    String plannedStatus,
-  ) {
-    return customUpdate(
-      'UPDATE schedule_block SET status = CASE WHEN EXISTS (SELECT 1 FROM study_session AS s WHERE s.plan_item_id = schedule_block.plan_item_id AND s.started_at < schedule_block.end_at AND COALESCE(s.ended_at, ?1) > schedule_block.start_at) THEN ?2 ELSE ?3 END, updated_at = ?1 WHERE plan_item_id = ?4 AND status = ?5',
-      variables: [
-        Variable<String>(now),
-        Variable<String>(doneStatus),
-        Variable<String>(cancelledStatus),
-        Variable<String>(itemId),
-        Variable<String>(plannedStatus),
-      ],
-      updates: {this.scheduleBlocks},
-      updateKind: UpdateKind.update,
     );
   }
 
@@ -17147,19 +15682,17 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [
-    timetableEntries,
-    appMeta,
     learningGoals,
     assetObjects,
-    assetChunks,
     materials,
-    materialPages,
     conversations,
-    messages,
     studyPlans,
     planItems,
-    scheduleBlocks,
     studySessions,
+    appMeta,
+    assetChunks,
+    materialPages,
+    messages,
     attempts,
     assessments,
     memories,
@@ -17188,8 +15721,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxPlanItemGoal,
     idxPlanItemConversation,
     idxPlanItemStudySeq,
-    idxScheduleStart,
-    idxSchedulePlan,
     idxSessionPlan,
     idxSessionConversation,
     idxSessionGoal,
@@ -17213,13 +15744,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
     WritePropagation(
       on: TableUpdateQuery.onTableName(
-        'asset_object',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('asset_chunk', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
         'learning_goal',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -17227,13 +15751,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
-        'material',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('material_page', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
         'learning_goal',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -17245,13 +15762,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('conversation', kind: UpdateKind.update)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -17297,13 +15807,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
-        'plan_item',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('schedule_block', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
         'learning_goal',
         limitUpdateKind: UpdateKind.delete,
       ),
@@ -17322,6 +15825,27 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('study_session', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'asset_object',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('asset_chunk', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'material',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('material_page', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'conversation',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('message', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -17387,19 +15911,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       result: [TableUpdate('revision_conflict', kind: UpdateKind.delete)],
     ),
   ]);
-}
-
-class TimetableEntriesOnWeekdayResult {
-  final String startTime;
-  final String endTime;
-  final String title;
-  final String? location;
-  TimetableEntriesOnWeekdayResult({
-    required this.startTime,
-    required this.endTime,
-    required this.title,
-    this.location,
-  });
 }
 
 class StudyPlanByIdResult {
@@ -17473,128 +15984,6 @@ class PlanRowsResult {
     required this.stepsTotal,
     this.nextStepTitle,
     this.currentPage,
-  });
-}
-
-class BlocksOverlappingResult {
-  final String id;
-  final String planItemId;
-  final String startAt;
-  final String endAt;
-  final String source;
-  final String status;
-  final bool locked;
-  final String createdAt;
-  final String updatedAt;
-  final String pTitle;
-  final String? pNote;
-  final String pStatus;
-  BlocksOverlappingResult({
-    required this.id,
-    required this.planItemId,
-    required this.startAt,
-    required this.endAt,
-    required this.source,
-    required this.status,
-    required this.locked,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.pTitle,
-    this.pNote,
-    required this.pStatus,
-  });
-}
-
-class SearchPlanBlocksResult {
-  final String id;
-  final String planItemId;
-  final String startAt;
-  final String endAt;
-  final String source;
-  final String status;
-  final bool locked;
-  final String createdAt;
-  final String updatedAt;
-  final String pTitle;
-  final String? pNote;
-  final String pStatus;
-  SearchPlanBlocksResult({
-    required this.id,
-    required this.planItemId,
-    required this.startAt,
-    required this.endAt,
-    required this.source,
-    required this.status,
-    required this.locked,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.pTitle,
-    this.pNote,
-    required this.pStatus,
-  });
-}
-
-class NextPlannedBlockResult {
-  final String id;
-  final String planItemId;
-  final String startAt;
-  final String endAt;
-  final String source;
-  final String status;
-  final bool locked;
-  final String createdAt;
-  final String updatedAt;
-  final String pTitle;
-  final String? pNote;
-  final String pStatus;
-  NextPlannedBlockResult({
-    required this.id,
-    required this.planItemId,
-    required this.startAt,
-    required this.endAt,
-    required this.source,
-    required this.status,
-    required this.locked,
-    required this.createdAt,
-    required this.updatedAt,
-    required this.pTitle,
-    this.pNote,
-    required this.pStatus,
-  });
-}
-
-class PlannedBlockSpansResult {
-  final String id;
-  final String startAt;
-  final String endAt;
-  final String title;
-  PlannedBlockSpansResult({
-    required this.id,
-    required this.startAt,
-    required this.endAt,
-    required this.title,
-  });
-}
-
-class FindOverlappingBlocksResult {
-  final String startAt;
-  final String endAt;
-  final String title;
-  FindOverlappingBlocksResult({
-    required this.startAt,
-    required this.endAt,
-    required this.title,
-  });
-}
-
-class PlannedBlocksAfterResult {
-  final String startAt;
-  final String endAt;
-  final String title;
-  PlannedBlocksAfterResult({
-    required this.startAt,
-    required this.endAt,
-    required this.title,
   });
 }
 

@@ -15,7 +15,6 @@ import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -93,7 +92,6 @@ class _Harness {
   late StudyPlanRepository plans;
   late AttemptRepository attempts;
   late TaskRepository tasks;
-  late ScheduleRepository schedule;
   late StudyRepository study;
   late StudyPlanService service;
 
@@ -104,7 +102,6 @@ class _Harness {
     plans = StudyPlanRepository(db);
     tasks = TaskRepository(db);
     attempts = AttemptRepository(db);
-    schedule = ScheduleRepository(db);
     study = StudyRepository(db);
     final memories = MemoryRepository(db);
     final policy = TimePolicy(clock: () => DateTime(2026, 11, 6, 20));
@@ -115,14 +112,12 @@ class _Harness {
       context: ContextService(
         tasks: tasks,
         attempts: attempts,
-        schedule: schedule,
         memories: memories,
         conversations: conversations,
         materials: materials,
         runtime: testRuntime(policy: () => policy),
       ),
       conversations: conversations,
-      schedule: schedule,
       study: study,
       transactions: WriteTransactions(db, revisions: RevisionEngine()),
       runtime: testRuntime(policy: () => policy),
@@ -582,7 +577,7 @@ void main() {
     expect(view.plan.materialId, materialId);
   });
 
-  test('V4：学习步骤就是学习事项，可直接预约并共用完成状态', () async {
+  test('V4：学习步骤就是学习事项，共用完成状态', () async {
     final h = _Harness();
     await h.open();
     addTearDown(h.db.close);
@@ -604,21 +599,9 @@ void main() {
     expect(step.studyPlanId, planId);
     expect(step.isStudyStep, isTrue);
 
-    // 同一条记录既出现在事项列表里，也能直接挂时间块。
+    // 系统学习步骤直接出现在事项列表里。
     final items = await h.tasks.items();
     expect(items.map((item) => item.id), contains(step.id));
-    final now = DateTime(2026, 11, 6, 20);
-    await h.schedule.addBlock(
-      planItemId: step.id,
-      start: now,
-      end: now.add(const Duration(minutes: 20)),
-    );
-    final blocks = await h.schedule.blocksBetween(
-      now,
-      now.add(const Duration(days: 1)),
-    );
-    expect(blocks.map((entry) => entry.block.planItemId), contains(step.id));
-
     // 在事项侧标记完成，计划页读到同一条状态并前移继续位置。
     await h.plans.setItemStatus(step.id, PlanItemStatus.done);
     final view = await h.service.view(planId);
@@ -633,7 +616,6 @@ void main() {
     final materials = MaterialRepository(rig.db);
     final plans = StudyPlanRepository(rig.db);
     final conversations = ConversationRepository(rig.db);
-    final schedule = ScheduleRepository(rig.db);
     final service = StudyPlanService(
       plans: plans,
       materials: materials,
@@ -641,14 +623,12 @@ void main() {
       context: ContextService(
         tasks: TaskRepository(rig.db),
         attempts: AttemptRepository(rig.db),
-        schedule: schedule,
         memories: MemoryRepository(rig.db),
         conversations: conversations,
         materials: materials,
         runtime: testRuntime(policy: () => policy),
       ),
       conversations: conversations,
-      schedule: schedule,
       study: StudyRepository(rig.db),
       transactions: WriteTransactions(rig.db, revisions: rig.engine),
       runtime: testRuntime(policy: () => policy, live: rig.db.live),

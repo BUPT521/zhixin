@@ -202,7 +202,7 @@ void main() {
     expect(find.text('待确认'), findsNothing);
     expect(find.text('撤销'), findsOneWidget);
 
-    final dismiss = find.widgetWithText(forui.FButton, '暂不安排');
+    final dismiss = find.widgetWithText(forui.FButton, '暂缓');
     await tester.ensureVisible(dismiss);
     await tester.tap(dismiss);
     await settle(tester);

@@ -4,7 +4,6 @@ import 'package:zhixin/application/buddy_actions.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/memory.dart';
 
@@ -159,23 +158,23 @@ void main() {
     expect(await rig.revisions.activeCommits([created.id]), {created.id});
   });
 
-  test('已接受的事项有后续预约时，撤销创建不会级联删除预约', () async {
+  test('已有学习场次的事项不能撤销创建', () async {
     final rig = await openTestRigWithUndoRules();
     addTearDown(rig.close);
-    final schedule = ScheduleRepository(rig.db);
     final tasks = TaskRepository(rig.db);
     final itemId = await tasks.createItem(title: '复习题目');
     final created = (await rig.revisions.undoableCommits()).last;
-    final start = DateTime(2026, 11, 8, 10);
-    final blockId = await schedule.addBlock(
-      planItemId: itemId,
-      start: start,
-      end: start.add(const Duration(minutes: 30)),
-    );
+    await insertRow(rig.db, 'study_session', {
+      'id': 'follow-up',
+      'plan_item_id': itemId,
+      'started_at': '2026-11-08T10:00:00Z',
+      'created_at': '2026-11-08T10:00:00Z',
+      'updated_at': '2026-11-08T10:00:00Z',
+    });
 
     final undone = await rig.revisions.undoCommit(created.id);
     expect(undone.applied, isFalse);
-    expect(undone.message, '这项任务已有预约，不能撤销');
+    expect(undone.message, '这项任务已有学习记录，不能撤销');
     expect(
       await selectRows(
         rig.db,
@@ -185,7 +184,7 @@ void main() {
       ),
       hasLength(1),
     );
-    expect(await schedule.blockById(blockId), isNotNull);
+    expect(await selectRows(rig.db, 'study_session'), hasLength(1));
     expect(await rig.revisions.activeCommits([created.id]), {created.id});
   });
 

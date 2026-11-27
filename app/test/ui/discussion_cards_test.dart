@@ -138,14 +138,14 @@ void main() {
 
   testWidgets('建议卡显示要做的事、结束条件与时长，三个操作各自回调', (tester) async {
     var accepted = 0;
-    var scheduled = 0;
+    var started = 0;
     var dismissed = 0;
     await tester.pumpWidget(
       wrap(
         SuggestionCard(
           suggestion: suggestion(minutes: 10),
           onAccept: () => accepted++,
-          onSchedule: () => scheduled++,
+          onStart: () => started++,
           onDismiss: () => dismissed++,
         ),
       ),
@@ -159,9 +159,9 @@ void main() {
 
     await tester.tap(find.text('保存为学习事项'));
     expect(accepted, 1);
-    await tester.tap(find.text('保存并选时间'));
-    expect(scheduled, 1);
-    await tester.tap(find.text('暂不安排'));
+    await tester.tap(find.text('立即开始'));
+    expect(started, 1);
+    await tester.tap(find.text('暂缓'));
     expect(dismissed, 1);
     await tester.pump(const Duration(milliseconds: 150));
   });
@@ -172,7 +172,7 @@ void main() {
         SuggestionCard(
           suggestion: suggestion(action: null, endCondition: null),
           onAccept: () {},
-          onSchedule: () {},
+          onStart: () {},
           onDismiss: () {},
         ),
       ),

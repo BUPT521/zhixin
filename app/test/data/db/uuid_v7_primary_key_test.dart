@@ -8,7 +8,6 @@ import 'package:zhixin/data/repository/assessment_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -18,7 +17,7 @@ import 'package:zhixin/domain/rules/uuid_v7.dart';
 
 import '../../support/test_db.dart';
 
-/// UUIDv7 主键（ADR-0018）：参与版本采集的 14 张业务表用文本主键，插入前由写入方生成，
+/// UUIDv7 主键（ADR-0018）：参与版本采集的 12 张业务表用文本主键，插入前由写入方生成，
 /// 时间有序且带版本位与变体位；增量同步让两台设备按同一文本定位同一行，
 /// 因此一次提交里的父行与子行引用必须能在这条提交的变更明细里对上。
 ///
@@ -102,7 +101,7 @@ void main() {
     addTearDown(db.close);
 
     final uuidTables = _uuidPrimaryKeyTables();
-    expect(uuidTables, hasLength(14), reason: '参与版本采集的 14 张业务表都用文本主键');
+    expect(uuidTables, hasLength(12), reason: '参与版本采集的 12 张业务表都用文本主键');
 
     final columnTypes = <String, Map<String, String>>{};
     for (final table in uuidTables) {
@@ -167,7 +166,6 @@ void main() {
     addTearDown(rig.close);
 
     final tasks = TaskRepository(rig.db, clock: _fixedClock);
-    final schedule = ScheduleRepository(rig.db, clock: _fixedClock);
     final study = StudyRepository(rig.db, clock: _fixedClock);
     final conversations = ConversationRepository(rig.db, clock: _fixedClock);
     final attempts = AttemptRepository(rig.db, clock: _fixedClock);
@@ -180,17 +178,6 @@ void main() {
       title: '整理笔记',
       goalId: goalId,
       estMinutes: 30,
-    );
-    final timetableId = await schedule.addTimetable(
-      weekday: 1,
-      startTime: '08:00',
-      endTime: '09:00',
-      title: '线性代数',
-    );
-    final blockId = await schedule.addBlock(
-      planItemId: itemId,
-      start: DateTime(2026, 11, 17, 19),
-      end: DateTime(2026, 11, 17, 19, 30),
     );
     final session = await study.start(goalId: goalId);
     final conversationId = await conversations.create(
@@ -255,8 +242,6 @@ void main() {
     final ids = <String, String>{
       'learning_goal': goalId,
       'plan_item': itemId,
-      'timetable_entry': timetableId,
-      'schedule_block': blockId,
       'study_session': session.id,
       'conversation': conversationId,
       'message': message.id,
@@ -285,7 +270,6 @@ void main() {
     Future<String?> foreignKey(String table, String column) async =>
         (await selectRows(rig.raw, table)).single[column] as String?;
     expect(await foreignKey('plan_item', 'goal_id'), goalId);
-    expect(await foreignKey('schedule_block', 'plan_item_id'), itemId);
     expect(await foreignKey('study_session', 'goal_id'), goalId);
     expect(await foreignKey('conversation', 'goal_id'), goalId);
     expect(await foreignKey('message', 'conversation_id'), conversationId);
@@ -301,13 +285,12 @@ void main() {
     addTearDown(rig.close);
 
     final tasks = TaskRepository(rig.db, clock: _fixedClock);
-    final schedule = ScheduleRepository(rig.db, clock: _fixedClock);
     final study = StudyRepository(rig.db, clock: _fixedClock);
     final conversations = ConversationRepository(rig.db, clock: _fixedClock);
     final attempts = AttemptRepository(rig.db, clock: _fixedClock);
     final assessments = AssessmentRepository(rig.db, clock: _fixedClock);
 
-    // 目标、事项、预约、场次、记录、消息、草稿与判断落在同一条提交里：
+    // 目标、事项、场次、记录、消息、草稿与判断落在同一条提交里：
     // 同步到另一台设备时先应用父行的文本主键，子行的外键才对得上。
     final written = await WriteTransactions(rig.db, revisions: rig.engine).run((
       txn,
@@ -317,12 +300,6 @@ void main() {
         title: '整理笔记',
         goalId: goalId,
         estMinutes: 30,
-        transaction: txn,
-      );
-      final blockId = await schedule.addBlock(
-        planItemId: itemId,
-        start: DateTime(2026, 11, 17, 19),
-        end: DateTime(2026, 11, 17, 19, 30),
         transaction: txn,
       );
       final session = await study.start(goalId: goalId, transaction: txn);
@@ -351,7 +328,6 @@ void main() {
       return (
         goalId: goalId,
         itemId: itemId,
-        blockId: blockId,
         sessionId: session.id,
         conversationId: conversationId,
         messageId: message.id,
@@ -378,7 +354,6 @@ void main() {
     final expected = <String, String>{
       'learning_goal': written.goalId,
       'plan_item': written.itemId,
-      'schedule_block': written.blockId,
       'study_session': written.sessionId,
       'conversation': written.conversationId,
       'message': written.messageId,
@@ -402,7 +377,6 @@ void main() {
     // 变更明细就能先建父行、再建子行，不必回读一个不存在的键。
     final references = <(String, String, String)>[
       ('plan_item', 'goal_id', written.goalId),
-      ('schedule_block', 'plan_item_id', written.itemId),
       ('study_session', 'goal_id', written.goalId),
       ('conversation', 'goal_id', written.goalId),
       ('message', 'conversation_id', written.conversationId),

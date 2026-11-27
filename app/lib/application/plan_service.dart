@@ -1,93 +1,42 @@
 import '../data/db/write_transactions.dart';
-import '../data/revisions/revision_actions.dart';
-import '../data/revisions/revision_models.dart';
-import '../data/revisions/revision_service.dart';
-import '../data/repository/schedule_repository.dart';
 import '../data/repository/study_plan_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
-import '../domain/models/study_plan.dart';
 import '../../domain/rules/uuid_v7.dart';
 import 'plan_search.dart';
 import 'service_runtime.dart';
 
-/// 一份系统学习计划的摘要：下一步与最近一次预约，给日程页直接展示。
-class StudyPlanSummary {
-  const StudyPlanSummary({required this.plan, this.nextStep, this.nextBlock});
-
-  final StudyPlan plan;
-  final PlanItem? nextStep;
-  final ScheduleBlock? nextBlock;
-}
-
-/// 安排页的一周日程与相关学习计划、事项、目标和可撤销的写入。
-class PlanWeek {
-  const PlanWeek({
-    required this.timetable,
-    required this.blocks,
+/// 安排页的事项与目标。
+class PlanOverview {
+  const PlanOverview({
     required this.items,
-    required this.operations,
     this.goals = const [],
-    this.studyPlans = const [],
     this.doneItemCount = 0,
   });
 
-  final List<TimetableEntry> timetable;
-  final List<ScheduledItem> blocks;
-
-  /// 未完成的学习事项；已完成事项按页另读，不随这一份一起读回。
   final List<PlanItem> items;
-
-  /// 已完成事项总数，界面据此提供“显示已完成（N）”与是否还有下一页。
-  final int doneItemCount;
-
-  /// 还没有撤销的 AI 写入与接受建议，界面按提交撤销。
-  final List<RevisionCommit> operations;
-  final List<StudyPlanSummary> studyPlans;
-
-  /// 全部目标，当前有效的排在前面；可以同时有多个。
   final List<LearningGoal> goals;
-
-  LearningGoal? goalById(String? id) {
-    if (id == null) return null;
-    return goals.where((goal) => goal.id == id).firstOrNull;
-  }
+  final int doneItemCount;
 }
 
-/// 计划与日程：课表、学习事项、目标、时间块与撤销。
 class PlanService {
   PlanService({
     required this.tasks,
-    required this.schedule,
-    required this.revisions,
     required this.runtime,
     required this.studyPlans,
     required this.transactions,
   });
 
   final TaskRepository tasks;
-  final ScheduleRepository schedule;
 
-  /// 全部目标，当前有效的排在前面；不能靠 [loadWeek] 的页面从这里读。
+  /// 全部目标，当前有效的排在前面；不能靠 [loadOverview] 的页面从这里读。
   Future<List<LearningGoal>> goals() => tasks.goals();
 
-  /// 安排页一屏数据读到的表：其中任一表被写入之后整屏重读一次。
-  ///
-  /// 一次提交常同时改到事项、预约与提交历史，整屏读法只重跑一次，回填的
-  /// 也一定是同一时刻的数据（ADR-0014）。
-  static const Set<String> _weekTables = {
-    'plan_item',
-    'schedule_block',
-    'timetable_entry',
-    'learning_goal',
-    'study_plan',
-    'memory',
-  };
-
-  /// 跟随写入更新的 [loadWeek]；页面订阅之后不再在写入之后自己重读。
-  Stream<PlanWeek> watchWeek(DateTime anchor) =>
-      runtime.watch(tables: _weekTables, read: () => loadWeek(anchor));
+  Stream<PlanOverview> watchOverview() => runtime.watch(
+    tables: const {'plan_item', 'learning_goal'},
+    read: loadOverview,
+  );
 
   /// 跟随写入更新的目标列表；归属选择与筛选条用它。
   Stream<List<LearningGoal>> watchGoals() =>
@@ -103,107 +52,26 @@ class PlanService {
   /// 当前有效的目标；记录检索与记忆建议的归属选择从这里读。
   Future<List<LearningGoal>> activeGoals() => tasks.activeGoals();
 
-  /// 每个未完成事项接下来的一次预约；系统学习页据此显示下次安排。
-  Future<Map<String, ScheduleBlock>> nextBlocksForItems(
-    Iterable<String> planItemIds,
-  ) => schedule.nextBlocksForItems(planItemIds, runtime.policy.now);
-
-  /// 回执与撤销都读提交历史，不再维护单独的操作日志。
-  final RevisionService revisions;
   final ServiceRuntime runtime;
   final WriteTransactions transactions;
 
   /// 学习事项属于系统学习计划时，状态改动后同步计划的继续位置。
   final StudyPlanRepository studyPlans;
 
-  /// 读取一份安排：本周课表、预约、未完成事项、目标、计划摘要与可撤销回执。
-  ///
-  /// 各段之间没有依赖，全部同时发出，页面等的是其中最慢的一段，而不是各段之和。
-  /// 回执用一条查询按动作与表筛选，不再为每条可撤销提交再读一次变更明细。
-  ///
-  /// 已完成事项只读一个总数，不随打开安排页读回；用户展开“已完成”时再按页读。
-  /// 系统学习的步骤另按未完成计划读取，既包含步骤里的已完成项，也不经事项列表
-  /// 整体带入；已完成计划的步骤不再读回，进度由计划行的计数带出。
-  Future<PlanWeek> loadWeek(DateTime anchor) async {
-    final current = runtime.policy;
-    final range = current.naturalWeekRange(anchor);
-    final (
-      items,
-      plans,
-      timetable,
-      blocks,
-      receipts,
-      goals,
-      doneCount,
-    ) = await (
+  Future<PlanOverview> loadOverview() async {
+    final (items, goals, doneCount) = await (
       tasks.items(openOnly: true),
-      studyPlans.list(),
-      schedule.timetable(),
-      schedule.blocksBetween(range.start, range.endExclusive),
-      _receipts(),
       tasks.goals(),
       tasks.countDone(),
     ).wait;
-
-    // 已完成计划的步骤页面用不到：进度由计划行的计数带出，下一步始终为空，
-    // 只按未完成计划读取步骤。
-    final steps = await studyPlans.stepsForPlans(
-      plans.where((plan) => !plan.done).map((plan) => plan.id),
-    );
-    final stepsByPlan = <String, List<PlanItem>>{};
-    for (final step in steps) {
-      final planId = step.studyPlanId;
-      if (planId == null) continue;
-      stepsByPlan.putIfAbsent(planId, () => []).add(step);
-    }
-    final nextBlocks = await schedule.nextBlocksForItems(
-      steps.where((step) => step.open).map((step) => step.id),
-      current.now,
-    );
-    final summaries = <StudyPlanSummary>[];
-    for (final plan in plans) {
-      final ordered = [...?stepsByPlan[plan.id]]
-        ..sort((a, b) {
-          final left = a.seq ?? 0;
-          final right = b.seq ?? 0;
-          return left.compareTo(right);
-        });
-      ScheduleBlock? nextBlock;
-      for (final step in ordered.where((step) => step.open)) {
-        final block = nextBlocks[step.id];
-        if (block == null) continue;
-        if (nextBlock == null || block.startAt.isBefore(nextBlock.startAt)) {
-          nextBlock = block;
-        }
-      }
-      summaries.add(
-        StudyPlanSummary(
-          plan: plan,
-          nextStep: currentStudyStep(ordered),
-          nextBlock: nextBlock,
-        ),
-      );
-    }
-    return PlanWeek(
-      timetable: timetable,
-      blocks: blocks,
-      items: items,
-      operations: receipts,
-      goals: goals,
-      studyPlans: summaries,
-      doneItemCount: doneCount,
-    );
+    return PlanOverview(items: items, goals: goals, doneItemCount: doneCount);
   }
 
   /// 已完成事项按页读取；安排页展开“已完成”时逐页调用。
   Future<List<PlanItem>> doneItems({int limit = 30, int offset = 0}) =>
       tasks.doneItems(limit: limit, offset: offset);
 
-  /// 安排查找的一页：事项与预约一起读回，关键词在应用层筛，再按时间排序分页。
-  ///
-  /// 日期条件只算一次自然日区间，同时用于事项截止时间与预约开始时间，两个
-  /// 结果来源因此共用同一个日期条件；条件全空时直接返回空页，不读库。
-  /// 查询是用户发起的快照，不跟随写入更新（ADR-0014 的按次读取）。
+  /// 按标题、说明、目标、状态和截止日期查找事项。
   Future<PlanSearchPageResult> searchPage(
     PlanSearchQuery query, {
     int offset = 0,
@@ -212,20 +80,12 @@ class PlanService {
     if (query.isEmpty) return PlanSearchPageResult(query: query);
     final day = query.day;
     final range = day == null ? null : runtime.policy.naturalDayRange(day);
-    final (items, blocks) = await (
-      tasks.searchItems(
-        goalId: query.goalId,
-        status: query.status,
-        dayStart: range?.start,
-        dayEnd: range?.endExclusive,
-      ),
-      schedule.searchBlocks(
-        goalId: query.goalId,
-        status: query.status,
-        dayStart: range?.start,
-        dayEnd: range?.endExclusive,
-      ),
-    ).wait;
+    final items = await tasks.searchItems(
+      goalId: query.goalId,
+      status: query.status,
+      dayStart: range?.start,
+      dayEnd: range?.endExclusive,
+    );
     final hits = <PlanSearchHit>[
       for (final item in items)
         if (planSearchMatches(
@@ -234,28 +94,12 @@ class PlanService {
           note: item.note,
         ))
           PlanSearchHit.item(item),
-      for (final block in blocks)
-        if (planSearchMatches(
-          query.keyword,
-          title: block.itemTitle,
-          note: block.itemNote,
-        ))
-          PlanSearchHit.block(block),
     ];
     return pagePlanSearchHits(query, hits, offset: offset, pageSize: pageSize);
   }
 
-  /// 按编号读一项事项；周视图点到的预约可能不在本页读回的事项里。
+  /// 按编号读一项事项。
   Future<PlanItem?> itemById(String id) => tasks.byId(id);
-
-  /// 安排页只展示真正写入了记忆或学习事项的提交；只有卡片状态变化、没有
-  /// 数据写入的提交不算改动。其他写入在数据版本页按完整历史查看。
-  ///
-  /// 不截断较早的回执：库里已有的改动都能在安排页找到撤销入口。
-  Future<List<RevisionCommit>> _receipts() => revisions.receiptCommits(
-    actions: receiptActions,
-    tables: const {'memory', 'plan_item'},
-  );
 
   /// 新建事项只写用户明确选择的归属与一段说明；没有选择时就不归属任何目标。
   ///
@@ -307,37 +151,15 @@ class PlanService {
     );
   }
 
-  /// 暂停目标；取消弹性安排与目标状态在同一条提交里，要么都写，要么都不写。
-  ///
-  /// 待取消的预约在事务内按目标重新读取，再用一条语句一起取消，最后才改目标
-  /// 状态；中途失败时这次事务整体回滚，不会留下已经取消的预约与仍在进行中的
-  /// 目标。
-  Future<WriteResult> pauseGoal(
-    String id, {
-    bool cancelFlexibleFuture = false,
-  }) {
-    final now = runtime.policy.now;
-    return transactions.run(
-      (txn) async {
-        if (cancelFlexibleFuture) {
-          final blocks = await schedule.flexibleFutureBlocksForGoal(
-            id,
-            now,
-            transaction: txn,
-          );
-          await schedule.cancelBlocks(
-            blocks.map((block) => block.id),
-            transaction: txn,
-          );
-        }
-        await tasks.pauseGoal(id, transaction: txn);
-        return txn.result();
-      },
-      label: '暂停目标',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
+  Future<WriteResult> pauseGoal(String id) => transactions.run(
+    (txn) async {
+      await tasks.pauseGoal(id, transaction: txn);
+      return txn.result();
+    },
+    label: '暂停目标',
+    uid: newUuidV7(),
+    onDuplicate: (commit) => WriteResult.committed(commit.id),
+  );
 
   Future<WriteResult> resumeGoal(String id) {
     return transactions.run(
@@ -361,15 +183,6 @@ class PlanService {
       uid: newUuidV7(),
       onDuplicate: (commit) => WriteResult.committed(commit.id),
     );
-  }
-
-  /// 目标下未开始的弹性安排数量，暂停前用于说明会取消什么。
-  Future<int> flexibleFutureCount(String goalId) async {
-    final blocks = await schedule.flexibleFutureBlocksForGoal(
-      goalId,
-      runtime.policy.now,
-    );
-    return blocks.length;
   }
 
   /// 完成、改回或暂停一个事项；事务内先看当前状态，已经是目标状态时直接跳过，
@@ -398,143 +211,4 @@ class PlanService {
     uid: newUuidV7(),
     onDuplicate: (commit) => WriteResult.committed(commit.id),
   );
-
-  /// 为一项安排一次时间；返回提交编号，界面据此提供撤销。
-  ///
-  /// 单条预约原先只写时间块，不回到提示条，也不出现在提交历史之外的入口；
-  /// 现在与整组顺延一样在事务里写入并带回编号，撤销时按提交回放。
-  Future<WriteResult> scheduleItem({
-    required String planItemId,
-    required DateTime start,
-    required DateTime end,
-    PlanItemSource source = PlanItemSource.user,
-  }) {
-    return transactions.run(
-      (txn) async {
-        await schedule.addBlock(
-          planItemId: planItemId,
-          start: start,
-          end: end,
-          source: source,
-          transaction: txn,
-        );
-        return txn.result();
-      },
-      label: '安排学习时间',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  /// 改一次预约的时间；与单条预约一样返回写结果。
-  Future<WriteResult> moveBlock(
-    String id, {
-    required DateTime start,
-    required DateTime end,
-  }) {
-    return transactions.run(
-      (txn) async {
-        await schedule.moveBlock(id, start: start, end: end, transaction: txn);
-        return txn.result();
-      },
-      label: '调整预约时间',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  /// 一次业务动作调整多条预约；要么全部写入，要么整组保持原样。
-  ///
-  /// 返回这次写入的结果，界面据此提供撤销，不再从提交历史里取最近一条：
-  /// 取到的可能不是这次调整，撤销就成了别的动作。
-  Future<WriteResult> rescheduleGroup(List<ScheduleAdjustment> adjustments) {
-    return transactions.run(
-      (txn) async {
-        await schedule.rescheduleGroup(adjustments, transaction: txn);
-        return txn.result();
-      },
-      label: '调整多个预约',
-      actor: 'user',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  /// 取消、恢复、固定与删除预约各自形成一次可撤销的提交。
-  Future<WriteResult> setBlockStatus(String id, ScheduleBlockStatus status) {
-    return transactions.run(
-      (txn) async {
-        await schedule.setBlockStatus(id, status, transaction: txn);
-        return txn.result();
-      },
-      label: '修改预约状态',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  Future<WriteResult> deleteBlock(String id) {
-    return transactions.run(
-      (txn) async {
-        await schedule.deleteBlock(id, transaction: txn);
-        return txn.result();
-      },
-      label: '删除预约',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  Future<WriteResult> setBlockLocked(String id, bool locked) {
-    return transactions.run(
-      (txn) async {
-        await schedule.setLocked(id, locked, transaction: txn);
-        return txn.result();
-      },
-      label: locked ? '固定这次预约' : '改为弹性预约',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  Future<WriteResult> addTimetable({
-    required int weekday,
-    required String startTime,
-    required String endTime,
-    required String title,
-    String? location,
-  }) {
-    return transactions.run(
-      (txn) async {
-        await schedule.addTimetable(
-          weekday: weekday,
-          startTime: startTime,
-          endTime: endTime,
-          title: title,
-          location: location,
-          transaction: txn,
-        );
-        return txn.result();
-      },
-      label: '新增课表',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  /// 删除一节课；返回写结果，提示条据此提供撤销。
-  Future<WriteResult> deleteTimetable(String id) {
-    return transactions.run(
-      (txn) async {
-        await schedule.deleteTimetable(id, transaction: txn);
-        return txn.result();
-      },
-      label: '删除课表',
-      uid: newUuidV7(),
-      onDuplicate: (commit) => WriteResult.committed(commit.id),
-    );
-  }
-
-  /// 当前时刻之后最近的一个时间块，给首页“接下来”用。
-  Future<ScheduledItem?> nextBlock() => schedule.nextAfter(runtime.policy.now);
 }

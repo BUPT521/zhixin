@@ -11,16 +11,6 @@ import '../support/test_db.dart';
 
 const String _stamp = '2026-11-17 10:00:00';
 
-Map<String, Object?> _timetable(String id, String start, String end) => {
-  'id': id,
-  'weekday': 1,
-  'start_time': start,
-  'end_time': end,
-  'title': '线性代数',
-  'created_at': _stamp,
-  'updated_at': _stamp,
-};
-
 Map<String, Object?> _material(String id) => {
   'id': id,
   'title': '讲义',
@@ -71,72 +61,6 @@ Future<Map<String, Object?>?> _row(TestRig rig, String table, String id) async {
 }
 
 void main() {
-  test('本机改开始时间、远端只改结束时间时整组写入，跨列 CHECK 不被破坏', () async {
-    final rig = await openTestRig();
-    addTearDown(rig.close);
-    await _insert(
-      rig,
-      'timetable_entry',
-      _timetable('t1', '2026-11-17 08:00:00', '2026-11-17 10:00:00'),
-    );
-    // 本机把开始时间改到 09:45，结束时间仍是 10:00，本机的行本身满足约束。
-    await rig.db.command((txn) async {
-      await updateRow(
-        txn,
-        'timetable_entry',
-        {'start_time': '2026-11-17 09:45:00'},
-        where: 'id = ?',
-        whereArgs: ['t1'],
-      );
-    }, label: '修改课表');
-
-    // 采集把整组写进变更明细：只改开始时间，结束时间也要跟着进去。
-    final head = await rig.engine.headId(rig.raw);
-    final local = await rig.revisions.details(head);
-    final localChange = local!.changes.singleWhere(
-      (change) => change.table == 'timetable_entry',
-    );
-    expect(localChange.after!.keys, containsAll(['start_time', 'end_time']));
-
-    // 远端只把结束时间从 10:00 改到 09:30；本机开始时间是 09:45，直接写结束
-    // 时间会得到 end <= start 的行。
-    final applied = await rig.revisions.applyRemoteCommit(
-      uid: 'remote-group-1',
-      action: '从其他设备同步',
-      actor: 'user',
-      kind: RevisionKind.write,
-      originDevice: 'device-b',
-      changes: [
-        RevisionChange(
-          commitId: 0,
-          seq: 1,
-          table: 'timetable_entry',
-          rowKey: 't1',
-          op: ChangeOp.update,
-          before: {
-            'start_time': RevisionValue.of('2026-11-17 08:00:00'),
-            'end_time': RevisionValue.of('2026-11-17 10:00:00'),
-          },
-          after: {
-            'start_time': RevisionValue.of('2026-11-17 08:00:00'),
-            'end_time': RevisionValue.of('2026-11-17 09:30:00'),
-          },
-        ),
-      ],
-    );
-
-    expect(applied.skipped, 0);
-    final row = await _row(rig, 'timetable_entry', 't1');
-    expect(row!['start_time'], '2026-11-17 08:00:00', reason: '整组写入，开始时间用远端整行');
-    expect(row['end_time'], '2026-11-17 09:30:00');
-    // 本机改过的开始时间被覆盖，记一条冲突供用户写回。
-    final conflicts = await rig.revisions.conflicts();
-    expect(
-      conflicts.map((conflict) => conflict.column),
-      contains('start_time'),
-    );
-  });
-
   test('两端插入同一份材料的同一页码时跳过远端这一行并记 unique_key_taken', () async {
     final rig = await openTestRig();
     addTearDown(rig.close);

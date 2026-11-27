@@ -97,13 +97,13 @@ class SuggestionCard extends StatelessWidget {
     super.key,
     required this.suggestion,
     required this.onAccept,
-    required this.onSchedule,
+    required this.onStart,
     required this.onDismiss,
   });
 
   final PendingSuggestion suggestion;
   final VoidCallback onAccept;
-  final VoidCallback onSchedule;
+  final VoidCallback onStart;
   final VoidCallback onDismiss;
 
   @override
@@ -136,14 +136,14 @@ class SuggestionCard extends StatelessWidget {
             forui.FButton(
               variant: forui.FButtonVariant.outline,
               mainAxisSize: MainAxisSize.min,
-              onPress: onSchedule,
-              child: const Text('保存并选时间'),
+              onPress: onStart,
+              child: const Text('立即开始'),
             ),
             forui.FButton(
               variant: forui.FButtonVariant.ghost,
               mainAxisSize: MainAxisSize.min,
               onPress: onDismiss,
-              child: const Text('暂不安排'),
+              child: const Text('暂缓'),
             ),
           ],
         ),

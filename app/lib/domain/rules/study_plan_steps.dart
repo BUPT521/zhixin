@@ -4,15 +4,12 @@ import '../models/study_plan.dart';
 /// 改一个学习步骤的状态时要连带做的写入。
 ///
 /// 判定只由状态与所属计划决定：同一份计划里只保留一个进行中的步骤，完成时
-/// 结算这段时间的预约，延后时取消还没开始的预约。仓库按这份判定执行单表
 /// 写入，不再自己判断状态语义。
 class StudyStepStatusChange {
   const StudyStepStatusChange({
     required this.status,
     this.planId,
     this.resetOtherActive = false,
-    this.settleBlocks = false,
-    this.cancelPlannedBlocks = false,
   });
 
   final PlanItemStatus status;
@@ -22,12 +19,6 @@ class StudyStepStatusChange {
 
   /// 把同计划里其他进行中的步骤改回待开始，保证只有一个进行中。
   final bool resetOtherActive;
-
-  /// 把这次完成对应的预约结算为完成，到过时间却没有场次的按取消处理。
-  final bool settleBlocks;
-
-  /// 把这一步还没开始的预约取消。
-  final bool cancelPlannedBlocks;
 }
 
 /// 按步骤状态与所属计划算出要连带写入的内容。
@@ -38,8 +29,6 @@ StudyStepStatusChange studyStepStatusChange(
   status: status,
   planId: planId,
   resetOtherActive: status == PlanItemStatus.doing && planId != null,
-  settleBlocks: status == PlanItemStatus.done,
-  cancelPlannedBlocks: status == PlanItemStatus.deferred,
 );
 
 /// 核对学习步骤的页码范围、顺序与所选页面的覆盖情况。

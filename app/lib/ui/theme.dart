@@ -202,7 +202,7 @@ class ZhixinTextStyles {
     required this.figures,
   });
 
-  /// 时刻、时长与计数用的等宽数字；日程里上下对齐的时间读这一份。
+  /// 时刻、时长与计数用的等宽数字。
   final TextStyle figures;
 
   final TextStyle headlineMedium;

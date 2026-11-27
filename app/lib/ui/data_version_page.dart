@@ -94,6 +94,7 @@ class _DataVersionPageState extends State<DataVersionPage>
   /// 提交历史先渲染的条数；点“读取更早的提交”再加一页。
   static const int _historyPageSize = 30;
   int _historyLimit = _historyPageSize;
+  bool _onlyAiChanges = false;
 
   /// 恢复过程（读包、校验、写入）的就地说明；只有最终结果才弹提示。
   String? _restoreStatus;
@@ -1276,7 +1277,10 @@ class _DataVersionPageState extends State<DataVersionPage>
     final history = view.history;
     final usage = view.usage;
     final commits = history.commits;
-    final shown = commits.take(_historyLimit).toList(growable: false);
+    final filtered = _onlyAiChanges
+        ? commits.where((commit) => commit.isAiChange).toList(growable: false)
+        : commits;
+    final shown = filtered.take(_historyLimit).toList(growable: false);
     // 撤销链的层数要看回指的提交，列表里的提交按编号建一份索引给每条提交用。
     final commitsById = {for (final commit in commits) commit.id: commit};
     return SingleChildScrollView(
@@ -1447,10 +1451,26 @@ class _DataVersionPageState extends State<DataVersionPage>
             ),
             for (final point in view.restorePoints) _pointTile(theme, point),
           ],
-          SectionHeading(key: _historyKey, title: '提交历史'),
+          SectionHeading(
+            key: _historyKey,
+            title: '提交历史',
+            action: forui.FButton(
+              variant: _onlyAiChanges
+                  ? forui.FButtonVariant.secondary
+                  : forui.FButtonVariant.outline,
+              mainAxisSize: MainAxisSize.min,
+              onPress: () => setState(() {
+                _onlyAiChanges = !_onlyAiChanges;
+                _historyLimit = _historyPageSize;
+              }),
+              child: Text(_onlyAiChanges ? '显示全部' : '筛选 AI 改动'),
+            ),
+          ),
+          if (_onlyAiChanges && shown.isEmpty)
+            const InlineNotice(message: '没有 AI 改动。'),
           for (final commit in shown)
             _commitTile(theme, view, commit, commitsById),
-          if (commits.length > shown.length)
+          if (filtered.length > shown.length)
             LoadMoreFooter(
               label: '读取更早的提交',
               loading: false,
@@ -1869,11 +1889,6 @@ class _DataVersionPageState extends State<DataVersionPage>
         'done': '已完成',
         'deferred': '已暂缓',
       },
-      'schedule_block.status' => const {
-        'planned': '已安排',
-        'done': '已完成',
-        'cancelled': '已取消',
-      },
       'study_session.outcome' => const {
         'done': '完成',
         'partial': '部分完成',
@@ -1903,9 +1918,7 @@ class _DataVersionPageState extends State<DataVersionPage>
         'assistant': buddyName,
         'system': '系统',
       },
-      'plan_item.source' ||
-      'schedule_block.source' => const {'user': '你', 'ai': buddyName},
-      'revision_commit.actor' => const {
+      'plan_item.source' || 'revision_commit.actor' => const {
         'user': '你',
         'ai': buddyName,
         'system': '系统',

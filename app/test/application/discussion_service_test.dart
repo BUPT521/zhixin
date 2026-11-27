@@ -21,7 +21,6 @@ import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
-import 'package:zhixin/data/repository/schedule_repository.dart';
 import 'package:zhixin/data/repository/study_repository.dart';
 import 'package:zhixin/data/repository/study_plan_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
@@ -109,7 +108,6 @@ class _Harness {
   late TestRig rig;
   late ConversationRepository conversations;
   late TaskRepository tasks;
-  late ScheduleRepository schedule;
   late MemoryRepository memories;
   late AttemptRepository attempts;
   late StudyRepository study;
@@ -121,7 +119,6 @@ class _Harness {
     db = rig.db;
     conversations = ConversationRepository(db);
     tasks = TaskRepository(db);
-    schedule = ScheduleRepository(db);
     memories = MemoryRepository(db);
     attempts = AttemptRepository(db);
     study = StudyRepository(db);
@@ -133,7 +130,6 @@ class _Harness {
       context: ContextService(
         tasks: tasks,
         attempts: attempts,
-        schedule: schedule,
         memories: memories,
         conversations: conversations,
         materials: materials,
@@ -222,13 +218,6 @@ void main() {
     expect(await h.service.history(id), hasLength(4));
 
     expect(await h.tasks.items(), isEmpty);
-    expect(
-      await h.schedule.blocksBetween(
-        DateTime(2026, 11, 1),
-        DateTime(2026, 12, 1),
-      ),
-      isEmpty,
-    );
   });
 
   test('回答边生成边回调正文，用户消息先出现，最后仍保存整条回答', () async {
@@ -725,7 +714,7 @@ void main() {
     expect(messages.last.payload?.fromModel, isTrue);
   });
 
-  test('V1：普通求助不改动既有目标和预约，未接受的建议不生成待办', () async {
+  test('V1：普通求助保留既有目标和事项，未接受的建议不生成待办', () async {
     final h = _Harness(
       reply: const BuddyReply(
         text: '可以先把这一问做完',
@@ -743,15 +732,6 @@ void main() {
       goalId: goalId,
       dueAt: DateTime(2026, 11, 7, 22),
     );
-    final start = DateTime(2026, 11, 7, 19);
-    final end = DateTime(2026, 11, 7, 19, 30);
-    final blockId = await h.schedule.addBlock(
-      planItemId: itemId,
-      start: start,
-      end: end,
-      source: PlanItemSource.user,
-    );
-
     final result = await h.service.reply(text: '这里为什么要用期望？');
 
     final goal = await h.tasks.goalById(goalId);
@@ -760,12 +740,6 @@ void main() {
     expect(items, hasLength(1));
     expect(items.single.id, itemId);
     expect(items.single.status, PlanItemStatus.todo);
-
-    final block = await h.schedule.blockById(blockId);
-    expect(block!.startAt, start);
-    expect(block.endAt, end);
-    expect(block.status, ScheduleBlockStatus.planned);
-    expect(block.source, PlanItemSource.user);
 
     // 建议只存在消息里，没有被接受就不写事项。
     final messages = await h.service.history(result.userMessage.conversationId);
@@ -1404,12 +1378,6 @@ void main() {
     );
 
     final itemId = await h.tasks.createItem(title: '第三章作业', goalId: first);
-    final start = DateTime(2026, 11, 7, 19);
-    final blockId = await h.schedule.addBlock(
-      planItemId: itemId,
-      start: start,
-      end: start.add(const Duration(minutes: 30)),
-    );
     final doneId = await h.tasks.createItem(title: '第二节作业', goalId: second);
     await StudyPlanRepository(h.db).setItemStatus(doneId, PlanItemStatus.done);
 
@@ -1417,10 +1385,7 @@ void main() {
     expect((await h.tasks.goalById(first))!.status, LearningGoalStatus.paused);
     expect((await h.tasks.goalById(second))!.status, LearningGoalStatus.active);
 
-    // 相关未来安排与已完成记录保持原样。
-    final block = await h.schedule.blockById(blockId);
-    expect(block!.startAt, start);
-    expect(block.status, ScheduleBlockStatus.planned);
+    // 暂停目标保留相关事项与完成记录。
     final items = await h.tasks.items();
     expect(
       items.firstWhere((item) => item.id == doneId).status,

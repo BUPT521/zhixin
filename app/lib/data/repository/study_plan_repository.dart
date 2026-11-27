@@ -358,24 +358,6 @@ class StudyPlanRepository {
         ),
       );
     }
-    if (change.settleBlocks) {
-      // 只有确实发生过学习的预约才记为结束：场次与这段时间有重叠才算完成。
-      // 到过开始时间却没有场次的旧预约按取消处理，不再把没学的那几次写成完成。
-      await txn.writeGenerated(
-        (db) => db.settleBlocksOnStepDone(
-          now,
-          'done',
-          'cancelled',
-          itemId,
-          'planned',
-        ),
-      );
-    }
-    if (change.cancelPlannedBlocks) {
-      await txn.writeGenerated(
-        (db) => db.cancelPlannedBlocksForItem(now, itemId),
-      );
-    }
   }
 
   Future<void> setStatus(

@@ -2,12 +2,12 @@
 
 import 'package:drift/drift.dart';
 
-// 当前 schema 32 的 28 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
+// 当前 schema 33 的 26 张表，结构唯一来源：建表、索引与文档比对都从这里派生。
 //
 // 表的 SQL 名称、列名、外键动作与主要约束写在这里，索引写在表类上的
 // `@TableIndex`；采集暂存表与触发器由版本引擎安装，不在表类里声明。
 //
-// 业务表 13 张、设置表 1 张、记忆使用统计 2 张，其余 12 张是版本、附件与同步的
+// 业务表 11 张、设置表 1 张、记忆使用统计 2 张，其余 12 张是版本、附件与同步的
 // 簿记。
 // 这一版把表结构的形状收口到索引与约束上：记忆召回先记在本机缓冲表、不参与
 // 采集，附件引用列与列组显式声明，跨列 CHECK 只约束总是一起写入的列（ADR-0051、
@@ -45,9 +45,8 @@ const List<String> messageRoles = ['user', 'assistant', 'system'];
 const List<String> studyPlanStatuses = ['active', 'paused', 'done'];
 const List<String> planItemStatuses = ['todo', 'doing', 'done', 'deferred'];
 
-/// 事项与时间块的来源取值。
+/// 事项的来源取值。
 const List<String> sourceValues = ['user', 'ai'];
-const List<String> scheduleBlockStatuses = ['planned', 'done', 'cancelled'];
 const List<String> sessionOutcomes = ['done', 'partial', 'not_done'];
 const List<String> assessmentKinds = ['model', 'user'];
 const List<String> memoryKinds = ['episodic', 'semantic', 'procedural'];
@@ -111,8 +110,6 @@ const Map<String, List<String>> checkValueSets = {
   'study_plan.status': studyPlanStatuses,
   'plan_item.status': planItemStatuses,
   'plan_item.source': sourceValues,
-  'schedule_block.source': sourceValues,
-  'schedule_block.status': scheduleBlockStatuses,
   'study_session.outcome': sessionOutcomes,
   'assessment.kind': assessmentKinds,
   'memory.kind': memoryKinds,
@@ -146,8 +143,6 @@ const Map<String, AttachmentReferenceKind> attachmentReferenceColumns = {
 /// CHECK 因此只约束总是一起写入的列，本机改一列、远端改另一列时合并出来的行
 /// 不会违反约束（审查 S18）。
 const List<List<String>> revisionColumnGroups = [
-  ['timetable_entry.start_time', 'timetable_entry.end_time'],
-  ['schedule_block.start_at', 'schedule_block.end_at'],
   ['material.source_file_name', 'material.source_file_hash'],
 ];
 
@@ -446,54 +441,6 @@ class PlanItems extends Table {
   TextColumn get completedAt => text().nullable()();
   TextColumn get createdAt => text()();
   TextColumn get updatedAt => text()();
-
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
-@DataClassName('TimetableEntryRow')
-class TimetableEntries extends Table {
-  @override
-  String get tableName => 'timetable_entry';
-  TextColumn get id => text()();
-  IntColumn get weekday => integer().check(weekday.isBetweenValues(1, 7))();
-  TextColumn get startTime => text()();
-  TextColumn get endTime => text()();
-  TextColumn get title => text()();
-  TextColumn get location => text().nullable()();
-  TextColumn get createdAt => text()();
-  TextColumn get updatedAt => text()();
-
-  @override
-  List<String> get customConstraints => const ['CHECK (end_time > start_time)'];
-
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
-@TableIndex(name: 'idx_schedule_start', columns: {#startAt})
-@TableIndex(name: 'idx_schedule_plan', columns: {#planItemId})
-@DataClassName('ScheduleBlockRow')
-class ScheduleBlocks extends Table {
-  @override
-  String get tableName => 'schedule_block';
-  TextColumn get id => text()();
-  TextColumn get planItemId =>
-      text().references(PlanItems, #id, onDelete: KeyAction.cascade)();
-  TextColumn get startAt => text()();
-  TextColumn get endAt => text()();
-  TextColumn get source => text()
-      .withDefault(const Constant('user'))
-      .check(source.isIn(sourceValues))();
-  TextColumn get status => text()
-      .withDefault(const Constant('planned'))
-      .check(status.isIn(scheduleBlockStatuses))();
-  BoolColumn get locked => boolean().withDefault(const Constant(false))();
-  TextColumn get createdAt => text()();
-  TextColumn get updatedAt => text()();
-
-  @override
-  List<String> get customConstraints => const ['CHECK (end_at > start_at)'];
 
   @override
   Set<Column> get primaryKey => {id};
