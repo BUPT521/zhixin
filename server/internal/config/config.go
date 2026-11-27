@@ -143,9 +143,10 @@ type Config struct {
 	MailGlobalRatePerSecond float64
 	MailGlobalBurst         int
 	// SMTPMaxConcurrent 是同时占用的 SMTP 连接数，SMTPMaxAttempts 是一次发送
-	// 对临时失败的总尝试次数。
+	// 对临时失败的总尝试次数，SMTPMaxRetryAfter 是愿意等待服务商限速的上限。
 	SMTPMaxConcurrent int
 	SMTPMaxAttempts   int
+	SMTPMaxRetryAfter time.Duration
 
 	// FeedbackRatePerSecond 与 FeedbackBurst 限制应用内反馈的提交，按来源地址
 	// 计；设 0 关闭。
@@ -423,6 +424,7 @@ func Load(getenv func(string) string) (Config, error) {
 		MailGlobalBurst:         int(num("ZHIXIN_MAIL_GLOBAL_BURST", "20")),
 		SMTPMaxConcurrent:       int(num("ZHIXIN_SMTP_MAX_CONCURRENT", "4")),
 		SMTPMaxAttempts:         int(num("ZHIXIN_SMTP_MAX_ATTEMPTS", "3")),
+		SMTPMaxRetryAfter:       dur("ZHIXIN_SMTP_MAX_RETRY_AFTER", "30s"),
 
 		FeedbackRatePerSecond:       fnum("ZHIXIN_FEEDBACK_RATE", "0.02"),
 		FeedbackBurst:               int(num("ZHIXIN_FEEDBACK_BURST", "3")),

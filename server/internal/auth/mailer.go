@@ -49,6 +49,10 @@ type MailerConfig struct {
 	MaxConcurrent int
 	// MaxAttempts 是临时失败时的总尝试次数，为零时默认 3（最多重试两次）。
 	MaxAttempts int
+	// MaxRetryAfter 是一次发送愿意等待服务商限速的上限，为零时默认 30 秒。服务商
+	// 给出的等待超过它时直接放弃这次发送，把验证码作废，让用户稍后重新申请，而不是
+	// 把请求挂住几分钟。
+	MaxRetryAfter time.Duration
 	// RetryAfterError 返回服务商给出的建议等待时长，读不出来返回零。它由配置里
 	// 的提示字符串转成，见 ParseRetryAfterHint。
 	RetryAfterError func(error) time.Duration
@@ -91,6 +95,9 @@ func NewMailer(cfg MailerConfig, log *slog.Logger) (Mailer, error) {
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 3
 	}
+	if cfg.MaxRetryAfter <= 0 {
+		cfg.MaxRetryAfter = defaultMailMaxRetryAfter
+	}
 	return NewSMTPMailer(cfg), nil
 }
 
@@ -124,6 +131,9 @@ func NewSMTPMailer(cfg MailerConfig) *smtpMailer {
 	}
 	if cfg.MaxAttempts <= 0 {
 		cfg.MaxAttempts = 3
+	}
+	if cfg.MaxRetryAfter <= 0 {
+		cfg.MaxRetryAfter = defaultMailMaxRetryAfter
 	}
 	return &smtpMailer{cfg: cfg, sem: make(chan struct{}, cfg.MaxConcurrent)}
 }
@@ -166,20 +176,26 @@ func ParseRetryAfterHint(err error) time.Duration {
 	if _, err := fmt.Sscanf(digits, "%d", &seconds); err != nil || seconds <= 0 {
 		return 0
 	}
-	if max := int(mailMaxRetryAfter / time.Second); seconds > max {
+	// 这里只做防溢出的上限；一次发送愿意等多久由 MailerConfig.MaxRetryAfter 决定，
+	// 超过它的等待在 send 里直接放弃，不在这里截断成一个看不出原因的值。
+	if max := int(maxParseRetryAfter / time.Second); seconds > max {
 		seconds = max
 	}
 	return time.Duration(seconds) * time.Second
 }
 
-// mailMaxRetryAfter 是一次请求愿意为服务商的限速等待的上限；超过就放弃这次
-// 发送，把验证码作废，让用户稍后重新申请，而不是把请求挂住几分钟。
-const mailMaxRetryAfter = 30 * time.Second
+// defaultMailMaxRetryAfter 是一次发送在没有配置时愿意为服务商限速等待的上限。
+// 装配处用 ZHIXIN_SMTP_MAX_RETRY_AFTER 覆盖它。
+const defaultMailMaxRetryAfter = 30 * time.Second
+
+// maxParseRetryAfter 是解析服务商提示时的防溢出上限，远高于发送愿意等待的值。
+const maxParseRetryAfter = 24 * time.Hour
 
 // isTemporary 判断一次发信失败是否值得重试：连接、超时与 4xx 这类临时错误重试，
-// 鉴权失败、收件人被拒与格式错误重试也只是再失败一次。
+// 鉴权失败、收件人被拒与格式错误重试也只是再失败一次。请求取消不是服务商的临时
+// 失败，用户关掉页面三次不能把整个实例的发信熔断掉。
 func isTemporary(err error) bool {
-	if err == nil {
+	if err == nil || errors.Is(err, context.Canceled) {
 		return false
 	}
 	var netErr net.Error
@@ -195,7 +211,7 @@ func isTemporary(err error) bool {
 
 func (m *smtpMailer) Send(ctx context.Context, to string, message MailMessage) error {
 	if pause := m.paused(); pause > 0 {
-		return fmt.Errorf("auth: 发信暂缓 %s 后重试: %w", pause.Round(time.Second), ErrMailPaused)
+		return mailPauseError{retryAfter: max(1, int64(pause/time.Second))}
 	}
 	select {
 	case m.sem <- struct{}{}:
@@ -219,7 +235,15 @@ func (m *smtpMailer) send(ctx context.Context, to string, data []byte) error {
 			return nil
 		}
 		lastErr = err
-		if !isTemporary(err) || attempt == m.cfg.MaxAttempts-1 || ctx.Err() != nil {
+		// 请求已经取消时不再拨号，也不把这次失败记进熔断：用户关页面不是服务商
+		// 的临时故障，连续几次取消不能暂停整个实例的发信。
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if errors.Is(err, context.Canceled) {
+			return err
+		}
+		if !isTemporary(err) || attempt == m.cfg.MaxAttempts-1 {
 			break
 		}
 		wait := retryDelays[min(attempt, len(retryDelays)-1)]
@@ -228,13 +252,17 @@ func (m *smtpMailer) send(ctx context.Context, to string, data []byte) error {
 				wait = fromServer
 			}
 		}
-		if wait > mailMaxRetryAfter {
+		// 等待超过配置的上限时放弃这次发送；上限可配置，解析提示时不再把它截成
+		// 一个永远到不了的值。
+		if wait > m.cfg.MaxRetryAfter {
 			break
 		}
+		timer := time.NewTimer(wait)
 		select {
-		case <-time.After(wait):
+		case <-timer.C:
 		case <-ctx.Done():
-			break
+			timer.Stop()
+			return ctx.Err()
 		}
 	}
 	m.record(lastErr)

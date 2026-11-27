@@ -80,7 +80,7 @@ func TestCodeEmailMIME(t *testing.T) {
 }
 
 // TestParseRetryAfterHint 核对能从服务商的响应文本里读出建议等待秒数，读不出来
-// 都返回零；超过上限时截到上限，交给调用方按上限放弃这次发送。
+// 都返回零；等待上限由 MailerConfig.MaxRetryAfter 决定，这里不截断。
 func TestParseRetryAfterHint(t *testing.T) {
 	cases := []struct {
 		in   error
@@ -88,7 +88,7 @@ func TestParseRetryAfterHint(t *testing.T) {
 	}{
 		{errors.New("550 5.7.1 Retry-After: 12 please wait"), 12 * time.Second},
 		{errors.New("retry-after=3"), 3 * time.Second},
-		{errors.New("too many messages, Retry-After: 600"), 30 * time.Second},
+		{errors.New("too many messages, Retry-After: 600"), 600 * time.Second},
 		{errors.New("no hint here"), 0},
 		{nil, 0},
 	}
@@ -113,6 +113,9 @@ func TestIsTemporary(t *testing.T) {
 	var netErr net.Error = &net.OpError{Op: "dial", Err: errors.New("timeout")}
 	if !isTemporary(netErr) {
 		t.Error("网络错误应当重试")
+	}
+	if isTemporary(context.Canceled) {
+		t.Error("请求取消不是服务商的临时失败，不应重试或记进熔断")
 	}
 }
 
@@ -140,5 +143,52 @@ func TestMailerRetriesTemporaryFailureThenPauses(t *testing.T) {
 	}
 	if err := m.Send(ctx, "a@example.com", message); !errors.Is(err, ErrMailPaused) {
 		t.Fatalf("暂停期间应返回 ErrMailPaused，得到 %v", err)
+	} else {
+		var pause mailPauseError
+		if !errors.As(err, &pause) || pause.retryAfter <= 0 {
+			t.Fatalf("暂停错误应带等待秒数，得到 %v", err)
+		}
+	}
+}
+
+// TestCanceledSendsDoNotPauseTheMailer 守住取消与熔断的分离：用户连续关掉页面
+// 不是服务商故障，取消的发送不能把整个实例的发信暂停掉。
+func TestCanceledSendsDoNotPauseTheMailer(t *testing.T) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+
+	m := NewSMTPMailer(MailerConfig{Addr: addr, MaxAttempts: 3})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	message := MailMessage{Subject: "s", Text: "b", HTML: "<p>b</p>"}
+	for i := 0; i < mailBreakerThreshold+1; i++ {
+		if err := m.Send(ctx, "a@example.com", message); err == nil {
+			t.Fatal("取消的请求不应成功")
+		}
+	}
+	if left := m.PausedFor(); left != 0 {
+		t.Fatalf("取消的发送不应触发熔断，还剩 %v", left)
+	}
+}
+
+// TestRetryWaitAboveTheConfiguredLimitGivesUp 守住可配置的等待上限：服务商提示
+// 600 秒而配置上限 30 秒时不再等待，也不把这次发送拖住。
+func TestRetryWaitAboveTheConfiguredLimitGivesUp(t *testing.T) {
+	m := NewSMTPMailer(MailerConfig{
+		Addr:          "127.0.0.1:1",
+		MaxAttempts:   2,
+		MaxRetryAfter: 30 * time.Second,
+		RetryAfterError: func(error) time.Duration {
+			return 10 * time.Minute
+		},
+	})
+	start := time.Now()
+	_ = m.Send(context.Background(), "a@example.com", MailMessage{Subject: "s", Text: "b"})
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("超过上限的等待应直接放弃，实际用了 %v", elapsed)
 	}
 }

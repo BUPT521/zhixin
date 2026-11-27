@@ -287,6 +287,8 @@ func (h *Handler) RequestIdentityVerification(w http.ResponseWriter, r *http.Req
 		httpx.TooMany(w, r, instanceRate.retryAfter)
 	case errors.As(err, &pause):
 		httpx.TooMany(w, r, pause.retryAfter)
+	case errors.Is(err, ErrMailPaused):
+		httpx.TooMany(w, r, h.cooldownSeconds())
 	case errors.Is(err, ErrSenderUnsupported):
 		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):
@@ -346,6 +348,8 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		httpx.TooMany(w, r, h.cooldownSeconds())
 	case errors.As(err, &pause):
 		httpx.TooMany(w, r, pause.retryAfter)
+	case errors.Is(err, ErrMailPaused):
+		httpx.TooMany(w, r, h.cooldownSeconds())
 	case errors.Is(err, ErrSenderUnsupported):
 		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):

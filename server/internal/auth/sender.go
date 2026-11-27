@@ -16,6 +16,18 @@ var ErrSenderUnsupported = errors.New("auth: no sender for this identity kind")
 // 而不是 503。
 var ErrMailPaused = errors.New("auth: mail sender is paused after repeated temporary failures")
 
+// mailPauseError 是暂停期间发信返回的错误，带上还要等待的整秒数。errors.Is 对它
+// 判定 ErrMailPaused 成立，处理器再按 errors.As 取出等待时长写成 429 的
+// Retry-After，而不是把暂停误报成“没有配置发信”的 503。
+type mailPauseError struct{ retryAfter int64 }
+
+func (e mailPauseError) Error() string {
+	return "auth: 发信暂缓 " + (time.Duration(e.retryAfter) * time.Second).String() + " 后重试"
+}
+
+// Is 让 errors.Is(err, ErrMailPaused) 成立。
+func (mailPauseError) Is(target error) bool { return target == ErrMailPaused }
+
 // mailPauser 是发信器可选实现的接口，返回还要暂停多久；0 表示可以继续发。
 type mailPauser interface {
 	PausedFor() time.Duration

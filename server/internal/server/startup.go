@@ -33,6 +33,7 @@ func prepareStartup(ctx context.Context, cfg config.Config, catalog llmproxy.Cat
 		LogOnly:         cfg.MailLog,
 		MaxConcurrent:   cfg.SMTPMaxConcurrent,
 		MaxAttempts:     cfg.SMTPMaxAttempts,
+		MaxRetryAfter:   cfg.SMTPMaxRetryAfter,
 		RetryAfterError: auth.ParseRetryAfterHint,
 	}, log)
 	if err != nil {

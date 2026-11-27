@@ -368,3 +368,30 @@ func TestGlobalSendLimitStopsAcrossRecipients(t *testing.T) {
 		t.Fatalf("只应发出第一封，实际 %d", len(m.sent))
 	}
 }
+
+// TestMailFailureRefundsBothSendBudgets 守住发信失败不退预算的修复：收件地址与
+// 实例总量都只在发送成功之后才算用掉，SMTP 抖一次不会让用户重试几次就耗尽当天
+// 的验证码额度。
+func TestMailFailureRefundsBothSendBudgets(t *testing.T) {
+	ctx := context.Background()
+	s, c, m := newCodeService(t)
+	s.SetSendLimiter(ratelimit.New(rate.Limit(0), 1, 0))
+	s.SetGlobalSendLimiter(ratelimit.New(rate.Limit(0), 1, 0))
+	tok, _ := s.Register(ctx, "student@example.com", "password1", "")
+	p, _ := s.Authenticate(ctx, tok.AccessToken)
+	id := identityID(t, s, p)
+
+	m.err = errors.New("smtp down")
+	if err := s.RequestIdentityVerification(ctx, p, id); !errors.Is(err, ErrMailUnavailable) {
+		t.Fatalf("第一次发送应失败，得到 %v", err)
+	}
+	// 失败的那一次同时退回两个桶，冷却时间过去之后同一次请求可以重新发送。
+	m.err = nil
+	c.t = c.t.Add(2 * time.Minute)
+	if err := s.RequestIdentityVerification(ctx, p, id); err != nil {
+		t.Fatalf("失败之后应能重新发送，得到 %v", err)
+	}
+	if len(m.sent) != 1 {
+		t.Fatalf("应只成功发出一封，实际 %d", len(m.sent))
+	}
+}

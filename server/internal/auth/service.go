@@ -135,11 +135,6 @@ type instanceSendRateError struct{ retryAfter int64 }
 
 func (instanceSendRateError) Error() string { return "auth: instance mail budget exhausted" }
 
-// mailPauseError 表示发信通道正在暂停，值里带还要等多久。
-type mailPauseError struct{ retryAfter int64 }
-
-func (mailPauseError) Error() string { return "auth: mail sender is paused" }
-
 // mailPause 取发信器当前的暂停时长，写成 Retry-After 的整秒数。
 func (s *Service) mailPause() int64 {
 	p, ok := s.senders.(*Senders)
@@ -758,18 +753,36 @@ func (s *Service) issueCode(ctx context.Context, userID, purpose, kind, identifi
 	if delay := s.mailPause(); delay > 0 {
 		return mailPauseError{retryAfter: delay}
 	}
-	if s.sendLimits != nil {
-		if delay := s.sendLimits.Take(kind + ":" + identifier); delay > 0 {
-			return sendRateError{retryAfter: delay}
+	// 收件预算与实例总量都用可退的扣减：邮件没有发出去就不该占掉当天的额度，
+	// 否则 SMTP 抖一次、用户重试几次就会把当天四枚验证码的额度耗光。成功之后
+	// 不退款，失败路径统一调用 refundAll。
+	refunds := make([]func(), 0, 2)
+	refundAll := func() {
+		for _, refund := range refunds {
+			if refund != nil {
+				refund()
+			}
 		}
 	}
+	if s.sendLimits != nil {
+		refund, delay := s.sendLimits.TakeRefundable(kind + ":" + identifier)
+		if delay > 0 {
+			return sendRateError{retryAfter: delay}
+		}
+		refunds = append(refunds, refund)
+	}
 	if s.globalSendLimits != nil {
-		if delay := s.globalSendLimits.TakeOne(); delay > 0 {
+		refund, delay := s.globalSendLimits.TakeRefundable("global")
+		if delay > 0 {
+			// 实例总量拦下时这一封信不会发，已经扣掉的收件预算要退回去。
+			refundAll()
 			return instanceSendRateError{retryAfter: delay}
 		}
+		refunds = append(refunds, refund)
 	}
 	code, err := newCode()
 	if err != nil {
+		refundAll()
 		return err
 	}
 	now := s.now()
@@ -783,13 +796,24 @@ func (s *Service) issueCode(ctx context.Context, userID, purpose, kind, identifi
 		CreatedAt:  now,
 	}
 	if err := s.store.PutCode(ctx, c); err != nil {
+		refundAll()
 		return err
 	}
 	err = s.senders.SendCode(ctx, kind, identifier, purpose, code, s.codeTTL)
 	if err != nil {
 		_ = s.store.DeleteCode(ctx, purpose, kind, identifier)
+		refundAll()
 		if errors.Is(err, ErrSenderUnsupported) {
 			return ErrSenderUnsupported
+		}
+		// 暂停不是“没有配置发信”：保留带等待时长的类型，接口才能回 429 并给出
+		// Retry-After，而不是回 503 让客户端以为这个实例不卖验证码。
+		var pause mailPauseError
+		if errors.As(err, &pause) {
+			return pause
+		}
+		if errors.Is(err, ErrMailPaused) {
+			return mailPauseError{retryAfter: max(1, s.mailPause())}
 		}
 		return fmt.Errorf("%w: %v", ErrMailUnavailable, err)
 	}
