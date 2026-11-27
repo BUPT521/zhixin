@@ -32,6 +32,20 @@ type Options struct {
 	ClientHost func(*http.Request) string
 }
 
+func requestPath(r *http.Request) string {
+	_, path, matched := strings.Cut(r.Pattern, " ")
+	if matched {
+		return path
+	}
+	return r.URL.Path
+}
+
+// IsAdminRoute reports whether the request targets the management API.
+func IsAdminRoute(r *http.Request) bool {
+	path := requestPath(r)
+	return path == "/admin/v1" || strings.HasPrefix(path, "/admin/v1/")
+}
+
 // Middleware 拦住 /admin 开头的请求：后台关闭时一律 404；/admin/v1/ 下的接口
 // 要求 Authorization: Bearer <管理令牌>，凭据无效且来源超限时返回 429。页面本身不含
 // 任何数据，不需要令牌，打开之后由页面向接口出示令牌。
@@ -39,10 +53,7 @@ func Middleware(opt Options) func(http.Handler) http.Handler {
 	want := sha256.Sum256([]byte(opt.Token))
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_, path, matched := strings.Cut(r.Pattern, " ")
-			if !matched {
-				path = r.URL.Path
-			}
+			path := requestPath(r)
 			if path != "/admin" && !strings.HasPrefix(path, "/admin/") {
 				next.ServeHTTP(w, r)
 				return
@@ -55,7 +66,7 @@ func Middleware(opt Options) func(http.Handler) http.Handler {
 			w.Header().Set("X-Frame-Options", "DENY")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
 			w.Header().Set("Referrer-Policy", "no-referrer")
-			if strings.HasPrefix(path, "/admin/v1/") {
+			if IsAdminRoute(r) {
 				tooMany := func(delay int64) {
 					w.Header().Set("Retry-After", strconv.FormatInt(delay, 10))
 					httpx.WriteProblem(w, r, http.StatusTooManyRequests, httpx.CodeRateLimited, "too many failed admin attempts")

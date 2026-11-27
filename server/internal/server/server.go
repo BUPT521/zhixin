@@ -398,8 +398,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 				account := accountGuard(next)
 				management := adminGuard(next)
 				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					_, path, _ := strings.Cut(r.Pattern, " ")
-					if strings.HasPrefix(path, "/admin/v1/") {
+					if admin.IsAdminRoute(r) {
 						management.ServeHTTP(w, r)
 						return
 					}
@@ -409,7 +408,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 			httpx.RecordPattern,
 		},
 		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			if _, path, _ := strings.Cut(r.Pattern, " "); strings.HasPrefix(path, "/admin/v1/") {
+			if admin.IsAdminRoute(r) {
 				adminGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					httpx.BindingErrorHandler(w, r, err)
 				})).ServeHTTP(w, r)

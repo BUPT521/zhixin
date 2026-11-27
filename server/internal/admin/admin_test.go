@@ -39,7 +39,7 @@ func TestMiddlewareGuardsOnlyAdminPaths(t *testing.T) {
 	if code := do("/admin/v1/models", "t0123456789abcdef0123456789abcdef"); code != http.StatusTeapot {
 		t.Fatalf("正确令牌应放行：%d", code)
 	}
-	if code := do("/admin/v1/models", ""); code != http.StatusUnauthorized {
+	if code := do("/admin/v1", ""); code != http.StatusUnauthorized {
 		t.Fatalf("缺令牌应 401：%d", code)
 	}
 	if code := do("/admin/v1/models", "nope"); code != http.StatusTooManyRequests {
@@ -50,5 +50,20 @@ func TestMiddlewareGuardsOnlyAdminPaths(t *testing.T) {
 	}
 	if code := do("/admin/", ""); code != http.StatusTeapot {
 		t.Fatalf("页面本身不受限流影响：%d", code)
+	}
+}
+
+func TestIsAdminRouteUsesMatchedPath(t *testing.T) {
+	for pattern, want := range map[string]bool{
+		"GET /admin/v1":        true,
+		"GET /admin/v1/models": true,
+		"GET /admin/v10":       false,
+		"GET /admin/":          false,
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/different-path", nil)
+		r.Pattern = pattern
+		if got := IsAdminRoute(r); got != want {
+			t.Errorf("%s: got %v, want %v", pattern, got, want)
+		}
 	}
 }
