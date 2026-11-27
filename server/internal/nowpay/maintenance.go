@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/BUPT521/zhixin/server/internal/payment"
 	"github.com/BUPT521/zhixin/server/internal/periodic"
 )
 
@@ -147,7 +148,7 @@ func MaintenanceLoop(ctx context.Context, store MaintenanceStore, loc *time.Loca
 		return
 	}
 	if loc == nil {
-		loc = ChinaTime()
+		loc = payment.ChinaTime()
 	}
 	periodic.Run(ctx, 24*time.Hour, func() {
 		runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), maintenanceLimit)

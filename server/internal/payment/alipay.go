@@ -29,11 +29,24 @@ import (
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
-const alipayTime = "2006-01-02 15:04:05"
+// TimeLayout 是支付宝与即刻收接口给出、接收的时刻格式，统一按东八区解释。
+const TimeLayout = "2006-01-02 15:04:05"
+
+// chinaLocation 是接口时刻使用的东八区时区。Asia/Shanghai 在部分运行环境缺少时区
+// 数据库时退回固定偏移，两者对北京时间等价。
+var chinaLocation = func() *time.Location {
+	zone, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*60*60)
+	}
+	return zone
+}()
+
+// ChinaTime 返回接口时刻使用的东八区时区，供解析即刻收给出的时刻。
+func ChinaTime() *time.Location { return chinaLocation }
 
 var (
-	chinaTime = time.FixedZone("CST", 8*60*60)
-	alipayID  = regexp.MustCompile("^[0-9]{10,32}$")
+	alipayID = regexp.MustCompile("^[0-9]{10,32}$")
 
 	// ErrGateway 表示支付宝网关不可用、响应无法验签或业务对象解析失败。调用方
 	// 只据此判断“这次没拿到可信结果”，不把上游代码写进对外响应。
@@ -136,7 +149,7 @@ func (g *Gateway) sign(method string, parameters map[string]any, now time.Time) 
 	}
 	form := url.Values{
 		"app_id": {g.appID}, "method": {method}, "charset": {"utf-8"}, "format": {"JSON"},
-		"sign_type": {"RSA2"}, "timestamp": {now.In(chinaTime).Format(alipayTime)}, "version": {"1.0"},
+		"sign_type": {"RSA2"}, "timestamp": {now.In(ChinaTime()).Format(TimeLayout)}, "version": {"1.0"},
 		"biz_content": {string(biz)},
 	}
 	digest := sha256.Sum256([]byte(signContent(form)))

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/payment"
 )
 
 // fakeCaller 记录每次调用的 method 与 biz，并返回预先写好的业务对象。
@@ -24,6 +26,9 @@ type fakeCaller struct {
 	// 关闭，用来验证概览的两次查询是并行的。
 	started chan string
 	release chan struct{}
+	// failPurchase 是接下来多少次 purchase.create 直接失败，用来验证创单失败之后
+	// 按原请求号重试。
+	failPurchase int
 }
 
 func (f *fakeCaller) Call(_ context.Context, method string, biz map[string]any) ([]byte, error) {
@@ -31,6 +36,10 @@ func (f *fakeCaller) Call(_ context.Context, method string, biz map[string]any) 
 	f.methods = append(f.methods, method)
 	f.biz = append(f.biz, biz)
 	f.mu.Unlock()
+	if method == methodPurchase && f.failPurchase > 0 {
+		f.failPurchase--
+		return nil, errors.New("支付宝网关超时")
+	}
 	if f.started != nil {
 		f.started <- method
 	}
@@ -116,7 +125,7 @@ func TestBalanceRemainingIsKeptSeparateFromTotalMinusUsed(t *testing.T) {
 	if caller.biz[0]["external_buyer_id"] != "user_1" {
 		t.Fatalf("受益人标识应取知新账号: %v", caller.biz[0])
 	}
-	want := time.Date(2026, 11, 25, 10, 0, 0, 0, ChinaTime())
+	want := time.Date(2026, 11, 25, 10, 0, 0, 0, payment.ChinaTime())
 	if !balance.AsOf.Equal(want) {
 		t.Fatalf("快照时间应取响应里的 as_of_time，得到 %v", balance.AsOf)
 	}
@@ -158,7 +167,7 @@ func TestPurchaseSendsSKUAndParsesExpiry(t *testing.T) {
 			t.Errorf("biz_content[%s] = %v，应为 %s", key, caller.biz[0][key], want)
 		}
 	}
-	want := time.Date(2026, 11, 25, 10, 30, 0, 0, ChinaTime())
+	want := time.Date(2026, 11, 25, 10, 30, 0, 0, payment.ChinaTime())
 	if !link.ExpiresAt.Equal(want) {
 		t.Fatalf("链接失效时间按东八区解析错误: %v", link.ExpiresAt)
 	}

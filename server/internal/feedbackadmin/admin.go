@@ -12,18 +12,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/BUPT521/zhixin/server/internal/adminlist"
 	"github.com/BUPT521/zhixin/server/internal/api"
+	"github.com/BUPT521/zhixin/server/internal/deref"
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
-)
-
-const (
-	defaultLimit = 20
-	maxLimit     = 100
-	maxOffset    = 100000
-	maxQuery     = 254
 )
 
 // Store 是反馈管理需要的存储子集，由 feedback.MemoryStore 与 PostgreSQL 实现
@@ -48,25 +42,19 @@ func New(store Store, log *slog.Logger) *Admin {
 // List 列出与搜索反馈。分页参数越界按 invalid_request 拒绝，而不是悄悄截断；
 // 与账号列表同一口径。
 func (a *Admin) List(w http.ResponseWriter, r *http.Request, params api.GetAdminV1FeedbackParams) {
-	limit := defaultLimit
-	if params.Limit != nil {
-		limit = *params.Limit
-	}
-	if limit < 1 || limit > maxLimit {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "limit: 1 to 100")
+	limit, err := adminlist.Limit(params.Limit)
+	if err != nil {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
 	}
-	offset := 0
-	if params.Offset != nil {
-		offset = *params.Offset
-	}
-	if offset < 0 || offset > maxOffset {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "offset: 0 to 100000")
+	offset, err := adminlist.Offset(params.Offset)
+	if err != nil {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
 	}
-	query := strings.TrimSpace(deref(params.Query, ""))
-	if utf8.RuneCountInString(query) > maxQuery {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "query is too long")
+	query := strings.TrimSpace(deref.Value(params.Query, ""))
+	if err := adminlist.Query(query); err != nil {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
 	}
 	items, total, err := a.store.ListFeedback(r.Context(), query, limit, offset)
@@ -125,11 +113,4 @@ func (a *Admin) Delete(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func deref[T any](value *T, fallback T) T {
-	if value == nil {
-		return fallback
-	}
-	return *value
 }

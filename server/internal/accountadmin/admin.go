@@ -17,18 +17,16 @@ import (
 
 	"github.com/oapi-codegen/runtime/types"
 
+	"github.com/BUPT521/zhixin/server/internal/adminlist"
 	"github.com/BUPT521/zhixin/server/internal/api"
 	"github.com/BUPT521/zhixin/server/internal/auth"
+	"github.com/BUPT521/zhixin/server/internal/deref"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 )
 
 const (
-	defaultLimit = 20
-	maxLimit     = 100
-	maxOffset    = 100000
-	maxQuery     = 254
-	maxNote      = 200
+	maxNote = 200
 	// maxCharges 是后台详情里列出的最近核销流水条数；流水只用于对账，不做完整
 	// 翻页，需要看更早的流水时按运维手册查库。
 	maxCharges = 5
@@ -81,25 +79,19 @@ func New(accounts AccountStore, quota llmproxy.Quota, quotaAdmin llmproxy.QuotaA
 // List 列出与搜索账号。分页参数越界按 invalid_request 拒绝，而不是悄悄截断：
 // 页面翻页时传错位置应当看得见。
 func (a *Admin) List(w http.ResponseWriter, r *http.Request, params api.GetAdminV1AccountsParams) {
-	limit := defaultLimit
-	if params.Limit != nil {
-		limit = *params.Limit
-	}
-	if limit < 1 || limit > maxLimit {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "limit: 1 to 100")
+	limit, err := adminlist.Limit(params.Limit)
+	if err != nil {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
 	}
-	offset := 0
-	if params.Offset != nil {
-		offset = *params.Offset
-	}
-	if offset < 0 || offset > maxOffset {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "offset: 0 to 100000")
+	offset, err := adminlist.Offset(params.Offset)
+	if err != nil {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
 	}
-	query := strings.TrimSpace(deref(params.Query, ""))
-	if utf8.RuneCountInString(query) > maxQuery {
-		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "query is too long")
+	query := strings.TrimSpace(deref.Value(params.Query, ""))
+	if err := adminlist.Query(query); err != nil {
+		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, err.Error())
 		return
 	}
 	records, total, err := a.accounts.ListAccounts(r.Context(), query, limit, offset)
@@ -192,7 +184,7 @@ func (a *Admin) PutQuota(w http.ResponseWriter, r *http.Request, id string) {
 	if !httpx.DecodeJSON(w, r, a.maxJSON, &in) {
 		return
 	}
-	note := strings.TrimSpace(deref(in.Note, ""))
+	note := strings.TrimSpace(deref.Value(in.Note, ""))
 	if utf8.RuneCountInString(note) > maxNote {
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "note is too long")
 		return
@@ -389,11 +381,4 @@ func identityKind(kind string) api.IdentityKind {
 	default:
 		return api.IdentityKind(kind)
 	}
-}
-
-func deref[T any](value *T, fallback T) T {
-	if value == nil {
-		return fallback
-	}
-	return *value
 }
