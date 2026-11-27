@@ -19,6 +19,31 @@ export '../../domain/models/chat_message.dart';
 export '../../domain/models/conversation.dart';
 import '../db/write_transactions.dart';
 
+/// 记录列表与“继续上次”挑的列相同，映射按名字转交，不看位置。
+///
+/// 相邻的 `String?` 列有好几个（`title`、`goalId`、`materialId`、`endedAt`），
+/// 位置参数写错顺序编译器看不出来；具名记录把每一列写清楚。
+typedef ConversationRecordColumns = ({
+  String id,
+  String? title,
+  String? goalId,
+  String? materialId,
+  int? pageNo,
+  String? materialTitle,
+  String? sourceFileName,
+  String entryKind,
+  String? endedAt,
+  String createdAt,
+  String updatedAt,
+  int messageCount,
+  String? preview,
+  String? lastUserMessage,
+  String? draftAnswer,
+  String? draftUpdatedAt,
+  bool hasAttempts,
+  bool hasDraft,
+});
+
 /// 01 `conversation` / `message`：一条讨论就是一条学习记录。
 ///
 /// 讨论可以没有目标归属，也可以只有图片消息；带入材料时记录材料与页码。
@@ -94,89 +119,71 @@ class ConversationRepository {
   /// 列表与“继续上次”挑的列相同，按同一组字段还原成领域模型。
   ///
   /// 讨论是否结束由 `ended_at` 推出，没有单独的状态列（审查 S20）。
-  static ConversationRecord _record(
-    String id,
-    String? title,
-    String? goalId,
-    String? materialId,
-    int? pageNo,
-    String? materialTitle,
-    String? sourceFileName,
-    String entryKind,
-    String? endedAt,
-    String createdAt,
-    String updatedAt,
-    int messageCount,
-    String? preview,
-    String? lastUserMessage,
-    String? draftAnswer,
-    String? draftUpdatedAt,
-    bool hasAttempts,
-    bool hasDraft,
-  ) => ConversationRecord(
-    id: id,
-    title: title,
-    goalId: goalId,
-    materialId: materialId,
-    pageNo: pageNo,
-    materialTitle: materialTitle,
-    materialIsDocx: isDocxFile(sourceFileName),
-    entryKind: EntryKind.fromValue(entryKind),
-    endedAt: optionalDateTime(endedAt ?? ''),
-    createdAt: requiredDateTime(createdAt),
-    updatedAt: requiredDateTime(updatedAt),
-    messageCount: messageCount,
-    preview: preview,
-    lastUserMessage: lastUserMessage,
-    draftAnswer: draftAnswer,
-    draftUpdatedAt: optionalDateTime(draftUpdatedAt ?? ''),
-    hasAttempts: hasAttempts,
-    hasDraft: hasDraft,
-  );
+  static ConversationRecord _record(ConversationRecordColumns row) =>
+      ConversationRecord(
+        id: row.id,
+        title: row.title,
+        goalId: row.goalId,
+        materialId: row.materialId,
+        pageNo: row.pageNo,
+        materialTitle: row.materialTitle,
+        materialIsDocx: isDocxFile(row.sourceFileName),
+        entryKind: EntryKind.fromValue(row.entryKind),
+        endedAt: optionalDateTime(row.endedAt),
+        createdAt: requiredDateTime(row.createdAt),
+        updatedAt: requiredDateTime(row.updatedAt),
+        messageCount: row.messageCount,
+        preview: row.preview,
+        lastUserMessage: row.lastUserMessage,
+        draftAnswer: row.draftAnswer,
+        draftUpdatedAt: optionalDateTime(row.draftUpdatedAt),
+        hasAttempts: row.hasAttempts,
+        hasDraft: row.hasDraft,
+      );
 
   static ConversationRecord _recordOfList(ConversationRecordsResult r) =>
-      _record(
-        r.id,
-        r.title,
-        r.goalId,
-        r.materialId,
-        r.pageNo,
-        r.materialTitle,
-        r.sourceFileName,
-        r.entryKind,
-        r.endedAt,
-        r.createdAt,
-        r.updatedAt,
-        r.messageCount,
-        r.preview,
-        r.lastUserMessage,
-        r.draftAnswer,
-        r.draftUpdatedAt,
-        r.hasAttempts,
-        r.hasDraft,
-      );
+      _record((
+        id: r.id,
+        title: r.title,
+        goalId: r.goalId,
+        materialId: r.materialId,
+        pageNo: r.pageNo,
+        materialTitle: r.materialTitle,
+        sourceFileName: r.sourceFileName,
+        entryKind: r.entryKind,
+        endedAt: r.endedAt,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        messageCount: r.messageCount,
+        preview: r.preview,
+        lastUserMessage: r.lastUserMessage,
+        draftAnswer: r.draftAnswer,
+        draftUpdatedAt: r.draftUpdatedAt,
+        hasAttempts: r.hasAttempts,
+        hasDraft: r.hasDraft,
+      ));
 
   static ConversationRecord _recordOfRecent(RecentlyActiveRecordsResult r) =>
-      _record(
-        r.id,
-        r.title,
-        r.goalId,
-        r.materialId,
-        r.pageNo,
-        r.materialTitle,
-        r.sourceFileName,
-        r.entryKind,
-        r.endedAt,
-        r.createdAt,
-        r.updatedAt,
-        r.messageCount,
-        r.preview,
-        r.lastUserMessage,
-        r.draftAnswer,
-        r.draftUpdatedAt,
-        r.hasAttempts,
-        r.hasDraft,
-      );
+      _record((
+        id: r.id,
+        title: r.title,
+        goalId: r.goalId,
+        materialId: r.materialId,
+        pageNo: r.pageNo,
+        materialTitle: r.materialTitle,
+        sourceFileName: r.sourceFileName,
+        entryKind: r.entryKind,
+        endedAt: r.endedAt,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        messageCount: r.messageCount,
+        preview: r.preview,
+        lastUserMessage: r.lastUserMessage,
+        draftAnswer: r.draftAnswer,
+        draftUpdatedAt: r.draftUpdatedAt,
+        hasAttempts: r.hasAttempts,
+        hasDraft: r.hasDraft,
+      ));
 
   /// 按标识取的那条不读消息条数与草稿内容，未读的列按空值还原，与原来一致。
   static ConversationRecord _recordOf(ConversationByIdResult r) =>

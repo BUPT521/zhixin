@@ -3,6 +3,7 @@ import 'package:drift/drift.dart' show Variable;
 import '../db/raw_executor.dart';
 import '../db/drift/queries/evidence_scope.dart';
 import 'answer_text.dart';
+import 'literal_match.dart';
 
 import '../../domain/models/evidence.dart';
 import '../../domain/models/evidence_id.dart';
@@ -741,7 +742,7 @@ class EvidenceRepository {
       before.add(pageAfter.sql);
       beforeArgs.addAll(pageAfter.values);
     }
-    final (match, matchArgs) = _literalMatch([
+    final match = literalMatchAny([
       'mp.content',
       "COALESCE(mp.label, '')",
       'm.title',
@@ -756,12 +757,12 @@ class EvidenceRepository {
       final where = [
         ...before,
         if (scopeSql != null) '(${scopeSql.sql})',
-        match,
+        match.sql,
       ];
       final args = [
         ...beforeArgs,
         if (scopeSql != null) ...scopeSql.values,
-        ...matchArgs,
+        ...match.values,
       ];
       return db
           .customSelect(
@@ -781,11 +782,11 @@ class EvidenceRepository {
     final hits = <EvidenceHit>[];
     final keys = <MaterialPageSortKey>[];
     for (final row in rows) {
-      final data = row.data;
-      final content = data['content']! as String;
-      final label = data['label'] as String?;
-      final pageNo = data['page_no']! as int;
-      final materialId = data['material_id']! as String;
+      final content = row.read<String>('content');
+      final label = row.readNullable<String>('label');
+      final pageNo = row.read<int>('page_no');
+      final materialId = row.read<String>('material_id');
+      final updatedAt = row.readNullable<String>('updated_at');
       final offset = _literalOffset(content, label, text);
       keys.add((materialId: materialId, pageNo: pageNo));
       hits.add(
@@ -793,7 +794,7 @@ class EvidenceRepository {
           kind: EvidenceKind.materialPage,
           identity: EvidenceId.materialPage(materialId, pageNo).value,
           title:
-              '《${data['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(data['source_file_name'] as String?))}',
+              '《${row.read<String>('material_title')}》${materialPosition(pageNo, isDocx: isDocxFile(row.readNullable<String>('source_file_name')))}',
           snippet: searchSnippet(content, [text]),
           text: content,
           matchedText: _matchedText(content, text, offset),
@@ -804,8 +805,8 @@ class EvidenceRepository {
             pageNo: pageNo,
             offset: offset,
           ),
-          sourceVersion: evidenceSourceVersion(content, data['updated_at']),
-          createdAt: optionalDateTime('${data['updated_at'] ?? ''}'),
+          sourceVersion: evidenceSourceVersion(content, updatedAt),
+          createdAt: optionalDateTime(updatedAt),
         ),
       );
     }
@@ -833,7 +834,7 @@ class EvidenceRepository {
       before.add(messageAfter.sql);
       beforeArgs.addAll(messageAfter.values);
     }
-    final (match, matchArgs) = _literalMatch(['m.content'], text);
+    final match = literalMatchAny(['m.content'], text);
     final rows = await _db.selectGenerated((db) async {
       final conversations = db.alias(db.conversations, 'c');
       final messages = db.alias(db.messages, 'm');
@@ -845,12 +846,12 @@ class EvidenceRepository {
       final where = [
         ...before,
         if (scopeSql != null) '(${scopeSql.sql})',
-        match,
+        match.sql,
       ];
       final args = [
         ...beforeArgs,
         if (scopeSql != null) ...scopeSql.values,
-        ...matchArgs,
+        ...match.values,
       ];
       return db
           .customSelect(
@@ -868,17 +869,17 @@ class EvidenceRepository {
     final hits = <EvidenceHit>[];
     final keys = <String>[];
     for (final row in rows) {
-      final data = row.data;
-      final content = data['content']! as String;
-      final messageId = data['id']! as String;
-      final conversationId = data['conversation_id']! as String;
+      final content = row.read<String>('content');
+      final messageId = row.read<String>('id');
+      final conversationId = row.read<String>('conversation_id');
+      final createdAt = row.readNullable<String>('created_at');
       final offset = _literalOffset(content, null, text);
       keys.add(messageId);
       hits.add(
         EvidenceHit(
           kind: EvidenceKind.message,
           identity: EvidenceId.message(messageId).value,
-          title: (data['title'] as String?) ?? '一次讨论',
+          title: row.readNullable<String>('title') ?? '一次讨论',
           snippet: searchSnippet(content, [text]),
           text: content,
           matchedText: _matchedText(content, text, offset),
@@ -889,8 +890,8 @@ class EvidenceRepository {
             messageId: messageId,
             offset: offset,
           ),
-          sourceVersion: evidenceSourceVersion(content, data['created_at']),
-          createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
+          sourceVersion: evidenceSourceVersion(content, createdAt),
+          createdAt: optionalDateTime(createdAt),
         ),
       );
     }
@@ -912,7 +913,7 @@ class EvidenceRepository {
       before.add(questionAfter.sql);
       beforeArgs.addAll(questionAfter.values);
     }
-    final (match, matchArgs) = _literalMatch([
+    final match = literalMatchAny([
       "COALESCE($_firstUserContent, '')",
       "COALESCE(c.source_ref, '')",
       "COALESCE(c.context_text, '')",
@@ -926,12 +927,12 @@ class EvidenceRepository {
       final where = [
         ...before,
         if (scopeSql != null) '(${scopeSql.sql})',
-        '($match)',
+        match.sql,
       ];
       final args = [
         ...beforeArgs,
         if (scopeSql != null) ...scopeSql.values,
-        ...matchArgs,
+        ...match.values,
       ];
       return db
           .customSelect(
@@ -952,23 +953,25 @@ class EvidenceRepository {
     final hits = <EvidenceHit>[];
     final keys = <String>[];
     for (final row in rows) {
-      final data = row.data;
-      final sourceRef = data['source_ref'] as String?;
-      final context = (data['context_text'] as String?) ?? '';
-      final stem = (data['stem'] as String?) ?? '';
+      final sourceRef = row.readNullable<String>('source_ref');
+      final context = row.readNullable<String>('context_text') ?? '';
+      final stem = row.readNullable<String>('stem') ?? '';
       final content = '$stem\n${sourceRef ?? ''}';
       final offset = _literalOffset(
         '$stem\n${sourceRef ?? ''}\n$context',
         null,
         text,
       );
-      final conversationId = data['conversation_id']! as String;
+      final conversationId = row.read<String>('conversation_id');
       keys.add(conversationId);
       hits.add(
         EvidenceHit(
           kind: EvidenceKind.question,
           identity: EvidenceId.question(conversationId).value,
-          title: _conversationTitle(sourceRef, data['title'] as String?),
+          title: _conversationTitle(
+            sourceRef,
+            row.readNullable<String>('title'),
+          ),
           snippet: searchSnippet(content, [text]),
           text: content,
           matchedText: _matchedText(content, text, offset),
@@ -980,14 +983,14 @@ class EvidenceRepository {
           ),
           location: EvidenceLocation(
             conversationId: conversationId,
-            messageId: data['question_message_id'] as String?,
+            messageId: row.readNullable<String>('question_message_id'),
             offset: offset,
           ),
           sourceVersion: evidenceSourceVersion(
             '$stem\n${sourceRef ?? ''}\n$context',
-            data['updated_at'],
+            row.readNullable<String>('updated_at'),
           ),
-          createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
+          createdAt: optionalDateTime(row.readNullable<String>('created_at')),
           sourceRef: sourceRef,
         ),
       );
@@ -1013,7 +1016,7 @@ class EvidenceRepository {
       before.add(submittedAfter.sql);
       beforeArgs.addAll(submittedAfter.values);
     }
-    final (match, matchArgs) = _literalMatch([
+    final match = literalMatchAny([
       "COALESCE(a.user_answer, '')",
       "COALESCE(a.solution, '')",
       "COALESCE(a.feedback, '')",
@@ -1029,12 +1032,12 @@ class EvidenceRepository {
       final where = [
         ...before,
         if (scopeSql != null) '(${scopeSql.sql})',
-        '($match)',
+        match.sql,
       ];
       final args = [
         ...beforeArgs,
         if (scopeSql != null) ...scopeSql.values,
-        ...matchArgs,
+        ...match.values,
       ];
       return db
           .customSelect(
@@ -1053,17 +1056,18 @@ class EvidenceRepository {
     final hits = <EvidenceHit>[];
     final keys = <AnswerSortKey>[];
     for (final row in rows) {
-      final data = row.data;
       final content = answerText(
-        data['user_answer'] as String?,
-        data['solution'] as String?,
-        data['feedback'] as String?,
+        row.readNullable<String>('user_answer'),
+        row.readNullable<String>('solution'),
+        row.readNullable<String>('feedback'),
       );
       final offset = _literalOffset(content, null, text);
-      final attemptId = data['id']! as String;
+      final attemptId = row.read<String>('id');
       // 查询只读已提交的作答，`submitted_at` 一定有值；坏值照 requiredDateTime
-      // 暴露，不能伪装成一个时刻把翻页位置带错。
-      final submittedAt = requiredDateTime('${data['submitted_at'] ?? ''}');
+      // 暴露，不能伪装成一个时刻把翻页位置带错。来源版本仍用库里存的文本，
+      // 与按记录读回的那一份逐字一致。
+      final submittedAtText = row.read<String>('submitted_at');
+      final submittedAt = requiredDateTime(submittedAtText);
       keys.add((submittedAt: submittedAt, attemptId: attemptId));
       hits.add(
         EvidenceHit(
@@ -1080,13 +1084,13 @@ class EvidenceRepository {
             kindPriority: 1,
           ),
           location: EvidenceLocation(
-            conversationId: data['conversation_id']! as String,
+            conversationId: row.read<String>('conversation_id'),
             attemptId: attemptId,
             offset: offset,
           ),
-          sourceVersion: evidenceSourceVersion(content, data['submitted_at']),
+          sourceVersion: evidenceSourceVersion(content, submittedAtText),
           createdAt: submittedAt,
-          sourceRef: data['source_ref'] as String?,
+          sourceRef: row.readNullable<String>('source_ref'),
         ),
       );
     }
@@ -1114,27 +1118,6 @@ class EvidenceRepository {
     final labelText = (label ?? '').toLowerCase();
     final labelFound = labelText.indexOf(text.toLowerCase());
     return labelFound >= 0 ? labelFound + 1 : 0;
-  }
-
-  /// 字面匹配：命中之后不能紧接数字、字母或下划线，避免 `例 3-2` 命中
-  /// `例 3-20`、`a_b` 命中 `a_bc` 这类近似写法；引号、括号等符号后面的
-  /// 字符不受限制。
-  static (String, List<Object>) _literalMatch(
-    List<String> columns,
-    String text,
-  ) {
-    final parts = <String>[];
-    final args = <Object>[];
-    for (final column in columns) {
-      parts.add(
-        'instr(lower($column), lower(?)) > 0 AND ('
-        "substr($column, instr(lower($column), lower(?)) + length(?), 1) = '' "
-        'OR substr($column, instr(lower($column), lower(?)) + length(?), 1) '
-        "NOT GLOB '[0-9A-Za-z_]')",
-      );
-      args.addAll([text, text, text, text, text]);
-    }
-    return ('(${parts.join(' OR ')})', args);
   }
 
   /// 题目视图的题目消息：优先取记录上记下的编号，没有时取第一条用户消息。
