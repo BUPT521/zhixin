@@ -33,9 +33,17 @@ class MemoryItemView {
 
 /// 用户点“记下”后的结果；重复或过长时没有写入。
 class AcceptedMemory {
-  const AcceptedMemory({required this.applied, this.change, this.notice});
+  const AcceptedMemory({
+    required this.applied,
+    this.change,
+    this.notice,
+    this.skip,
+  });
 
   final bool applied;
   final AppliedChange? change;
   final String? notice;
+
+  /// 因为超过写入长度没有保存时的跳过原因；这时卡片仍留在页面上。
+  final MemorySkip? skip;
 }

@@ -67,7 +67,11 @@ class ChatResult {
   /// 这次回答需要界面区分的情况；提示与恢复入口都按它决定。
   List<Notice> get notices => outcome.notices;
 
-  final List<String> skipped;
+  /// 这次回答里没有保存的记忆与原因；界面按原因提示“超过长度，未保存”。
+  ///
+  /// 超过写入长度的记录没有写进库，但卡片仍留在回答消息里，用户可以改写或
+  /// 忽略；空列表表示这次没有跳过任何记录。
+  final List<MemorySkip> skipped;
   final List<NextStepDraft> nextSteps;
 
   /// 本次回答引用的材料页；逐字核对不上的条目为未核实。
@@ -595,7 +599,7 @@ class DiscussionService {
     var notices = run.notices;
     String? detail;
     var failure = run.failure;
-    var skipped = <String>[];
+    var skipped = <MemorySkip>[];
     var nextSteps = const <NextStepDraft>[];
     var citations = const <Citation>[];
     final answer = run.answer;
@@ -646,27 +650,16 @@ class DiscussionService {
         ? answer.memories
         : const <MemoryDraft>[];
     final scope = resolved.scope;
+    // 记忆卡片统一在这里生成：超长的照常保留卡片并记下跳过原因，用户点
+    // “记下”时给出“超过长度，未保存”，不再说成“已经存在”。
+    final cards = memoryCards(drafts);
+    skipped.addAll(cards.skipped);
     final memoryItems = <MemoryDraft>[];
     final userMemoryDrafts = <({String itemId, MemoryDraft draft})>[];
-    var itemIndex = 0;
-    for (final draft in uniqueById(drafts, (draft) => draft.contentId)) {
-      if (draft.content.trim().isEmpty) continue;
-      if (draft.source == MemorySource.user && draft.tooLong) {
-        // 超过写入长度的记忆不会保存，也不展示卡片，与写入规则保持一致。
-        skipped.add('记忆内容超过 $memoryContentLimit 字，未保存。');
-        continue;
-      }
-      final itemId = 'm${itemIndex++}';
-      final card = MemoryDraft(
-        id: itemId,
-        kind: draft.kind,
-        content: draft.content,
-        validUntil: draft.validUntil,
-        source: draft.source,
-      );
+    for (final card in cards.cards) {
       memoryItems.add(card);
-      if (card.source == MemorySource.user) {
-        userMemoryDrafts.add((itemId: itemId, draft: card));
+      if (card.source == MemorySource.user && !card.tooLong) {
+        userMemoryDrafts.add((itemId: card.id, draft: card));
       }
     }
 

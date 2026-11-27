@@ -279,7 +279,7 @@ void main() {
       sourceId: 'msg-1',
     );
     expect(applied.changes, isEmpty, reason: '写入上限还是 200 字');
-    expect(applied.skipped.single, contains('200'));
+    expect(applied.skipped.single.message, contains('200'));
     expect(await selectRows(rig.db, 'memory'), isEmpty);
   });
 }

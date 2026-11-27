@@ -19,7 +19,6 @@ import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
-import '../domain/rules/content_identity.dart';
 import '../domain/rules/notices.dart';
 import 'buddy_fallback.dart';
 import 'buddy_actions.dart';
@@ -61,11 +60,18 @@ class QuestionView {
 }
 
 class HelpResult {
-  const HelpResult({required this.outcome, required this.attempt});
+  const HelpResult({
+    required this.outcome,
+    required this.attempt,
+    this.skipped = const [],
+  });
 
   /// 这次讲解的正文、来源与中断情况。
   final AnswerOutcome outcome;
   final Attempt attempt;
+
+  /// 这次帮助里没有保存的记忆与原因；超长的卡片仍随帮助保留。
+  final List<MemorySkip> skipped;
 
   /// 正文；停止或中断时是已经生成的部分。
   String get text => outcome.text;
@@ -515,31 +521,21 @@ class LearningService {
       text = localBuddyReply(facts, hasImages: question.hasImages);
     }
 
+    final skipped = <MemorySkip>[];
     if (text.trim().isNotEmpty) {
       // 记住的意思要用户点“记下”才落库；建议随帮助保存，离开页面再回来仍在。
-      final suggestions = <MemoryDraft>[];
+      // 卡片统一按写入长度标记超长：卡片照常保留，确认入口给出“未保存”。
       final modelAnswer = answer;
-      if (modelAnswer != null &&
-          !modelAnswer.stopped &&
-          !modelAnswer.interrupted &&
-          !modelAnswer.truncated) {
-        final drafts = uniqueById(
-          modelAnswer.memories,
-          (draft) => draft.contentId,
-        );
-        for (final (index, draft) in drafts.indexed) {
-          final content = draft.content.trim();
-          if (content.isEmpty) continue;
-          suggestions.add(
-            MemoryDraft(
-              id: 'm$index',
-              kind: draft.kind,
-              content: content,
-              validUntil: draft.validUntil,
-            ),
-          );
-        }
-      }
+      final cards = memoryCards(
+        modelAnswer != null &&
+                !modelAnswer.stopped &&
+                !modelAnswer.interrupted &&
+                !modelAnswer.truncated
+            ? modelAnswer.memories
+            : const <MemoryDraft>[],
+      );
+      final suggestions = cards.cards;
+      skipped.addAll(cards.skipped);
       await transactions.run((txn) async {
         _ensureCurrentEpoch(requestEpoch);
         await attempts.appendHelp(
@@ -580,6 +576,7 @@ class LearningService {
         quotaReason: run.quotaReason,
       ),
       attempt: updated ?? attempt,
+      skipped: skipped,
     );
   }
 
