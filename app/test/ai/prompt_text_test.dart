@@ -30,6 +30,15 @@ void main() {
     );
   });
 
+  test('单遍替换：替换值里出现的另一个占位符不会被再展开一次', () {
+    final text = PromptText.instance;
+    // 用户写下的目标名里带着 {{due}}，它不能被当成归属段落的截止日期占位符。
+    expect(
+      text.format('system.goal', {'title': '复习 {{due}} 的定义', 'due': ''}),
+      '本次讨论归属：复习 {{due}} 的定义',
+    );
+  });
+
   test('缺少替换值时拒绝生成半截提示词', () {
     expect(
       () => PromptText.instance.format('system.time', const {}),

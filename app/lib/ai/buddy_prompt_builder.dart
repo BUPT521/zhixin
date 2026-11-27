@@ -1,6 +1,7 @@
 import '../domain/models/buddy_protocol.dart';
 import '../domain/rules/content_identity.dart';
 import '../domain/rules/time_format.dart';
+import 'buddy_capabilities.dart';
 import 'material_page_tool.dart';
 import 'prompt_text.dart';
 import 'search_sources_tool.dart';
@@ -20,13 +21,13 @@ import '../domain/rules/text.dart';
 /// 才能和上一轮逐字相同（ADR-0061）。
 BuddyPrompt buildBuddyPrompt(BuddyContext context) {
   final text = PromptText.instance;
-  final mode = context.mode;
-  final withMemories = mode != BuddyMode.plan;
-  final withNextSteps = mode == BuddyMode.chat;
-  final withCitations = mode == BuddyMode.chat;
-  final withStudySteps = mode == BuddyMode.plan;
-  final withAssessment = mode == BuddyMode.check;
-  final withPlanContext = mode == BuddyMode.plan;
+  final capabilities = BuddyCapabilities.of(context.mode);
+  final withMemories = capabilities.memories;
+  final withNextSteps = capabilities.nextSteps;
+  final withCitations = capabilities.citations;
+  final withStudySteps = capabilities.studySteps;
+  final withAssessment = capabilities.assessment;
+  final withPlanContext = capabilities.planContext;
   final currentGoal = context.goal;
   final goals = uniqueById(
     context.goals,

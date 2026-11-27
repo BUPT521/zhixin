@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:zhixin/ai/buddy_capabilities.dart';
 import 'package:zhixin/ai/buddy_tools.dart';
 import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/ai/material_page_tool.dart';
@@ -284,6 +285,43 @@ void main() {
           );
         }
       }
+    }
+  });
+
+  test('每个模式声明的提案工具与能力矩阵一致', () {
+    for (final mode in BuddyMode.values) {
+      final capabilities = BuddyCapabilities.of(mode);
+      final declared = {
+        for (final tool in BuddyTurnTools(
+          BuddyContext(now: DateTime(2026, 11, 6), mode: mode),
+        ).registry.schemas)
+          tool.name,
+      };
+      expect(
+        declared.contains(proposeMemoriesTool),
+        capabilities.memories,
+        reason: '${mode.value} 的记忆提案与能力矩阵不一致',
+      );
+      expect(
+        declared.contains(proposeNextStepsTool),
+        capabilities.nextSteps,
+        reason: '${mode.value} 的下一步建议与能力矩阵不一致',
+      );
+      expect(
+        declared.contains(proposeCitationsTool),
+        capabilities.citations,
+        reason: '${mode.value} 的引用提案与能力矩阵不一致',
+      );
+      expect(
+        declared.contains(proposeAssessmentTool),
+        capabilities.assessment,
+        reason: '${mode.value} 的学习判断与能力矩阵不一致',
+      );
+      expect(
+        declared.contains(proposeStudyStepsTool),
+        capabilities.studySteps,
+        reason: '${mode.value} 的学习步骤与能力矩阵不一致',
+      );
     }
   });
 }

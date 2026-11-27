@@ -33,10 +33,14 @@ class PromptText {
   }
 
   /// 替换段落里的 `{{名字}}` 占位符；缺少替换值时直接报错，
-  /// 避免把半截提示词发给模型。替换进去的用户内容不再当作占位符解析。
+  /// 避免把半截提示词发给模型。
+  ///
+  /// 单遍替换整段模板：替换值里的 `{{…}}` 原样保留，用户内容写进来的花括号
+  /// 不会在后续轮次里被当成占位符再展开一次。
   String format(String key, Map<String, String> values) {
     final template = this[key];
-    final missing = RegExp(r'\{\{([a-z0-9_.]+)\}\}')
+    final pattern = RegExp(r'\{\{([a-z0-9_.]+)\}\}');
+    final missing = pattern
         .allMatches(template)
         .map((match) => match.group(1)!)
         .toSet()
@@ -44,11 +48,10 @@ class PromptText {
     if (missing.isNotEmpty) {
       throw StateError('提示词段落 $key 缺少替换值：${missing.join('、')}');
     }
-    var text = template;
-    for (final entry in values.entries) {
-      text = text.replaceAll('{{${entry.key}}}', entry.value);
-    }
-    return text;
+    return template.replaceAllMapped(
+      pattern,
+      (match) => values[match.group(1)!]!,
+    );
   }
 
   /// 解析一份资源文本；段落键重复或为空时直接报错。

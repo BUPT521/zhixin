@@ -167,15 +167,18 @@ class AiChatService implements BuddyAi {
       inputMessageId,
       prompt.turn,
     );
+    // 一轮回答共用同一份期限模板与取消令牌：工具之后的请求、流式回退与下面
+    // “工具不受支持”的兜底请求都从它重启，兜底不再另建默认预算而丢掉取消。
+    final budget = LlmRequestBudget.answer(
+      cancelToken: cancelToken,
+      sessionId: context.sessionId,
+    );
     try {
       final turn = await AgentLoop(client).run(
         system: system,
         messages: messages,
         tools: tools.registry,
-        budget: LlmRequestBudget.answer(
-          cancelToken: cancelToken,
-          sessionId: context.sessionId,
-        ),
+        budget: budget,
         contextBudget: LlmContextBudget(current),
         onText: onText,
       );
@@ -201,7 +204,7 @@ class AiChatService implements BuddyAi {
       final plain = await client.complete(
         system: '$system\n\n本轮不能调用工具，只写正文，不要提交引用、建议或记忆。',
         messages: messages,
-        budget: LlmRequestBudget(sessionId: context.sessionId),
+        budget: budget.restart(cancelToken: cancelToken),
       );
       final body = plain.text.trim();
       if (body.isEmpty) rethrow;

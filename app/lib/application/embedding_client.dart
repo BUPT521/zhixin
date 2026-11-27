@@ -310,9 +310,17 @@ class RemoteEmbeddingClient extends EmbeddingClient {
         throw EmbeddingUnavailable('向量维度为 ${vector.length}，配置的是 ${spec.dim}');
       }
       final index = item['index'];
-      final slot = index is num && index >= 0 && index < texts.length
-          ? index.toInt()
-          : next;
+      // 序号要么不写、按返回顺序落位，要么是范围内的整数：`1.5` 或越界的
+      // 序号说明返回内容与请求对不上，不能截断成某个槽位悄悄放进去。
+      final int? declared;
+      if (index == null) {
+        declared = null;
+      } else if (index is int && index >= 0 && index < texts.length) {
+        declared = index;
+      } else {
+        throw const EmbeddingUnavailable('嵌入服务返回的序号不是范围内的整数');
+      }
+      final slot = declared ?? next;
       next = slot + 1;
       if (vectors[slot] != null) {
         throw const EmbeddingUnavailable('嵌入服务返回了重复的序号');
