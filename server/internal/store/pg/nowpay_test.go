@@ -621,6 +621,7 @@ func TestPostgresReservePointsCapsAtTheBalanceCopy(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -644,6 +645,7 @@ func TestPostgresReservePointsSharesTheBalanceAcrossDays(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	if err := st.SaveBalance(ctx, "u1", 1, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -674,6 +676,7 @@ func TestPostgresReservePointsSubtractsUnreflectedCharges(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -701,6 +704,7 @@ func TestPostgresReservePointsKeepsApplyingAfterTheDayTotalExceedsTheCopy(t *tes
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	if err := st.SaveBalance(ctx, "u1", 5, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
@@ -761,6 +765,7 @@ func TestPostgresReservePointsCapsTheDifferenceNotTheDayTotal(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	// 这笔核销在副本的快照之前已经成功，副本里的一百积分是扣过它之后的值。
 	if _, err := st.pool.Exec(ctx,
 		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, updated_at)
@@ -788,6 +793,7 @@ func TestPostgresReservePointsWithoutBalanceCopyChargesInFull(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
 		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 20000,
 	})
@@ -805,6 +811,7 @@ func TestPostgresReservePointsZeroCopyWritesNothing(t *testing.T) {
 		t.Fatalf("user: %v", err)
 	}
 	enablePaidQuota(t, st)
+	st.SetNowPay(&fakeRecorder{perPoint: 1000})
 	if err := st.SaveBalance(ctx, "u1", 0, time.Now()); err != nil {
 		t.Fatalf("save balance: %v", err)
 	}
