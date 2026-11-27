@@ -115,8 +115,8 @@ type Meter struct {
 	// 核销，也不阻塞请求。
 	refreshQueue chan job
 
-	// refreshAt 记每个账号最近一次排进队列的余额查询时间，键在合并窗口过去之后
-	// 清理，map 不随注册过的账号数一直增长。
+	// refreshAt 记每个账号最近一次余额查询的完成时间，零值表示已经入队或正在查询。
+	// 键在合并窗口过去之后清理，map 不随注册过的账号数一直增长。
 	mu        sync.Mutex
 	refreshAt map[string]time.Time
 	// inFlight 记已经有一份在队列里或正在执行的流水编号。Resume、Sweep 与 Record
@@ -227,7 +227,11 @@ func (m *Meter) Resume(ctx context.Context, userID string) {
 // 同一账号在 refreshInterval 内只排一次，连续被拒的请求不会各自再排。返回值表示这次
 // 是否真的入了刷新队列，429 据此给出“正在同步”（ADR-0073）。
 func (m *Meter) RefreshBalance(_ context.Context, userID string) bool {
-	if userID == "" || !m.markRefresh(userID) {
+	return m.queueBalanceRefresh(userID, false)
+}
+
+func (m *Meter) queueBalanceRefresh(userID string, afterInsufficient bool) bool {
+	if userID == "" || !m.markRefresh(userID, afterInsufficient) {
 		return false
 	}
 	if m.enqueue(job{balance: true, userID: userID}) {
@@ -241,22 +245,22 @@ func (m *Meter) RefreshBalance(_ context.Context, userID string) bool {
 
 // markRefresh 记下这次余额查询并报告是否要真的排队；同一个账号在合并窗口内重复
 // 请求时返回 false。
-func (m *Meter) markRefresh(userID string) bool {
+func (m *Meter) markRefresh(userID string, afterInsufficient bool) bool {
 	now := time.Now()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if last, ok := m.refreshAt[userID]; ok && now.Sub(last) < refreshInterval {
+	if last, ok := m.refreshAt[userID]; ok && (last.IsZero() || (!afterInsufficient && now.Sub(last) < refreshInterval)) {
 		return false
 	}
 	// 表变大时清掉已经过窗口的键；小表不扫，省掉每次请求的整表遍历。
 	if len(m.refreshAt) > 1024 {
 		for id, at := range m.refreshAt {
-			if now.Sub(at) >= refreshInterval {
+			if !at.IsZero() && now.Sub(at) >= refreshInterval {
 				delete(m.refreshAt, id)
 			}
 		}
 	}
-	m.refreshAt[userID] = now
+	m.refreshAt[userID] = time.Time{}
 	return true
 }
 
@@ -347,6 +351,9 @@ func (m *Meter) run(parent context.Context, next job) {
 	defer cancel()
 	if next.balance {
 		m.refresh(ctx, next.userID)
+		m.mu.Lock()
+		m.refreshAt[next.userID] = time.Now()
+		m.mu.Unlock()
 		return
 	}
 	asOf := time.Now()
@@ -451,9 +458,8 @@ func (m *Meter) apply(ctx context.Context, charge Charge, consume Consume, err e
 		m.setStatus(ctx, charge, StatusProcessing, "")
 	case Insufficient(err):
 		m.setStatus(ctx, charge, StatusFailed, "积分不足")
-		// 余额不足说明副本比实际高，按零覆盖，下一次预留不再按旧值放行；真正的
-		// 余额在下一次查询或下一次成功核销时补回来。
-		m.saveBalance(ctx, charge.UserID, 0, asOf)
+		// 余额只确定低于本次申请量，排一次查询获取实际余额与快照时刻。
+		m.queueBalanceRefresh(charge.UserID, true)
 	default:
 		// 超时、网关错误与未知状态都不能判失败：扣减可能已经发生，换号重扣会多收
 		// 一次。保留原状态与原请求号，下一轮补查。

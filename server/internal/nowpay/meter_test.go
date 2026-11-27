@@ -409,17 +409,30 @@ func TestGatewayFailureKeepsTheChargePendingAndNotesTheReason(t *testing.T) {
 func TestInsufficientPointsIsMarkedFailedForTheNextSettlement(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodVerify: `{"code":"40004","sub_code":"NOW_PAY_QUOTA_INSUFFICIENT","sub_msg":"额度不足"}`,
+		methodQuota:  `{"code":"10000","quota_unit":"POINT","total":10,"used":7,"remaining":3,"as_of_time":"2026-11-25 09:30:00"}`,
 	}}
 	ledger := &fakeLedger{balances: map[string]int64{"user_1": 40}}
 	meter := newTestMeter(t, ledger, caller)
-	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 3, Status: StatusPending}
+	charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 5, Status: StatusPending}
+	// 核销被拒绝时，即使刚查询过余额也要重新查询。
+	meter.refreshAt[charge.UserID] = time.Now()
 	meter.run(context.Background(), job{charge: charge, verify: true})
 	if got := ledger.last(); got.status != StatusFailed {
 		t.Fatalf("余额不足应记失败，让下次结算重算差额: %+v", got)
 	}
-	// 副本比实际高才会走到这里，按零覆盖之后下一次预留不再按旧值放行。
-	if ledger.balances["user_1"] != 0 {
-		t.Fatalf("余额不足应把副本清零: %+v", ledger.balances)
+	if ledger.balances["user_1"] != 40 {
+		t.Fatalf("查询前应保留原副本: %+v", ledger.balances)
+	}
+	if len(meter.refreshQueue) != 1 || meter.queueBalanceRefresh(charge.UserID, true) {
+		t.Fatal("应排入且合并为一次余额查询")
+	}
+	meter.run(context.Background(), <-meter.refreshQueue)
+	if ledger.balances["user_1"] != 3 {
+		t.Fatalf("应保存查询返回的 3 积分: %+v", ledger.balances)
+	}
+	wantAsOf := time.Date(2026, 11, 25, 9, 30, 0, 0, ChinaTime())
+	if got := ledger.balanceAsOf["user_1"]; !got.Equal(wantAsOf) {
+		t.Fatalf("应保存余额查询返回的快照时刻，得到 %v", got)
 	}
 }
 
