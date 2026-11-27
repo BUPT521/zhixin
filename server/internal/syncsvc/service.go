@@ -61,8 +61,7 @@ type Service struct {
 	schemaVersion int
 	// maxPullBytes 是一页提交内容的累计字节目标。
 	maxPullBytes int64
-	// attachments 用来核对快照附件的归属；装配没有注入时登记返回
-	// ErrSnapshotUnsupported，不静默放过一个查不到归属的哈希。
+	// attachments 用来核对快照附件的归属，构造时必须给出；装配处传附件存储。
 	attachments Attachments
 	// snapshotBytes 是单个快照附件的上限，装配时取单个附件的上限。
 	snapshotBytes int64
@@ -81,10 +80,11 @@ type Service struct {
 	log *slog.Logger
 }
 
-func NewService(store Store, schemaVersion int) *Service {
+func NewService(store Store, schemaVersion int, attachments Attachments) *Service {
 	return &Service{
 		store:         store,
 		schemaVersion: schemaVersion,
+		attachments:   attachments,
 		maxPullBytes:  DefaultPullBytes,
 		snapshotBytes: DefaultSnapshotBytes,
 		compactKeep:   DefaultCompactKeep,
@@ -108,7 +108,8 @@ func (s *Service) SetMaxPullBytes(n int64) *Service {
 	return s
 }
 
-// SetAttachments 注入快照附件的归属查询，装配时传附件服务。
+// SetAttachments 替换快照附件的归属查询，供测试在构造之后换成带特定哈希的桩；
+// 生产装配在构造时传入附件存储，不再调用这里。
 func (s *Service) SetAttachments(a Attachments) *Service {
 	s.attachments = a
 	return s
@@ -350,9 +351,6 @@ func (s *Service) RegisterSnapshot(
 	userID string,
 	in api.SnapshotRegistration,
 ) (State, error) {
-	if s.attachments == nil {
-		return State{}, ErrSnapshotUnsupported
-	}
 	if in.Seq < 1 || !httpx.ValidSHA256(in.Sha256) || !httpx.ValidSHA256(in.Digest) {
 		return State{}, ErrInvalid
 	}

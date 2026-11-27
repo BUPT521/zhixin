@@ -46,7 +46,7 @@ func TestRegisterSnapshotValidatesInput(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newSnapshotStore()
 	atts := fakeAttachments{snapshotSHA: 4096}
-	svc := NewService(store, snapshotTestSchema).SetAttachments(atts)
+	svc := NewService(store, snapshotTestSchema, nil).SetAttachments(atts)
 
 	if _, err := svc.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{
 		Seq: 1, Sha256: snapshotSHA, Digest: snapshotDigest,
@@ -79,18 +79,11 @@ func TestRegisterSnapshotValidatesInput(t *testing.T) {
 	}
 
 	// 附件大小超过单个快照上限时同样按无效登记处理。
-	small := NewService(store, snapshotTestSchema).SetAttachments(atts).SetSnapshotBytes(1024)
+	small := NewService(store, snapshotTestSchema, nil).SetAttachments(atts).SetSnapshotBytes(1024)
 	if _, err := small.RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{
 		Seq: 1, Sha256: snapshotSHA, Digest: snapshotDigest,
 	}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("超出大小上限的快照应被拒绝，得到 %v", err)
-	}
-
-	// 没有装配附件查询时不静默接受。
-	if _, err := NewService(store, snapshotTestSchema).RegisterSnapshot(ctx, "u1", api.SnapshotRegistration{
-		Seq: 1, Sha256: snapshotSHA, Digest: snapshotDigest,
-	}); !errors.Is(err, ErrSnapshotUnsupported) {
-		t.Fatalf("未装配附件查询时应返回 ErrSnapshotUnsupported，得到 %v", err)
 	}
 }
 
@@ -99,7 +92,7 @@ func TestRegisterSnapshotValidatesInput(t *testing.T) {
 func TestRegisterSnapshotKeepsNewestOnly(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newSnapshotStore()
-	svc := NewService(store, snapshotTestSchema).SetAttachments(fakeAttachments{snapshotSHA: 4096, strings.Repeat("e", 64): 8192})
+	svc := NewService(store, snapshotTestSchema, nil).SetAttachments(fakeAttachments{snapshotSHA: 4096, strings.Repeat("e", 64): 8192})
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{
 		testCommit("r1", snapshotTestSchema),
 		testCommit("r2", snapshotTestSchema),
@@ -134,7 +127,7 @@ func TestRegisterSnapshotKeepsNewestOnly(t *testing.T) {
 func TestPullRejectsCompactedRange(t *testing.T) {
 	ctx := context.Background()
 	store, clock := newSnapshotStore()
-	svc := NewService(store, snapshotTestSchema).
+	svc := NewService(store, snapshotTestSchema, nil).
 		SetAttachments(fakeAttachments{snapshotSHA: 4096}).
 		SetCompact(true).
 		SetCompactKeep(time.Hour)
@@ -199,7 +192,7 @@ func TestPushCompactsInsteadOfFailingAtBudget(t *testing.T) {
 	store, _ := newSnapshotStore()
 	// 一条提交约几百字节，预算压到一条多一点，第二条推送必须先腾空间。
 	store.SetMaxAccountBytes(600)
-	svc := NewService(store, snapshotTestSchema).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
+	svc := NewService(store, snapshotTestSchema, nil).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
 
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("第一次推送: %v", err)
@@ -230,7 +223,7 @@ func TestRejectedPushDoesNotCompact(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newSnapshotStore()
 	store.SetMaxAccountBytes(600)
-	svc := NewService(store, snapshotTestSchema).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
+	svc := NewService(store, snapshotTestSchema, nil).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
 
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("第一次推送: %v", err)
@@ -254,7 +247,7 @@ func TestRejectedPushDoesNotCompact(t *testing.T) {
 func TestSeenIDsSurviveCompaction(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newSnapshotStore()
-	svc := NewService(store, snapshotTestSchema)
+	svc := NewService(store, snapshotTestSchema, nil)
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema), testCommit("r2", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -285,7 +278,7 @@ func TestSeenIDsSurviveCompaction(t *testing.T) {
 func TestResetClearsSnapshotAndSeen(t *testing.T) {
 	ctx := context.Background()
 	store, _ := newSnapshotStore()
-	svc := NewService(store, snapshotTestSchema).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
+	svc := NewService(store, snapshotTestSchema, nil).SetAttachments(fakeAttachments{snapshotSHA: 4096}).SetCompact(true)
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", snapshotTestSchema)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -317,7 +310,7 @@ func pointer(v int64) *int64 { return &v }
 // newSnapshotService 返回与内存存储共用同一个可拨时钟的服务：宽限期、保留期与
 // 设备活跃窗口都要在同一根时间轴上推进。
 func newSnapshotService(store *MemoryStore, clock *time.Time) *Service {
-	svc := NewService(store, snapshotTestSchema)
+	svc := NewService(store, snapshotTestSchema, nil)
 	svc.now = func() time.Time { return *clock }
 	svc.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	return svc
@@ -483,7 +476,7 @@ func TestReclaimSkipsCurrentPointer(t *testing.T) {
 		return nil
 	})
 	leaky := pointerLeakingStore{MemoryStore: store}
-	svc := NewService(leaky, snapshotTestSchema)
+	svc := NewService(leaky, snapshotTestSchema, nil)
 	svc.now = func() time.Time { return *clock }
 	svc.SetLogger(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	svc.SetAttachments(fakeAttachments{shaA: 4096, shaB: 4096}).SetSnapshotGrace(time.Hour)

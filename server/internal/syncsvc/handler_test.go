@@ -56,7 +56,7 @@ func newTestServer(t *testing.T) (*testutil.Client, *auth.Service) {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(NewService(NewMemoryStore(), testSchemaVersion), log, 16*testMaxJSON)
+	handler := NewHandler(NewService(NewMemoryStore(), testSchemaVersion, nil), log, 16*testMaxJSON)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
 		auth.Middleware(authSvc, log),
@@ -85,7 +85,7 @@ func TestHandlerHeadDeclaresCompact(t *testing.T) {
 	}
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewService(NewMemoryStore(), testSchemaVersion).SetCompact(true)
+	svc := NewService(NewMemoryStore(), testSchemaVersion, nil).SetCompact(true)
 	handler := NewHandler(svc, log, 16*testMaxJSON)
 	authSvc = auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	c = testutil.NewClient(t, testutil.NewServer(
@@ -271,7 +271,7 @@ func newSnapshotHarness(t *testing.T) *snapshotHarness {
 	h.store.now = func() time.Time { return h.clock }
 	h.authSvc = auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewService(h.store, testSchemaVersion).
+	svc := NewService(h.store, testSchemaVersion, nil).
 		SetAttachments(fakeAttachments{snapshotSHA: 4096}).
 		SetCompact(true).
 		SetCompactKeep(time.Hour)

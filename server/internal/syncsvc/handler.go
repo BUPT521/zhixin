@@ -249,7 +249,7 @@ func (h *Handler) RenameDevice(w http.ResponseWriter, r *http.Request) {
 	device, err := h.svc.RenameDevice(r.Context(), p.UserID, in.DeviceId, in.Alias)
 	if err != nil {
 		if h.writeSyncProblem(w, r, err,
-			"device_id must be 1 to 64 bytes and alias at most 64 characters after trimming", nil) {
+			fmt.Sprintf("device_id must be 1 to %d bytes and alias at most %d characters after trimming", maxDeviceIDBytes, maxAliasRunes), nil) {
 			return
 		}
 		httpx.WriteInternal(w, r, h.log, err)
@@ -290,7 +290,7 @@ func (h *Handler) PutRef(w http.ResponseWriter, r *http.Request) {
 			extra["limit"] = MaxRefsPerAccount
 		}
 		if h.writeSyncProblem(w, r, err,
-			"a ref needs a name of 1 to 30 characters after NFC normalization, a commit_uid of at most 64 bytes when writing, and no more than 200 characters of note", extra) {
+			fmt.Sprintf("a ref needs a name of 1 to %d characters after NFC normalization, a commit_uid of at most %d bytes when writing, and no more than %d characters of note", MaxRefNameRunes, MaxRefUIDBytes, MaxRefNoteRunes), extra) {
 			return
 		}
 		httpx.WriteInternal(w, r, h.log, err)
@@ -399,9 +399,6 @@ func (h *Handler) writeSyncProblem(w http.ResponseWriter, r *http.Request, err e
 	case errors.Is(err, ErrHeadMoved):
 		status, code, detail = http.StatusConflict, httpx.CodeConflict,
 			"pull and apply remote commits first"
-	case errors.Is(err, ErrSnapshotUnsupported):
-		status, code, detail = http.StatusNotImplemented, httpx.CodeNotImplemented,
-			"snapshot registration is not wired"
 	case errors.Is(err, ErrStorageFull):
 		status, code, detail = http.StatusRequestEntityTooLarge, httpx.CodeStorageFull, err.Error()
 	case errors.Is(err, ErrPushTooLarge), errors.Is(err, ErrPullTooLarge):

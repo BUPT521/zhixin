@@ -32,7 +32,7 @@ func testCommit(id string, schema int) Commit {
 
 func TestServicePushIsLinearAndIdempotent(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 27)
+	svc := NewService(NewMemoryStore(), 27, nil)
 
 	result, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}, DeviceRoster{})
 	if err != nil || result.Head != 2 || len(result.Seqs) != 2 || result.Seqs[0] != 1 || result.Seqs[1] != 2 {
@@ -51,7 +51,7 @@ func TestServicePushIsLinearAndIdempotent(t *testing.T) {
 
 func TestServiceValidatesBatchAndPage(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 27)
+	svc := NewService(NewMemoryStore(), 27, nil)
 
 	if _, err := svc.Push(ctx, "u1", 0, nil, DeviceRoster{}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("empty batch: want ErrInvalid, got %v", err)
@@ -82,7 +82,7 @@ func TestServiceValidatesBatchAndPage(t *testing.T) {
 // 页预算的下限是单条提交上限，所以用两条都接近单条上限的提交构造截断。
 func TestServicePullStopsAtByteLimit(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 27)
+	svc := NewService(NewMemoryStore(), 27, nil)
 	big := func(id string) Commit {
 		c := testCommit(id, 27)
 		after := json.RawMessage(fmt.Sprintf(`{"content":%q}`, strings.Repeat("x", 1200*1024)))
@@ -110,7 +110,7 @@ func TestServicePullStopsAtByteLimit(t *testing.T) {
 // 上限时抬到 MaxCommitBytes，已经存入的提交不会因为页预算过小而永远返回 413。
 func TestServicePullBudgetLowerBound(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 27)
+	svc := NewService(NewMemoryStore(), 27, nil)
 	if _, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27)}, DeviceRoster{}); err != nil {
 		t.Fatalf("push: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestServicePullBudgetLowerBound(t *testing.T) {
 // 之后普通提交仍然写得进去，超过单条上限的提交照旧拒绝。
 func TestServicePushSizesByCommitNotPage(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 27)
+	svc := NewService(NewMemoryStore(), 27, nil)
 	// 页预算调到 1 字节（会被抬到 MaxCommitBytes 下限）：它只决定一页取多少条，
 	// 不该把能存的提交判成太大。
 	svc.SetMaxPullBytes(1)
@@ -153,7 +153,7 @@ func TestServicePushSizesByCommitNotPage(t *testing.T) {
 // 不算错误。
 func TestServiceResetClearsLog(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 27)
+	svc := NewService(NewMemoryStore(), 27, nil)
 
 	if r, err := svc.Push(ctx, "u1", 0, []Commit{testCommit("r1", 27), testCommit("r2", 27)}, DeviceRoster{}); err != nil || r.Head != 2 {
 		t.Fatalf("push u1: %+v, err %v", r, err)
@@ -191,7 +191,7 @@ func TestServiceResetClearsLog(t *testing.T) {
 // 3.5）。内存实现直接保存 Commit，这里一并确认序号重写不会丢掉这个字段。
 func TestServiceKeepsOptionalStateDigest(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 27)
+	svc := NewService(NewMemoryStore(), 27, nil)
 	digest := strings.Repeat("a", 64)
 	withDigest := testCommit("r2", 27)
 	withDigest.StateDigest = &digest

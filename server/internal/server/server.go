@@ -275,7 +275,9 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 	// 一律放行的实现（ADR-0037）。
 	authHandler.SetRegisterGlobalLimiter(registerGlobal)
 
-	syncSvc := syncsvc.NewService(st.Sync, ClientSchemaVersion).
+	// 快照登记要核对“这个哈希是这个账号的附件”，查询由附件存储提供：构造时
+	// 必填，不静默接受一个查不到归属的哈希（ADR-0043）。
+	syncSvc := syncsvc.NewService(st.Sync, ClientSchemaVersion, syncAttachments{store: st.Blobs}).
 		SetMaxPullBytes(cfg.SyncPullMaxBytes).
 		SetCompactKeep(cfg.SyncCompactKeep).
 		SetCompact(cfg.SyncCompact).
@@ -298,9 +300,6 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 	// 账号附件总量上限必须显式设置，否则只受单附件上限约束。
 	blobSvc := blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes).SetAccountBytes(cfg.MaxAccountAttachmentBytes)
 	blobHandler := blobs.NewHandler(st.Blobs, blobSvc, log)
-	// 快照登记要核对“这个哈希是这个账号的附件”，查询由附件存储提供；没有装配时
-	// 登记接口返回 501，不静默接受一个查不到归属的哈希（ADR-0043）。
-	syncSvc.SetAttachments(syncAttachments{store: st.Blobs})
 
 	// 云端清除编排备份、提交序列、附件与遗留对象；清除与写请求的互斥、清除
 	// 期间写请求的 409 由进程内的 cloudOperations 中间件保证（审查 9.3 的 V10）。

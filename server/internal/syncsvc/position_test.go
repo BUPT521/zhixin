@@ -121,7 +121,7 @@ func TestOrphanedAttachmentStaysInAccountQuota(t *testing.T) {
 func TestTouchDeviceSkipsUnchangedWrites(t *testing.T) {
 	ctx := context.Background()
 	store, clock := newSnapshotStore()
-	svc := NewService(store, snapshotTestSchema)
+	svc := NewService(store, snapshotTestSchema, nil)
 	if err := svc.TouchDevice(ctx, "u1", "device-a", true, 0); err != nil {
 		t.Fatalf("记录设备: %v", err)
 	}

@@ -52,8 +52,6 @@ var (
 	// ErrSnapshotStale 表示登记的快照位置比已经保存的旧，不能回退覆盖
 	// （ADR-0043）。
 	ErrSnapshotStale = errors.New("sync: snapshot is older than the stored one")
-	// ErrSnapshotUnsupported 表示装配没有注入附件查询，无法核对快照归属。
-	ErrSnapshotUnsupported = errors.New("sync: snapshot attachments are not wired")
 	// ErrSnapshotAttachmentMissing 表示登记的快照附件不在这个账号名下：客户端可能
 	// 还没传完，或者哈希传错了。处理器按 404 返回，与附件接口的“没有这份内容”一致。
 	ErrSnapshotAttachmentMissing = errors.New("sync: snapshot attachment is not stored for the account")
