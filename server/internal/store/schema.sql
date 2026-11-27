@@ -354,6 +354,12 @@ CREATE TABLE llm_quota (
 -- status 为 failed 的流水不再计入当天已申请量，下一次结算重新算差额。账号删除时
 -- 解除关联而不删行，留作对账。终态行的 updated_at 视为确认时间，副本据此判断哪些
 -- 核销还没有被余额快照反映（ADR-0073）。
+--
+-- claimed_at 是发送核销之前的本地认领时刻（ADR-0088）：同一笔流水可能被请求前的
+-- 补查、十分钟一次的全局补查与写流水之后的入队各排一次，发送之前用
+-- “status 仍是 pending 且认领已过期”的条件把同一时刻的发送收成一次。状态不因此
+-- 改成 processing，因为请求可能根本没有发出去，标成 processing 之后只能按请求号
+-- 查结果，查不到就一直停在那里。
 CREATE TABLE nowpay_charge (
   id            TEXT PRIMARY KEY,
   user_id       TEXT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -364,7 +370,8 @@ CREATE TABLE nowpay_charge (
                 CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
   note          TEXT NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  claimed_at    TIMESTAMPTZ
 );
 CREATE INDEX nowpay_charge_user_day_idx ON nowpay_charge (user_id, day);
 CREATE INDEX nowpay_charge_unsettled_idx

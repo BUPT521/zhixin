@@ -11,6 +11,16 @@ WHERE user_id = sqlc.arg(user_id) AND day = sqlc.arg(day)::date;
 INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens)
 VALUES (sqlc.arg(id), sqlc.arg(user_id), sqlc.arg(day)::date, sqlc.arg(points), sqlc.arg(billed_tokens));
 
+-- 发送核销之前的本地认领（ADR-0088）：只有 status 仍是 pending、并且 claimed_at
+-- 为空或者上一次认领已经超过租约时才成功。状态保持 pending：认领之后进程可能退出，
+-- 请求根本没有发出去，processing 只能按请求号查结果，查不到就一直停在那里。
+-- name: ClaimCharge :execrows
+UPDATE nowpay_charge
+SET claimed_at = now()
+WHERE id = sqlc.arg(id)
+  AND status = 'pending'
+  AND (claimed_at IS NULL OR claimed_at < now() - (sqlc.arg(lease_seconds)::int * interval '1 second'));
+
 -- name: UnsettledCharges :many
 SELECT * FROM nowpay_charge
 WHERE user_id = sqlc.arg(user_id) AND status IN ('pending', 'processing')

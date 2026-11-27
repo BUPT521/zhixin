@@ -207,6 +207,7 @@ type NowpayCharge struct {
 	Note         string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+	ClaimedAt    pgtype.Timestamptz
 }
 
 type NowpayPurchase struct {

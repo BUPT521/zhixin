@@ -45,6 +45,10 @@ type Ledger interface {
 	// UnsettledGlobal 取全局创建早于 before 且仍未终结的流水，供每十分钟一次的补查
 	// 兜底；它不按账号过滤。
 	UnsettledGlobal(ctx context.Context, before time.Time, limit int) ([]Charge, error)
+	// ClaimCharge 认领一笔还没有确认的流水：把认领时刻推到当前时刻，只有它仍是
+	// pending、且上一次认领已经超过 lease 时返回 true。发送核销之前调用它，同一笔
+	// 流水同一时刻只有一处能发出去（ADR-0088）。
+	ClaimCharge(ctx context.Context, id string, lease time.Duration) (bool, error)
 	// SetStatus 落流水状态并返回这次的确认时刻；写余额副本时用它做快照的下限，
 	// 这一笔才不会被算成“快照之后才确认”（ADR-0073）。
 	SetStatus(ctx context.Context, id, status, note string) (time.Time, error)
@@ -106,6 +110,10 @@ type Meter struct {
 	// 清理，map 不随注册过的账号数一直增长。
 	mu        sync.Mutex
 	refreshAt map[string]time.Time
+	// inFlight 记已经有一份在队列里或正在执行的流水编号。Resume、Sweep 与 Record
+	// 都可能把同一笔流水排多次，同一时刻只留一份；进程重启之后集合是空的，补查会
+	// 重新排一次，那一份由数据库上的认领拦住第二个发送者（ADR-0088）。
+	inFlight map[string]bool
 }
 
 type job struct {
@@ -124,6 +132,10 @@ const (
 	refreshQueueSize = 64
 	chargeTimeout    = 20 * time.Second
 	refreshTimeout   = 8 * time.Second
+	// claimLease 是一笔流水的认领租约：发送之前认领，租约之内别的路径不会再发同一笔。
+	// 它长于一次核销调用的超时、短于全局补查的十分钟一轮，进程在认领之后退出时最多
+	// 等这么久就能重发（ADR-0088）。
+	claimLease = 2 * time.Minute
 )
 
 // NewMeter 装配一个核销执行器。perPoint 是一个积分覆盖的计费 token 数，来自配置。
@@ -140,7 +152,7 @@ func NewMeter(client *Client, ledger Ledger, perPoint int64, log *slog.Logger) (
 	return &Meter{
 		client: client, ledger: ledger, perPoint: perPoint, log: log,
 		queue: make(chan job, chargeQueueSize), refreshQueue: make(chan job, refreshQueueSize),
-		refreshAt: map[string]time.Time{},
+		refreshAt: map[string]time.Time{}, inFlight: map[string]bool{},
 	}, nil
 }
 
@@ -250,33 +262,74 @@ func (m *Meter) forgetRefresh(userID string) {
 // TokensPerPoint 是一个积分覆盖的计费 token 数，额度预留按它把余额折成 token。
 func (m *Meter) TokensPerPoint() int64 { return m.perPoint }
 
-// enqueue 把任务放进对应的队列，不阻塞，返回是否真的入了队。核销队列满时流水留在
-// 本地，下一轮请求或全局补查接手；刷新队列满时直接丢弃，同一账号一分钟内的下一次
-// 请求会重新合并一次查询。
+// enqueue 把任务放进对应的队列，不阻塞，返回是否真的入了队。同一笔流水同一时刻只
+// 允许有一份在队列里：Resume 在每次请求之前跑、Sweep 每十分钟跑一次、Record 写完
+// 流水之后立刻排一次，三处都可能把同一笔流水再排一遍，不去重时同一笔积分会按原
+// 请求号被核销多次（ADR-0088）。核销队列满时流水留在本地，下一轮请求或全局补查
+// 接手；刷新队列满时直接丢弃，同一账号一分钟内的下一次请求会重新合并一次查询。
 func (m *Meter) enqueue(next job) bool {
-	queue := m.queue
 	if next.balance {
-		queue = m.refreshQueue
+		return m.enqueueRefresh(next)
+	}
+	if !m.markInFlight(next.charge.ID) {
+		return false
 	}
 	select {
-	case queue <- next:
+	case m.queue <- next:
 		return true
 	default:
-		if next.balance {
-			m.log.Warn("balance refresh queue is full; dropping it and merging into the next request",
-				"user_id", next.userID)
-			return false
-		}
+		m.forgetInFlight(next.charge.ID)
 		m.log.Warn("nowpay queue is full; leaving the charge for the next request",
 			"charge_id", next.charge.ID)
 		return false
 	}
 }
 
+// enqueueRefresh 排一次余额查询。同一账号的合并窗口由 RefreshBalance 负责，这里只
+// 处理队列满时丢弃并让下一次请求重新排。
+func (m *Meter) enqueueRefresh(next job) bool {
+	select {
+	case m.refreshQueue <- next:
+		return true
+	default:
+		m.log.Warn("balance refresh queue is full; dropping it and merging into the next request",
+			"user_id", next.userID)
+		return false
+	}
+}
+
+// markInFlight 记下这笔流水已经有一份在队列里或正在执行，返回是否记上了。空编号
+// 不参与去重，测试里直接塞进队列的空任务不受影响。
+func (m *Meter) markInFlight(id string) bool {
+	if id == "" {
+		return true
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.inFlight[id] {
+		return false
+	}
+	m.inFlight[id] = true
+	return true
+}
+
+// forgetInFlight 在一份任务执行结束之后释放这笔流水，下一轮补查可以再排它。
+func (m *Meter) forgetInFlight(id string) {
+	if id == "" {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.inFlight, id)
+}
+
 // run 执行一次核销、补查或余额刷新，并把结果落到流水或余额副本上。asOf 是发起
 // 核销的时刻，核销结果没有携带快照时间时用它写副本（ADR-0073）。余额刷新用更短的
 // 超时，查询变慢时放弃刷新，不占用核销的时间预算。
 func (m *Meter) run(parent context.Context, next job) {
+	if !next.balance {
+		defer m.forgetInFlight(next.charge.ID)
+	}
 	timeout := chargeTimeout
 	if next.balance {
 		timeout = refreshTimeout
@@ -288,6 +341,19 @@ func (m *Meter) run(parent context.Context, next job) {
 		return
 	}
 	asOf := time.Now()
+	// 发送之前先在流水上认领一次：同一笔流水可能在队列里排了多份，也可能是另一个
+	// 进程排的那一份。认领不到说明别人正在发或者已经处理过，这一份只丢弃（ADR-0088）。
+	if next.verify {
+		claimed, err := m.ledger.ClaimCharge(ctx, next.charge.ID, claimLease)
+		if err != nil {
+			m.log.Error("claim a nowpay charge", "charge_id", next.charge.ID, "error", err)
+			return
+		}
+		if !claimed {
+			m.log.Info("skip a nowpay charge that another path claimed", "charge_id", next.charge.ID)
+			return
+		}
+	}
 	request := VerifyRequest{
 		OutRequestNo: next.charge.ID, Buyer: next.charge.UserID,
 		Amount: next.charge.Points, Reason: consumeReason,

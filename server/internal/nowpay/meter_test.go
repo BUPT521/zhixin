@@ -40,6 +40,11 @@ type fakeLedger struct {
 	reserveErr error
 	// statusEvents 非空时，每次落状态都往这个通道发一份，供并发用例等待结果。
 	statusEvents chan statusChange
+	// claimDenied 里的流水编号模拟被别的路径认领：ClaimCharge 对它返回 false；
+	// claimErr 让用例模拟认领本身失败；claimedIDs 记下每次成功的认领。
+	claimDenied map[string]bool
+	claimErr    error
+	claimedIDs  []string
 }
 
 func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required int64) (Charge, bool, error) {
@@ -87,6 +92,19 @@ func (f *fakeLedger) UnsettledGlobal(context.Context, time.Time, int) ([]Charge,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.unsettledGlobal, nil
+}
+
+func (f *fakeLedger) ClaimCharge(_ context.Context, id string, _ time.Duration) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.claimErr != nil {
+		return false, f.claimErr
+	}
+	if f.claimDenied[id] {
+		return false, nil
+	}
+	f.claimedIDs = append(f.claimedIDs, id)
+	return true, nil
 }
 
 func (f *fakeLedger) SetStatus(_ context.Context, id, status, note string) (time.Time, error) {
@@ -597,5 +615,59 @@ func TestSweepEnqueuesUnsettledCharges(t *testing.T) {
 	}
 	if second := <-meter.queue; second.verify {
 		t.Fatal("processing 流水只查结果，不重新核销")
+	}
+}
+
+// TestResumeQueuesAChargeOnce 守住本地的去重：请求前的补查、全局补查与写流水之后的
+// 入队都可能把同一笔流水排一次，同一时刻队列里只留一份，也不会因为每来一次请求就
+// 多一份核销（ADR-0088）。
+func TestResumeQueuesAChargeOnce(t *testing.T) {
+	charge := Charge{ID: "nc_1", UserID: "user_1", Points: 2, Status: StatusPending}
+	ledger := &fakeLedger{unsettled: []Charge{charge}, unsettledGlobal: []Charge{charge}}
+	caller := &fakeCaller{replies: map[string]string{
+		methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","consumed":2}`,
+	}}
+	meter := newTestMeter(t, ledger, caller)
+
+	meter.Resume(context.Background(), "user_1")
+	meter.Resume(context.Background(), "user_1")
+	if len(meter.queue) != 1 {
+		t.Fatalf("同一笔流水应只排一次，实际队列 %d", len(meter.queue))
+	}
+	if count, err := meter.Sweep(context.Background(), time.Now(), 50); err != nil || count != 0 {
+		t.Fatalf("已经在队列里的流水不应再排一次: %d %v", count, err)
+	}
+
+	// 这一份任务跑完之后释放认领，下一轮补查可以再排它。
+	meter.run(context.Background(), <-meter.queue)
+	if count, err := meter.Sweep(context.Background(), time.Now(), 50); err != nil || count != 1 {
+		t.Fatalf("任务结束之后应能再排一次: %d %v", count, err)
+	}
+}
+
+// TestRunSkipsAChargeAnotherPathClaimed 核对发送之前的认领：认领不到（别的路径正在
+// 发，或者认领本身失败）时不发核销、不落状态，流水留给下一轮补查（ADR-0088）。
+func TestRunSkipsAChargeAnotherPathClaimed(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		ledger *fakeLedger
+	}{
+		{name: "被别的路径认领", ledger: &fakeLedger{claimDenied: map[string]bool{"nc_1": true}}},
+		{name: "认领失败", ledger: &fakeLedger{claimErr: errors.New("pg: 认领核销流水失败")}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			caller := &fakeCaller{replies: map[string]string{
+				methodVerify: `{"code":"10000","consume_status":"SUCCEEDED","consumed":2}`,
+			}}
+			meter := newTestMeter(t, test.ledger, caller)
+			charge := Charge{ID: "nc_1", UserID: "user_1", Day: "2026-11-25", Points: 2, Status: StatusPending}
+			meter.run(context.Background(), job{charge: charge, verify: true})
+			if calls := caller.calls(); len(calls) != 0 {
+				t.Fatalf("认领不到时不应发送核销，实际调用 %v", calls)
+			}
+			if got := test.ledger.last(); got.status != "" {
+				t.Fatalf("认领不到时不应落状态，实际 %+v", got)
+			}
+		})
 	}
 }

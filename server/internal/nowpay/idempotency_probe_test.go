@@ -11,9 +11,12 @@ import (
 
 // TestProbeVerifyIsIdempotentPerOutRequestNo 在真实或沙箱的即刻收商品上核对核销的
 // 幂等性：同一个 out_request_no 连续核销两次，第二次是否返回与第一次相同的状态与
-// 金额，余额是否只减少一次。核销队列在队列满、进程重启与全局补查时会把同一笔流水
-// 再排一次，本地没有任何去重，重复扣款因此完全依赖即刻收按请求号幂等；这个用例把
-// 那个假设变成一次可以重复执行、结果写进 docs/即刻收整改验收记录.md 的核对。
+// 金额，余额是否只减少一次。
+//
+// 核销流水在发送之前会先做本地认领（ADR-0088），同一时刻只有一处发得出去；一次
+// 结果未知之后的重试仍然按原请求号重发，幂等是这条重试能成立的前提。这个用例因此
+// 是发版前必跑的一步，结果写进 docs/即刻收整改验收记录.md；不为幂等时按那一节的
+// 处置改成本地终态，不能带病发版。
 //
 // 它默认跳过，需要下面四个条件同时满足才跑：
 //   - ZHIXIN_NOWPAY_PROBE=1；
@@ -22,7 +25,7 @@ import (
 //   - 沙箱或测试商品，用例会真实核销两次一积分。
 //
 // 用例失败不一定是代码错：如果第二次返回的状态或金额与第一次不同，说明即刻收侧对
-// 同一个请求号不幂等，这时必须给核销加上本地去重与状态 CAS，不能只靠请求号。
+// 同一个请求号不幂等，这时重试不能只靠请求号，要按验收记录的处置改成本地终态。
 func TestProbeVerifyIsIdempotentPerOutRequestNo(t *testing.T) {
 	if os.Getenv("ZHIXIN_NOWPAY_PROBE") != "1" {
 		t.Skip("未设置 ZHIXIN_NOWPAY_PROBE，跳过真实即刻收网关的幂等核对")
@@ -83,7 +86,7 @@ func TestProbeVerifyIsIdempotentPerOutRequestNo(t *testing.T) {
 
 	if second.Status != first.Status || second.Consumed != first.Consumed {
 		t.Fatalf("同一个请求号的第二次核销结果不同：第一次 %q/%d，第二次 %q/%d；"+
-			"这一条失败说明不能只靠请求号幂等，要给核销加本地去重与状态 CAS",
+			"这一条失败说明不能只靠请求号重试，按即刻收整改验收记录的处置改成本地终态",
 			first.Status, first.Consumed, second.Status, second.Consumed)
 	}
 	if dropped := before.Remaining - after.Remaining; dropped != first.Consumed {

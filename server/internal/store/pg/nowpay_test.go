@@ -1182,3 +1182,49 @@ func TestPostgresPrunesExpiredPurchasesAndTerminalCharges(t *testing.T) {
 		t.Fatalf("按状态计数不对: %+v", counts)
 	}
 }
+
+// TestPostgresClaimCharge 核对发送核销之前的本地认领：同一笔流水在租约之内只能被
+// 认领一次，租约过去之后可以重新认领（进程在认领之后退出时靠这一点重发），已经落了
+// 终态的流水不再被认领（ADR-0088）。
+func TestPostgresClaimCharge(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	charge, ok, err := st.ReservePoints(ctx, nowpay.Charge{
+		ID: "nc_1", UserID: "u1", Day: "2026-11-25", Tokens: 1000,
+	}, 2)
+	if err != nil || !ok {
+		t.Fatalf("写流水: ok=%v err=%v", ok, err)
+	}
+	if claimed, err := st.ClaimCharge(ctx, charge.ID, time.Minute); err != nil || !claimed {
+		t.Fatalf("第一次认领应成功: %v %v", claimed, err)
+	}
+	if claimed, err := st.ClaimCharge(ctx, charge.ID, time.Minute); err != nil || claimed {
+		t.Fatalf("租约之内不应重复认领: %v %v", claimed, err)
+	}
+	if claimed, err := st.ClaimCharge(ctx, charge.ID, 0); err != nil || !claimed {
+		t.Fatalf("租约过去之后应能重新认领: %v %v", claimed, err)
+	}
+	if _, err := st.SetStatus(ctx, charge.ID, nowpay.StatusSucceeded, ""); err != nil {
+		t.Fatalf("落状态: %v", err)
+	}
+	if claimed, err := st.ClaimCharge(ctx, charge.ID, 0); err != nil || claimed {
+		t.Fatalf("终态流水不应再被认领: %v %v", claimed, err)
+	}
+}
+
+// TestPostgresRefusesToStartWithoutTheClaimColumn 守住认领列的启动检查：缺列时每一笔
+// 核销都发不出去，服务启动时直接拒绝，由自动部署回滚到上一份文件（ADR-0088）。
+func TestPostgresRefusesToStartWithoutTheClaimColumn(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	enablePaidQuota(t, st)
+	if _, err := st.pool.Exec(ctx, `ALTER TABLE nowpay_charge DROP COLUMN claimed_at`); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if err := st.CheckNowPaySchema(ctx); err == nil {
+		t.Fatal("缺 claimed_at 列时启动应失败")
+	}
+}

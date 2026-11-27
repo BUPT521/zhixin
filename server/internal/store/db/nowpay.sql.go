@@ -41,6 +41,30 @@ func (q *Queries) ChargeStatusCounts(ctx context.Context) ([]ChargeStatusCountsR
 	return items, nil
 }
 
+const claimCharge = `-- name: ClaimCharge :execrows
+UPDATE nowpay_charge
+SET claimed_at = now()
+WHERE id = $1
+  AND status = 'pending'
+  AND (claimed_at IS NULL OR claimed_at < now() - ($2::int * interval '1 second'))
+`
+
+type ClaimChargeParams struct {
+	ID           string
+	LeaseSeconds int32
+}
+
+// 发送核销之前的本地认领（ADR-0088）：只有 status 仍是 pending、并且 claimed_at
+// 为空或者上一次认领已经超过租约时才成功。状态保持 pending：认领之后进程可能退出，
+// 请求根本没有发出去，processing 只能按请求号查结果，查不到就一直停在那里。
+func (q *Queries) ClaimCharge(ctx context.Context, arg ClaimChargeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimCharge, arg.ID, arg.LeaseSeconds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const dailyChargeTotals = `-- name: DailyChargeTotals :one
 
 SELECT COALESCE(SUM(points) FILTER (WHERE status <> 'failed'), 0)::bigint AS applied,
@@ -466,7 +490,7 @@ func (q *Queries) SetChargeStatus(ctx context.Context, arg SetChargeStatusParams
 }
 
 const unsettledCharges = `-- name: UnsettledCharges :many
-SELECT id, user_id, day, points, billed_tokens, status, note, created_at, updated_at FROM nowpay_charge
+SELECT id, user_id, day, points, billed_tokens, status, note, created_at, updated_at, claimed_at FROM nowpay_charge
 WHERE user_id = $1 AND status IN ('pending', 'processing')
 ORDER BY created_at, id
 LIMIT $2
@@ -496,6 +520,7 @@ func (q *Queries) UnsettledCharges(ctx context.Context, arg UnsettledChargesPara
 			&i.Note,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ClaimedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -508,7 +533,7 @@ func (q *Queries) UnsettledCharges(ctx context.Context, arg UnsettledChargesPara
 }
 
 const unsettledChargesGlobal = `-- name: UnsettledChargesGlobal :many
-SELECT id, user_id, day, points, billed_tokens, status, note, created_at, updated_at FROM nowpay_charge
+SELECT id, user_id, day, points, billed_tokens, status, note, created_at, updated_at, claimed_at FROM nowpay_charge
 WHERE user_id IS NOT NULL AND status IN ('pending', 'processing') AND created_at < $1
 ORDER BY created_at, id
 LIMIT $2
@@ -542,6 +567,7 @@ func (q *Queries) UnsettledChargesGlobal(ctx context.Context, arg UnsettledCharg
 			&i.Note,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ClaimedAt,
 		); err != nil {
 			return nil, err
 		}
