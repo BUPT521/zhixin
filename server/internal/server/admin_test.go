@@ -288,13 +288,13 @@ func TestAdminUsageIncludesFallbackAndExcludesProbes(t *testing.T) {
 		t.Fatalf("route usage: %+v", report)
 	}
 	day := report.Daily[0]
-	// 三次对话请求：流式那一次先被 primary 的故障页挡回来、由 backup 接住，
-	// 后两次探针各走一条指定路由。故障页这次没有产生用量，按新口径记 0，所以
-	// 对话的估算部分为 0；用量按各来源自己报告的数字核对。嵌入拆成两批，只有
-	// 第一批报告了 7 个 token，第二批没有带回用量、按 0 结算，3 字节的估算只进
-	// 估算列（ADR-0084）。
+	// 三次对话尝试：流式那一次先被 primary 的故障页挡回来、由 backup 接住，
+	// 后两次探针各走一条指定路由。故障页这次没有产生用量，按 0 结算，按输入
+	// 估算的 32 只进估算列（ADR-0070、ADR-0084）；用量按各来源自己报告的数字
+	// 核对。嵌入拆成两批，只有第一批报告了 7 个 token，第二批没有带回用量、按 0
+	// 结算，3 字节的估算只进估算列（ADR-0084）。
 	if day.Chat.Attempts != 3 || day.Chat.FirstAttempts != 2 || day.Chat.FailoverAttempts != 1 ||
-		day.Chat.Successes != 2 || day.Chat.Tokens != 8 || day.Chat.EstimatedTokens != 0 ||
+		day.Chat.Successes != 2 || day.Chat.Tokens != 8 || day.Chat.EstimatedTokens != 32 ||
 		day.Embedding != (api.AdminUsageCounts{
 			Attempts: 1, FirstAttempts: 1, Successes: 1, Tokens: 7, EstimatedTokens: 3, InputTokens: 7,
 		}) {

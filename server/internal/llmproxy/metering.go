@@ -16,7 +16,8 @@ type attemptResult struct {
 	usage   Usage
 	unknown bool
 	// estimated 是没有拿到上游用量的部分按输入估算的原始 token 数，只进后台
-	// 用量统计的估算列，不参与扣减：扣减只认 usage，拿不到就记 0。
+	// 用量统计的估算列，不参与扣减：扣减只认 usage，拿不到就记 0。结算时由
+	// billedTokens 补齐；嵌入按批次已经算过一部分的沿用那一份。
 	estimated int64
 	// unbilled 表示这次尝试不向账号结算：请求没有发出、连接都没有建立，来源
 	// 明确拒绝（非 2xx），或者来源虽然回了 2xx 却没有可核对的上游用量（页面、
@@ -68,7 +69,7 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 			if !result.notSent {
 				attempt = attemptOf(!result.success)
 			}
-			billed := p.quotaCost(model.Kind, billedTokens(model.Kind, estimate, result))
+			billed := p.quotaCost(model.Kind, billedTokens(model.Kind, estimate, &result))
 			// 结算失败不能让回答失败：内容已经交付。预留的补退与待补偿记录由额度
 			// 实现负责，这里只留下一条能对上请求与用量的日志（ADR-0086）。
 			if err := p.settle(r, userID, day, model.Kind, keyID, reserved, billed, result.usage, attempt); err != nil {
@@ -91,25 +92,27 @@ func (p *Proxy) budget(r *http.Request, userID, day string, model *liveModel) at
 				RouteUsageKey: RouteUsageKey{
 					Kind: model.Kind, Model: model.Name, ProviderID: route.ProviderID, UpstreamModel: route.UpstreamModel,
 				},
-				UsageCounts: routeAttemptUsage(model.Kind, estimate, result, first, canceled),
+				UsageCounts: routeAttemptUsage(model.Kind, result, first, canceled),
 			})
 		}, nil
 	}
 }
 
 // routeAttemptUsage records raw upstream tokens separately from quota settlement.
-func routeAttemptUsage(kind Kind, estimate Usage, result attemptResult, first, canceled bool) UsageCounts {
+func routeAttemptUsage(kind Kind, result attemptResult, first, canceled bool) UsageCounts {
 	counts := UsageCounts{Attempts: 1, InputTokens: result.usage.Input, CachedTokens: result.usage.Cached}
+	// 估算列每次都记同一份数字：没有来源用量的尝试由 billedTokens 填好，按 0
+	// 结算的尝试因此也留得下原本的量。
+	counts.EstimatedTokens = result.estimated
 	switch {
 	case result.unbilled:
 		// 上游拒绝请求或没有带回用量时按 0 结算，保留尝试次数；估算的输入只记
 		// 进估算列，后台看得见这类尝试原本的量。
-		counts.EstimatedTokens = result.estimated
 	case result.usage.Total() > 0:
-		counts.Tokens, counts.EstimatedTokens = result.usage.Total(), result.estimated
+		counts.Tokens = result.usage.Total()
 	default:
-		raw := estimate.Input + result.outputEstimate
-		counts.Tokens, counts.EstimatedTokens = raw, raw
+		// 没有来源用量、按估算结算：Token 合计与估算列是同一个数。
+		counts.Tokens = result.estimated
 	}
 	if first {
 		counts.FirstAttempts = 1
@@ -128,10 +131,17 @@ func routeAttemptUsage(kind Kind, estimate Usage, result attemptResult, first, c
 	return counts
 }
 
-// billedTokens 返回一次尝试应当记的计费 token 数。有 usage 就按 usage；没有
-// usage 时按输入估算与已经转出的输出估算结算，确定没有产生上游费用的失败记 0，
-// 不再沿用预留量。估算仍按未命中缓存的输入折算，与客户端发请求前的判断同口径。
-func billedTokens(kind Kind, estimate Usage, result attemptResult) int64 {
+// billedTokens 返回一次尝试应当记的计费 token 数，并把估算列要记的原始 token
+// 写回 result.estimated。有 usage 就按 usage；没有 usage 时按输入估算与已经转出
+// 的输出估算结算，确定没有产生上游费用的失败记 0，不再沿用预留量。估算仍按未
+// 命中缓存的输入折算，与客户端发请求前的判断同口径。
+//
+// 估算列与结算在同一处得出：来源没有报告用量时两边是同一份数字，嵌入按批次算过
+// 一部分的沿用那一部分。后台因此分得清哪一笔按估算记账、哪一笔有来源用量。
+func billedTokens(kind Kind, estimate Usage, result *attemptResult) int64 {
+	if result.estimated <= 0 {
+		result.estimated = estimatedTokens(estimate, *result)
+	}
 	switch {
 	case result.notSent || result.unbilled:
 		return 0
@@ -142,6 +152,16 @@ func billedTokens(kind Kind, estimate Usage, result attemptResult) int64 {
 	default:
 		return Usage{Input: estimate.Input}.Billed(kind)
 	}
+}
+
+// estimatedTokens 返回一次尝试按输入与已转出输出估算的原始 token 数：来源报告了
+// 用量，或者请求根本没有发出时返回 0，其余情况就是结算用的那份估算。嵌入按批次
+// 已经算过一部分时由嵌入自己写进 result.estimated，不经过这里。
+func estimatedTokens(estimate Usage, result attemptResult) int64 {
+	if result.notSent || result.usage.Total() > 0 {
+		return 0
+	}
+	return estimate.Input + result.outputEstimate
 }
 
 func (p *Proxy) recordRouteUsage(ctx context.Context, row RouteUsage) {
