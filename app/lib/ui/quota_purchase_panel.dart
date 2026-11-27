@@ -579,7 +579,7 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
                   child: Text(_statusText(product.capabilityStatus)),
                 ),
               if (options.isNotEmpty) ...[
-                const _Rule(),
+                CardDivider(gap: theme.space.sm),
                 for (final option in options)
                   _optionRow(
                     option,
@@ -730,21 +730,4 @@ class _QuotaPurchasePanelState extends State<QuotaPurchasePanel>
     'TERMINATED' => '商品已归档，已有积分仍可使用。',
     _ => '暂时不能购买。',
   };
-}
-
-/// 购买卡片里的分隔线：与卡片内容同宽，上下各留一档。
-class _Rule extends StatelessWidget {
-  const _Rule();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.zhixin;
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: theme.space.sm),
-      child: SizedBox(
-        height: 1,
-        child: ColoredBox(color: theme.colors.outlineVariant),
-      ),
-    );
-  }
 }

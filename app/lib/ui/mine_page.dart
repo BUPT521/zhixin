@@ -314,12 +314,10 @@ class _MinePageState extends State<MinePage> {
                 onManage: () => _push(openAccount),
                 onSync: _syncNow,
               ),
-            if (_notice != null)
+            if (_notice case final notice?)
               Padding(
                 padding: EdgeInsets.only(top: theme.space.sm),
-                child: _failed
-                    ? InlineNotice(message: _notice!)
-                    : Text(_notice!, style: theme.text.bodySmall),
+                child: ResultNotice(message: notice, failed: _failed),
               ),
             const SectionHeading(title: '数据'),
             if (signedIn) ...[

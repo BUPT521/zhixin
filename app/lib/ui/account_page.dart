@@ -883,13 +883,8 @@ class _AccountPageState extends State<AccountPage> {
     return ListView(
       padding: theme.space.pageInsets(bottom: 96),
       children: [
-        if (_notice != null)
-          _failed
-              ? InlineNotice(message: _notice!, onRetry: _noticeRetry)
-              : Padding(
-                  padding: EdgeInsets.only(bottom: theme.space.md),
-                  child: Text(_notice!, style: theme.text.bodySmall),
-                ),
+        if (_notice case final notice?)
+          ResultNotice(message: notice, failed: _failed, onRetry: _noticeRetry),
         if (!focused && _spaces.isNotEmpty) ..._localSpaces(context),
         if (!signedIn) ..._loggedOut(context),
         if (signedIn) ..._loggedIn(context, snapshot!),
@@ -914,9 +909,7 @@ class _AccountPageState extends State<AccountPage> {
           title: Text(
             space.id == scope.spaceId ? '${space.label}（当前）' : space.label,
           ),
-          subtitle: Text(
-            '${(space.bytes / (1024 * 1024)).toStringAsFixed(1)} MiB',
-          ),
+          subtitle: Text(formatBytes(space.bytes)),
           suffix: const Icon(FLucideIcons.trash2),
           onPress: _busy ? null : () => _deleteLocalSpace(space),
         ),
@@ -1459,7 +1452,7 @@ class _AccountPageState extends State<AccountPage> {
                   ],
                 ),
                 Text(
-                  '${_maskedDeviceId(device.deviceId)} · ${_deviceSeen(device.lastSeen)}',
+                  '${maskedDeviceId(device.deviceId)} · ${_deviceSeen(device.lastSeen)}',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),
@@ -1516,12 +1509,6 @@ class _AccountPageState extends State<AccountPage> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-  }
-
-  /// 设备标识只露前 8 位，短的标识原样显示。
-  static String _maskedDeviceId(String deviceId) {
-    final value = deviceId.trim();
-    return value.length <= 8 ? value : value.substring(0, 8);
   }
 
   /// 最近出现时间：读不出时写“时间未知”，与提交列表同一套短时间格式。
