@@ -741,11 +741,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       await deleteTemporaryCaptures(picks);
     } catch (error, stack) {
       if (!sent && scope != null && paths.isNotEmpty) {
-        try {
-          await scope.data.versions.cleanupAttachmentPaths(paths);
-        } catch (_) {
-          // 后续启动仍会清理失去引用的图片；清理失败不替代发送错误。
-        }
+        await discardCapturedImages(scope, paths);
       }
       if (!mounted) return;
       final saved = generatingId != null;
@@ -788,19 +784,16 @@ class DiscussionChatState extends State<DiscussionChat> {
 
   Future<void> _pick(ImageSource source) async {
     if (_picking) return;
-    if (_picked.length >= 2) {
-      showToast(context, '最多添加两张图片，请先移除一张');
-      return;
-    }
     setState(() => _picking = true);
     try {
-      final picked = await pickQuestionImage(context, source);
+      final picked = await pickCaptureWithinLimit(
+        context,
+        source,
+        current: _picked.length,
+      );
       if (picked != null && mounted) {
         setState(() => _picked = [..._picked, picked]);
       }
-    } catch (error) {
-      if (!mounted) return;
-      showToast(context, captureErrorText(error));
     } finally {
       if (mounted) setState(() => _picking = false);
     }

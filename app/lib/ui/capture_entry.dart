@@ -13,6 +13,10 @@ import 'navigation.dart';
 import 'question_crop_page.dart' show shrinkCaptureImage;
 import 'theme.dart';
 import 'zhixin_sheet.dart';
+import 'zhixin_toast.dart';
+
+/// 一次最多添加几张题目图片；讨论、首页提问与“贴一道题”共用这一个上限。
+const int kCaptureLimit = 2;
 
 /// 首页提问、讨论页与“贴一道题”共用的图片录入：取图、框选、存图与缩略图。
 ///
@@ -73,6 +77,45 @@ Future<XFile?> pickQuestionImage(
   } finally {
     // 原图是取图组件写进缓存的全尺寸副本，框选之后不再需要。
     await deleteTemporaryCapture(picked.path);
+  }
+}
+
+/// 录题入口共用的取图动作：先查上限，再取图并框选，失败直接给出说明。
+///
+/// 讨论页与“贴一道题”原先各写一遍“最多两张”的提示与 `captureErrorText`
+/// 的收尾；这里只留一处，调用方只在拿到图片时更新自己的列表。返回 null 表示
+/// 用户取消或已经达到上限。
+Future<XFile?> pickCaptureWithinLimit(
+  BuildContext context,
+  ImageSource source, {
+  required int current,
+  int limit = kCaptureLimit,
+}) async {
+  if (current >= limit) {
+    showToast(context, '最多添加 $limit 张图片，请先移除一张');
+    return null;
+  }
+  try {
+    return await pickQuestionImage(context, source);
+  } catch (error) {
+    if (context.mounted) showToast(context, captureErrorText(error));
+    return null;
+  }
+}
+
+/// 写入失败时清掉已经存进图片目录、但没有被记录引用的图片。
+///
+/// 图片先于记录写进目录，记录没有写成时它们没有引用；删不掉也不替代原来的
+/// 失败说明，后续启动仍会回收失去引用的图片。
+Future<void> discardCapturedImages(
+  AppScopeState scope,
+  Iterable<String> storedNames,
+) async {
+  if (storedNames.isEmpty) return;
+  try {
+    await scope.data.versions.cleanupAttachmentPaths(storedNames.toList());
+  } catch (_) {
+    // 清理失败只多占一点空间，发送或保存的错误说明照常给出。
   }
 }
 

@@ -78,11 +78,7 @@ class QuestionCaptureButton extends StatelessWidget {
       if (imagesFailed) showToast(context, '图片没有存进去，题目文字已经保存');
       await onOpenLearning(id);
     } catch (error, stack) {
-      try {
-        await scope.data.versions.cleanupAttachmentPaths(paths);
-      } catch (_) {
-        // 后续启动仍会清理失去引用的图片；清理失败不替代保存错误。
-      }
+      await discardCapturedImages(scope, paths);
       if (!context.mounted) return;
       final message = describeFailure(
         context,
@@ -150,19 +146,16 @@ class _CaptureSheetState extends State<_CaptureSheet> {
 
   Future<void> _pick(ImageSource source) async {
     if (_picking) return;
-    if (_photos.length >= 2) {
-      showToast(context, '最多添加两张图片，请先移除一张');
-      return;
-    }
     setState(() => _picking = true);
     try {
-      final picked = await pickQuestionImage(context, source);
+      final picked = await pickCaptureWithinLimit(
+        context,
+        source,
+        current: _photos.length,
+      );
       if (picked != null && mounted) {
         setState(() => _photos.add(picked));
       }
-    } catch (error) {
-      if (!mounted) return;
-      showToast(context, captureErrorText(error));
     } finally {
       if (mounted) setState(() => _picking = false);
     }

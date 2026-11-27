@@ -77,7 +77,7 @@ void main() {
     expect(find.text('记忆建议'), findsOneWidget);
     expect(find.text('待确认'), findsOneWidget);
     expect(find.text('讲解概率时先用具体例子。'), findsOneWidget);
-    expect(find.text('语义 · 模型推断 · 有效至 2026-12-31'), findsOneWidget);
+    expect(find.text('语义 · 推断 · 有效至 2026-12-31'), findsOneWidget);
     expect(find.text('撤销'), findsNothing);
 
     await tester.tap(find.text('记下'));

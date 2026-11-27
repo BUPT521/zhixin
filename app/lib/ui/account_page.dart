@@ -9,11 +9,14 @@ import 'zhixin_dialog.dart';
 import '../platform/app_paths.dart' show LocalSpace;
 
 import '../app_scope.dart';
+import '../application/account_actions.dart';
 import '../application/account_service.dart';
+import '../application/account_summary.dart';
 import '../application/prefetch_service.dart';
+import '../application/sync_flow.dart';
 import '../application/sync_service.dart';
 import '../data/cloud/account_store.dart' show AccountIdentity;
-import '../data/cloud/server_client.dart' show ServerProblem, ServerQuota;
+import '../data/cloud/server_client.dart' show ServerQuota;
 import 'account_dialogs.dart';
 import 'account_login_form.dart';
 import 'navigation.dart';
@@ -25,13 +28,6 @@ import 'failure_feedback.dart';
 import 'format.dart';
 import 'zhixin_header.dart';
 import 'workspace_widgets.dart';
-
-/// 一级界面切进来之后预读的账号页首屏；字段与预读任务返回的记录一致。
-typedef _AccountPrewarm = ({
-  AccountSnapshot snapshot,
-  SyncStatus sync,
-  ServerQuota? quota,
-});
 
 /// 账号与云同步：服务地址、登录注册、同步状态与云端数据操作。
 ///
@@ -70,16 +66,17 @@ class _AccountPageState extends State<AccountPage> {
   ServerQuota? _quota;
   List<LocalSpace> _spaces = const [];
   bool _loading = true;
-  bool _busy = false;
 
   /// 登录卡与找回密码卡之间的切换；验证码发出之后在同一个位置继续输入。
   bool _showReset = false;
-  bool _codeSent = false;
 
-  /// 重发倒计时：服务端对同一条登录方式一分钟内只发一封（`ZHIXIN_CODE_COOLDOWN`
-  /// 默认 60 秒），界面按同一个间隔禁用按钮，用户不必先点一次拿到 429 才知道要等。
-  int _resendWait = 0;
-  Timer? _resendTicker;
+  /// 八类流程共用的操作状态：谁在跑、验证码属于哪一次流程、重发还要等多久。
+  ///
+  /// 状态与顺序都在应用层（[AccountActions]），页面只读 [AccountActionState] 决定
+  /// 按钮可用与输入框是否出现（A30）。
+  late AccountActions _actions;
+
+  AccountActionState get _state => _actions.state;
 
   /// 页面顶部的一次性说明：失败用就地说明，成功用一行小字。
   String? _notice;
@@ -107,10 +104,21 @@ class _AccountPageState extends State<AccountPage> {
     super.didChangeDependencies();
     if (_started) return;
     _started = true;
+    final scope = AppScope.of(context);
+    _actions = AccountActions(
+      account: scope.accountServices.account,
+      sync: scope.accountServices.sync,
+      clearAllData: (password) => scope.clearAllData(password: password),
+      deleteLocalSpace: scope.deleteLocalSpace,
+      onChanged: () {
+        if (mounted) setState(() {});
+      },
+    );
     // 进入“我的”时已经在后台读过账号、同步状态与额度；先用这一份，
     // 这一次完整读取再把邮箱验证与额度刷新到最新。
-    final prewarm = AppScope.of(context).prefetch
-        .take<_AccountPrewarm>(PrefetchKey.accountPage);
+    final prewarm = scope.prefetch.take<AccountSummary>(
+      PrefetchKey.accountPage,
+    );
     if (prewarm != null) {
       _snapshot = prewarm.snapshot;
       _sync = prewarm.sync;
@@ -122,7 +130,7 @@ class _AccountPageState extends State<AccountPage> {
 
   @override
   void dispose() {
-    _resendTicker?.cancel();
+    _actions.dispose();
     _identifier.dispose();
     _verifyCode.dispose();
     _resetCode.dispose();
@@ -130,42 +138,38 @@ class _AccountPageState extends State<AccountPage> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  /// 账号摘要的唯一读取入口：账号页顺带核对一次登录方式并读今日额度。
+  AccountSummaryReader get _reader {
+    final services = AppScope.of(context).accountServices;
+    return AccountSummaryReader(account: services.account, sync: services.sync);
+  }
+
+  /// 读账号摘要、本机空间并刷新页面。
+  ///
+  /// [keepNotice] 为真时读取失败只记诊断、不改页面提示：这类读取跟在一次操作
+  /// 之后，刚给出的结论比后台读取失败更该留在页面上。
+  Future<void> _load({bool keepNotice = false}) async {
     final scope = AppScope.of(context);
     try {
-      // 顺带核对一次邮箱验证状态；没有登录或服务端不可达时沿用本机记录。
-      final snapshot = await scope.accountServices.account.refreshAccount();
-      final sync = await scope.accountServices.sync.status();
-      ServerQuota? quota;
-      String? localDeviceId;
-      if (snapshot.signedIn) {
-        try {
-          quota = await scope.accountServices.account.quota();
-        } catch (_) {
-          // 额度只用于显示；读不到时这一块给一句说明，不影响同步与备份。
-        }
-        try {
-          localDeviceId = await scope.accountServices.account.deviceId();
-        } catch (_) {
-          // 读不到设备标识时设备一节不标“本机”，其他内容照常显示。
-        }
-        // 设备一节直接读同步服务缓存的名册；读取失败只记诊断，不阻塞本页。
-        await scope.accountServices.sync.refreshDevices();
-      }
+      final summary = await _reader.read(refresh: true, withQuota: true);
       final spaces = await scope.spaces?.list() ?? const <LocalSpace>[];
       if (!mounted) return;
       setState(() {
         _spaces = spaces;
-        _snapshot = snapshot;
-        _sync = sync;
+        _snapshot = summary.snapshot;
+        _sync = summary.sync;
         // 这一次没读到额度时保留上一次的数字：瞬时失败不该把已经读到的额度清空，
         // 否则页面看起来像额度没了。
-        _quota = quota ?? _quota;
-        _localDeviceId = localDeviceId;
+        _quota = summary.quota ?? _quota;
+        _localDeviceId = summary.localDeviceId;
         _loading = false;
       });
     } catch (error, stack) {
       if (!mounted) return;
+      if (keepNotice) {
+        setState(() => _loading = false);
+        return;
+      }
       setState(() {
         _loading = false;
         _notice = describeFailure(
@@ -199,7 +203,7 @@ class _AccountPageState extends State<AccountPage> {
   }) async {
     if (!mounted) return;
     if (AppScope.of(context).managesSpaces) return;
-    _codeSent = false;
+    _actions.clearCode();
     _showReset = false;
     final identifier = _identifier.text.trim();
     _report(
@@ -218,328 +222,133 @@ class _AccountPageState extends State<AccountPage> {
     return null;
   }
 
-  /// 服务端默认的冷却时间；成功响应不带 `Retry-After`，先按这个值禁用按钮。
-  static const _resendCooldownSeconds = 60;
-
-  /// 按服务端给出的等待秒数开始倒计时，0 表示现在就可以再发。
-  void _startResendCooldown(int seconds) {
-    _resendTicker?.cancel();
-    _resendTicker = null;
-    if (seconds <= 0) {
-      if (_resendWait != 0) setState(() => _resendWait = 0);
-      return;
+  /// 一次账号操作的收尾：操作状态、成功说明与统一的失败说明。
+  ///
+  /// 业务顺序与影响说明都在应用层（[AccountActions]），页面只在这里渲染结果；
+  /// [retry] 是失败说明旁边可以再点一次的动作。
+  Future<void> _run(
+    AccountAction action,
+    Future<AccountActionResult?> Function() body, {
+    VoidCallback? retry,
+  }) async {
+    if (_state.busy) return;
+    _actions.begin(action);
+    try {
+      final result = await body();
+      if (!mounted || result == null) return;
+      _report(
+        result.message,
+        failed: result.failed,
+        retry: result.failed ? retry : null,
+      );
+      if (result.clearDigestMismatch) {
+        setState(() => _sync = _sync?.withDigestMismatch(false));
+      }
+      if (result.reload) await _load(keepNotice: true);
+    } catch (error, stack) {
+      if (!mounted) return;
+      final copy = accountActionCopy(action);
+      _report(
+        describeFailure(
+          context,
+          error,
+          stack,
+          action: copy.action,
+          kind: copy.kind,
+          kept: copy.kept,
+          next: copy.next,
+        ),
+        failed: true,
+        retry: retry,
+      );
+      // 发送验证码被限流时要按服务端给的秒数继续禁用按钮。
+      _actions.cooldownFrom(error);
+    } finally {
+      _actions.end();
     }
-    setState(() => _resendWait = seconds);
-    // 收信预算用完时要等几个小时，按秒刷新只会白白唤醒页面，长等待按半分钟走。
-    final step = seconds > 120 ? 30 : 1;
-    _resendTicker = Timer.periodic(Duration(seconds: step), (timer) {
-      if (!mounted) {
-        timer.cancel();
-        return;
-      }
-      final next = _resendWait - step;
-      if (next <= 0) {
-        timer.cancel();
-        _resendTicker = null;
-        setState(() => _resendWait = 0);
-      } else {
-        setState(() => _resendWait = next);
-      }
-    });
-  }
-
-  /// 服务端说还要等多久就按这个秒数继续禁用按钮；其余失败不动倒计时。
-  void _startResendCooldownFrom(Object error) {
-    if (error is! ServerProblem) return;
-    final seconds = error.retryAfterSeconds;
-    if (seconds == null || seconds <= 0) return;
-    _startResendCooldown(seconds);
-  }
-
-  /// 登录与找回密码之间切换时清掉，另一个入口的冷却不该挡住这一次发送。
-  void _clearResendCooldown() {
-    _resendTicker?.cancel();
-    _resendTicker = null;
-    _resendWait = 0;
   }
 
   /// 验证码的发送按钮：冷却期间不可点，把还要等多久写在按钮上。
-  Widget _sendCodeButton({required VoidCallback send}) {
-    final cooling = _resendWait > 0;
+  Widget _sendCodeButton({
+    required AccountAction action,
+    required VoidCallback send,
+  }) {
+    final cooling = _state.cooling;
     return forui.FButton(
       mainAxisSize: MainAxisSize.min,
-      onPress: (_busy || cooling) ? null : send,
+      onPress: (_state.busy || cooling) ? null : send,
       child: Text(
         cooling
-            ? '${waitText(_resendWait)}后可重发'
-            : (_codeSent ? '重新发送' : '发送验证码'),
+            ? '${waitText(_state.resendWait)}后可重发'
+            : (_state.codeSentFor(action) ? '重新发送' : '发送验证码'),
       ),
     );
   }
 
   Future<void> _sendVerification() async {
-    if (_busy || _resendWait > 0) return;
+    if (_state.busy || _state.cooling) return;
     final identity = _unverifiedIdentity;
     if (identity == null) {
       _report('这个账号的登录方式都已经确认过');
       return;
     }
-    setState(() => _busy = true);
-    try {
-      await AppScope.of(context).accountServices.account
-          .requestIdentityVerification(identity.id);
-      _codeSent = true;
-      _startResendCooldown(_resendCooldownSeconds);
-      _report('验证码已经发到 ${identity.identifier}，十分钟内有效');
-    } catch (error, stack) {
-      if (!mounted) return;
-      _startResendCooldownFrom(error);
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '发送验证码',
-          kind: 'account_identifier_code',
-          kept: '登录状态没有改动',
-          next: '可以检查邮箱与服务地址后重试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    await _run(
+      AccountAction.sendIdentityCode,
+      () => _actions.sendIdentityCode(
+        identityId: identity.id,
+        identifier: identity.identifier,
+      ),
+    );
   }
 
   Future<void> _confirmVerification() async {
-    if (_busy) return;
+    if (_state.busy) return;
     final identity = _unverifiedIdentity;
-    final code = _verifyCode.text.trim();
     if (identity == null) return;
-    if (code.length != 6) {
-      _report('填写邮件里的六位验证码', failed: true);
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await AppScope.of(context).accountServices.account
-          .confirmIdentityVerification(identity.id, code);
-      _verifyCode.clear();
-      _codeSent = false;
-      _report('${identity.kindLabel}已经确认；忘记密码时可以收到重设验证码');
-      await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '确认登录方式',
-          kind: 'account_identifier_confirm',
-          kept: '登录状态没有改动',
-          next: '可以重新获取验证码再试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _sendResetCode() async {
-    if (_busy || _resendWait > 0) return;
-    final identifier = _identifier.text.trim();
-    if (identifier.isEmpty) {
-      _report('先填写注册用的邮箱', failed: true);
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await AppScope.of(context).accountServices.account
-          .requestPasswordReset(identifier);
-      _startResendCooldown(_resendCooldownSeconds);
-      _report('如果这个邮箱注册并验证过，验证码已经发出；十分钟内有效');
-    } catch (error, stack) {
-      if (!mounted) return;
-      _startResendCooldownFrom(error);
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '发送重设验证码',
-          kind: 'account_reset_code',
-          kept: '登录状态与密码没有改动',
-          next: '可以检查邮箱与服务地址后重试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _resetPassword() async {
-    if (_busy) return;
-    final identifier = _identifier.text.trim();
-    final code = _resetCode.text.trim();
-    final password = _newPassword.text;
-    if (identifier.isEmpty) {
-      _report('先填写注册用的邮箱', failed: true);
-      return;
-    }
-    if (code.length != 6) {
-      _report('填写邮件里的六位验证码', failed: true);
-      return;
-    }
-    if (password.length < 8) {
-      _report('新密码至少 8 位', failed: true);
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      await AppScope.of(context).accountServices.account.resetPassword(
-        identifier: identifier,
+    final code = _verifyCode.text.trim();
+    await _run(AccountAction.confirmIdentity, () async {
+      final result = await _actions.confirmIdentity(
+        identityId: identity.id,
+        kindLabel: identity.kindLabel,
         code: code,
-        newPassword: password,
       );
+      if (!result.failed) _verifyCode.clear();
+      return result;
+    });
+  }
+
+  Future<void> _sendResetCode() => _run(
+    AccountAction.sendResetCode,
+    () => _actions.sendResetCode(identifier: _identifier.text.trim()),
+  );
+
+  Future<void> _resetPassword() => _run(AccountAction.resetPassword, () async {
+    final result = await _actions.resetPassword(
+      identifier: _identifier.text.trim(),
+      code: _resetCode.text.trim(),
+      password: _newPassword.text,
+    );
+    // 成功之后清掉两个输入框并回到登录卡；失败时留在原处，输入的内容不丢。
+    if (!result.failed) {
       _newPassword.clear();
       _resetCode.clear();
-      _codeSent = false;
       _showReset = false;
-      _report('密码已经重设，请用新密码登录；其他设备需要重新登录');
-      await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '重设密码',
-          kind: 'account_reset',
-          kept: '密码没有改动',
-          next: '可以重新获取验证码再试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
-  }
+    return result;
+  });
 
-  Future<void> _syncNow() async {
-    if (_busy) return;
-    final scope = AppScope.of(context);
-    var confirmBaseline = false;
-    try {
-      final status = await scope.accountServices.sync.status();
-      if (status.restoreNeedsConfirmation) {
-        if (!mounted) return;
-        final confirmed = await confirmRestoreAlignment(context);
-        if (!confirmed) {
-          if (!mounted) return;
-          _report('已取消同步；恢复后的内容仍在本机，需要时可以再点“立即同步”');
-          await _load();
-          return;
-        }
-        confirmBaseline = true;
-      } else if (status.baselineNeedsConfirmation) {
-        if (!mounted) return;
-        final confirmed = await confirmBaselineUpload(
-          context,
-          localCommits: status.localHead,
-        );
-        if (!confirmed) {
-          // 取消就不上传，并把自动同步停下来；恢复要在开关上再确认一次。
-          await scope.accountServices.account.setAutoSync(false);
-          if (!mounted) return;
-          _report('已取消首次同步，没有上传本机记录；自动同步已暂停');
-          await _load();
-          return;
-        }
-        confirmBaseline = true;
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '读取同步状态',
-          kind: 'account_sync_status',
-          kept: '本机记录没有改动',
-          next: '可以稍后再试',
-        ),
-        failed: true,
-      );
-      return;
+  /// 立即同步：确认顺序与执行在 [SyncFlow] 里，页面只提供确认框与结论文案。
+  Future<void> _syncNow() => _run(AccountAction.sync, () async {
+    final flow = await AppScope.of(context).accountServices.sync.flow
+        .run(confirm: (confirmation) => confirmSyncStep(context, confirmation));
+    if (!mounted) return null;
+    // 同步结束之后先就地更新“待修复”标记，再给结论：完整状态由随后的重读补齐，
+    // 提示与状态卡不会在几帧里互相矛盾（ADR-0045）。
+    if (flow.digestMismatch case final mismatch?) {
+      setState(() => _sync = _sync?.withDigestMismatch(mismatch));
     }
-    if (!mounted) return;
-    setState(() => _busy = true);
-    try {
-      // 云端历史被压缩时同步会抛出 SyncSnapshotProblem（code 为
-      // confirmationRequired）：先说明再确认，确认之后带 confirmReclone 再跑一轮，
-      // 本机数据不在未确认时被替换（3.7）。
-      var confirmReclone = false;
-      while (true) {
-        try {
-          final result = await scope.accountServices.sync.syncNow(
-            confirmBaseline: confirmBaseline,
-            confirmReclone: confirmReclone,
-          );
-          // 同步结束之后先就地更新“待修复”标记，再给结论：完整状态随后由后台
-          // 重读补齐，提示与状态卡不会在几帧里互相矛盾（ADR-0045）。
-          final mismatch = await scope.accountServices.sync.digestMismatch();
-          if (!mounted) return;
-          setState(() => _sync = _sync?.withDigestMismatch(mismatch));
-          _report(
-            result.changed
-                ? '同步完成：拉取 ${result.pulledCommits} 条、推送 ${result.pushedCommits} 条提交，'
-                      '上传 ${result.uploadedAssets}、下载 ${result.downloadedAssets} 个附件'
-                : (_sync?.digestMismatch ?? false)
-                ? '同步完成；本机与云端的内容仍不一致，按上面的说明选择修复方式'
-                : '同步完成，本机与云端已经一致',
-          );
-          unawaited(_load());
-          return;
-        } on SyncSnapshotProblem catch (problem) {
-          if (problem.code != SyncSnapshotCode.confirmationRequired) rethrow;
-          if (!mounted) return;
-          final confirmed = await confirmSnapshotRebuild(
-            context,
-            localCommits: problem.localCommits,
-          );
-          if (!confirmed) {
-            if (!mounted) return;
-            _report('已取消同步；本机数据保持不变，需要时可以再点“立即同步”');
-            await _load();
-            return;
-          }
-          confirmReclone = true;
-        }
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '同步',
-          kind: 'account_sync',
-          kept: '本机记录没有改动，已经同步的部分保留',
-          next: '可以检查网络后重试',
-        ),
-        failed: true,
-      );
-      await _load();
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
+    return AccountActionResult.ok(syncResultNotice(flow), reload: true);
+  });
 
   /// 摘要不一致时的唯一修复入口：以本机为准重建云端。
   ///
@@ -547,7 +356,7 @@ class _AccountPageState extends State<AccountPage> {
   /// 会留下删不掉的行（过度设计审查 3.4）。确认框同时要求输入当前密码；失败时
   /// 云端与本机都不清空，已经上传的部分保留。
   Future<void> _rebuildCloudFromLocal() async {
-    if (_busy) return;
+    if (_state.busy) return;
     final password = await askDestructiveActionPassword(
       context,
       title: '以本机为准重建云端',
@@ -557,107 +366,50 @@ class _AccountPageState extends State<AccountPage> {
           '同步时会按首次同步重新上传它们本机的内容。操作不可撤销，需要输入当前密码。',
       confirmLabel: '重建云端',
     );
-    if (password == null || !mounted || _busy) return;
-    setState(() => _busy = true);
-    final scope = AppScope.of(context);
-    try {
-      final result = await scope.accountServices.sync.rebuildCloudFromLocal(
-        password: password,
-      );
-      if (!mounted) return;
-      // 先摘掉状态卡上的“待修复”，再给结论，其余状态由后台重读补齐，提示与
-      // 状态卡因此不会互相矛盾（ADR-0045）。
-      setState(() => _sync = _sync?.withDigestMismatch(false));
-      _report(
-        result.pushedCommits > 0
-            ? '已按本机重建云端：上传 ${result.pushedCommits} 条提交、'
-                  '${result.uploadedAssets} 个附件；其他设备下次同步会重新上传'
-                  '它们本机的内容'
-            : '云端已经按本机当前内容重建，没有需要上传的改动',
-      );
-      unawaited(_load());
-    } catch (error, stack) {
-      if (!mounted) return;
-      if (error is ServerProblem && error.isConflict) {
-        _report('该账号还有云端操作在进行，请稍后重试');
-      } else if (error is ServerProblem &&
-          error.code == 'invalid_credentials') {
-        _report('密码不正确；云端与本机数据都没有改动', failed: true);
-      } else {
-        _report(
-          describeFailure(
-            context,
-            error,
-            stack,
-            action: '重建云端',
-            kind: 'account_sync_rebuild',
-            kept: '本机记录没有删除；云端可能已经清空，再试一次会按首次同步重新对齐',
-            next: '可以检查网络后再试',
-          ),
-          failed: true,
-        );
-      }
-      await _load();
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (password == null || !mounted) return;
+    await _run(
+      AccountAction.rebuildCloud,
+      () => _actions.rebuildCloud(password: password),
+    );
   }
 
   Future<void> _logout() async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      final scope = AppScope.of(context);
-      final deleteSpace = !scope.managesSpaces
-          ? false
-          : await showZhixinDialog<bool>(
-              context: context,
-              builder: (context) => ZhixinDialogLayout(
-                title: const Text('退出登录'),
-                content: const Text('退出后打开本机空间。可以保留这个账号在此设备上的数据，或在退出时一起删除。'),
-                actions: [
-                  cancelZhixinButton(context),
-                  forui.FButton(
-                    variant: forui.FButtonVariant.destructive,
-                    onPress: () => Navigator.of(context).pop(true),
-                    child: const Text('退出并删除本机数据'),
-                  ),
-                  forui.FButton(
-                    onPress: () => Navigator.of(context).pop(false),
-                    child: const Text('退出并保留数据'),
-                  ),
-                ],
-              ),
-            );
-      if (deleteSpace == null || !mounted) return;
-      await scope.accountServices.account.logout(deleteSpace: deleteSpace);
-      if (!mounted || scope.managesSpaces) return;
-      // 退出之后同步位置不再继续推进，不能一直挡住“清理历史”；位置与账号
-      // 归属保留，重新登录同一账号时仍从原位置继续增量同步（同步方案 3.3）。
-      await scope.accountServices.sync.clearState();
-      _report('已退出登录；本机记录仍在，云端数据保留，重新登录同一账号可以接着同步');
-      await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '退出登录',
-          kind: 'account_logout',
-          kept: '登录状态没有改动',
-          next: '可以再试一次',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (_state.busy) return;
+    final scope = AppScope.of(context);
+    final managesSpaces = scope.managesSpaces;
+    final deleteSpace = !managesSpaces
+        ? false
+        : await showZhixinDialog<bool>(
+            context: context,
+            builder: (context) => ZhixinDialogLayout(
+              title: const Text('退出登录'),
+              content: const Text('退出后打开本机空间。可以保留这个账号在此设备上的数据，或在退出时一起删除。'),
+              actions: [
+                cancelZhixinButton(context),
+                forui.FButton(
+                  variant: forui.FButtonVariant.destructive,
+                  onPress: () => Navigator.of(context).pop(true),
+                  child: const Text('退出并删除本机数据'),
+                ),
+                forui.FButton(
+                  onPress: () => Navigator.of(context).pop(false),
+                  child: const Text('退出并保留数据'),
+                ),
+              ],
+            ),
+          );
+    if (deleteSpace == null || !mounted) return;
+    await _run(
+      AccountAction.logout,
+      () => _actions.logout(
+        deleteSpace: deleteSpace,
+        managesSpaces: managesSpaces,
+      ),
+    );
   }
 
   Future<void> _clearAllData() async {
-    if (_busy) return;
+    if (_state.busy) return;
     final password = await askDestructiveActionPassword(
       context,
       title: '清除全部数据',
@@ -666,128 +418,37 @@ class _AccountPageState extends State<AccountPage> {
           '其他设备会在下次同步时重新上传它们的记录。要彻底清空，请先在其他设备退出登录或分别清除。',
       confirmLabel: '清除',
     );
-    if (password == null || !mounted || _busy) return;
-    setState(() => _busy = true);
-    final scope = AppScope.of(context);
-    try {
-      await scope.clearAllData(password: password);
-      if (!mounted || scope.managesSpaces) return;
-      _report('本机与云端数据已清除，登录状态保留');
-      await _load();
-    } on ServerProblem catch (error, stack) {
-      if (!mounted) return;
-      if (error.isConflict) {
-        _report('该账号还有云端操作在进行，请稍后重试');
-      } else if (error.code == 'invalid_credentials') {
-        _report('密码不正确，请重新输入', failed: true);
-      } else {
-        _report(
-          describeFailure(
-            context,
-            error,
-            stack,
-            action: '清除全部数据',
-            kind: 'account_clear_cloud',
-            kept: '账号保留，自动同步已暂停',
-            next: '可以检查网络后重试清除',
-          ),
-          failed: true,
-          retry: _clearAllData,
-        );
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '清除全部数据',
-          kind: 'account_clear_cloud',
-          kept: '账号保留',
-          next: '可以重试清除，再检查同步状态',
-        ),
-        failed: true,
-        retry: _clearAllData,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (password == null || !mounted) return;
+    final managesSpaces = AppScope.of(context).managesSpaces;
+    await _run(
+      AccountAction.clearAllData,
+      () =>
+          _actions.clearData(password: password, managesSpaces: managesSpaces),
+      retry: _clearAllData,
+    );
   }
 
   Future<void> _deleteAccount() async {
-    if (_busy) return;
-    final account = AppScope.of(context).accountServices.account;
-    // 即刻收按账号标识记余额，删号之后这份积分无人可用；确认删除之前先读一次
-    // 余额，只在已确认登录方式的账号上尝试。旧版实例没有购买接口、未确认登录
-    // 方式的账号会收到 403，这些情况都按余额未知处理，不阻塞删除。
-    int? balancePoints;
-    if (_snapshot?.contactVerified == true) {
-      final epoch = account.identityEpoch;
-      setState(() => _busy = true);
-      try {
-        final overview = await account.quotaPurchases();
-        // 余额暂时查不到时按未知处理，不拿 0 去说明剩余积分。
-        balancePoints = overview.balanceUnavailable
-            ? null
-            : overview.balancePoints;
-      } catch (_) {
-        // 读不到余额只影响提示，删除流程照常继续。
-      } finally {
-        if (mounted) setState(() => _busy = false);
-      }
-      // 读取期间换了账号或实例：这份余额不属于要删除的账号，回到页面重新来过。
-      if (!mounted || account.identityEpoch != epoch) return;
-    }
+    if (_state.busy) return;
+    // 即刻收按账号标识记余额，删号之后这份积分无人可用：确认删除之前先读一次
+    // 余额；读不到按未知处理，不拿 0 去说明剩余积分，也不阻塞删除。
+    final balancePoints = await _actions.remainingPointsBeforeDelete(
+      contactVerified: _snapshot?.contactVerified ?? false,
+    );
+    if (!mounted) return;
     final password = await askDeleteAccountPassword(
       context,
       remainingPoints: balancePoints,
     );
-    if (password == null || !mounted || _busy) return;
-    setState(() => _busy = true);
-    try {
-      final scope = AppScope.of(context);
-      await scope.accountServices.account.deleteAccount(password: password);
-      if (!mounted || scope.managesSpaces) return;
-      await scope.accountServices.sync.clearState();
-      _report('账号与云端数据已删除；本机记录仍在');
-      await _load();
-    } on ServerProblem catch (error, stack) {
-      if (!mounted) return;
-      if (error.code == 'invalid_credentials') {
-        // 只是重新认证失败：会话与页面保持原样，可以再输入一次密码。
-        _report('密码不正确；账号与云端数据没有改动，登录状态保留', failed: true);
-      } else {
-        _report(
-          describeFailure(
-            context,
-            error,
-            stack,
-            action: '删除账号',
-            kind: 'account_delete',
-            kept: '账号与云端数据没有改动',
-            next: '可以检查网络后重试',
-          ),
-          failed: true,
-        );
-      }
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '删除账号',
-          kind: 'account_delete',
-          kept: '账号与云端数据没有改动',
-          next: '可以检查网络后重试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    if (password == null || !mounted) return;
+    final managesSpaces = AppScope.of(context).managesSpaces;
+    await _run(
+      AccountAction.deleteAccount,
+      () => _actions.deleteAccount(
+        password: password,
+        managesSpaces: managesSpaces,
+      ),
+    );
   }
 
   Future<void> _setAutoSync(bool value) async {
@@ -798,17 +459,12 @@ class _AccountPageState extends State<AccountPage> {
       );
       if (!confirmed || !mounted) return;
     }
+    final account = AppScope.of(context).accountServices.account;
     try {
-      await AppScope.of(context).accountServices.account.setAutoSync(value);
+      // 快照由服务保存之后给出：页面不再自己拼一份，登录方式与额度入口都还在。
+      final snapshot = await account.withAutoSync(value);
       if (!mounted) return;
-      setState(
-        () => _snapshot = AccountSnapshot(
-          serverBaseUrl: _snapshot?.serverBaseUrl ?? '',
-          session: _snapshot?.session,
-          autoSync: value,
-          usesDefaultServer: _snapshot?.usesDefaultServer ?? false,
-        ),
-      );
+      setState(() => _snapshot = snapshot);
       if (value) {
         await AppScope.of(context).accountServices.sync
             .schedule(delay: const Duration(seconds: 1));
@@ -888,13 +544,8 @@ class _AccountPageState extends State<AccountPage> {
     return ListView(
       padding: theme.space.pageInsets(bottom: 96),
       children: [
-        if (_notice != null)
-          _failed
-              ? InlineNotice(message: _notice!, onRetry: _noticeRetry)
-              : Padding(
-                  padding: EdgeInsets.only(bottom: theme.space.md),
-                  child: Text(_notice!, style: theme.text.bodySmall),
-                ),
+        if (_notice case final notice?)
+          ResultNotice(message: notice, failed: _failed, onRetry: _noticeRetry),
         if (!focused && _spaces.isNotEmpty) ..._localSpaces(context),
         if (!signedIn) ..._loggedOut(context),
         if (signedIn) ..._loggedIn(context, snapshot!),
@@ -919,11 +570,9 @@ class _AccountPageState extends State<AccountPage> {
           title: Text(
             space.id == scope.spaceId ? '${space.label}（当前）' : space.label,
           ),
-          subtitle: Text(
-            '${(space.bytes / (1024 * 1024)).toStringAsFixed(1)} MiB',
-          ),
+          subtitle: Text(formatBytes(space.bytes)),
           suffix: const Icon(FLucideIcons.trash2),
-          onPress: _busy ? null : () => _deleteLocalSpace(space),
+          onPress: _state.busy ? null : () => _deleteLocalSpace(space),
         ),
     ];
   }
@@ -937,27 +586,15 @@ class _AccountPageState extends State<AccountPage> {
       confirmLabel: '删除本机空间',
       destructive: true,
     );
-    if (!confirmed || !mounted || _busy) return;
-    setState(() => _busy = true);
-    try {
-      await scope.deleteLocalSpace(space.id);
-      if (mounted && space.id != scope.spaceId) await _load();
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '删除本机空间',
-          kind: 'account_delete_local_space',
-          kept: '云端数据保留',
-          next: '可以稍后重试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
+    if (!confirmed || !mounted) return;
+    await _run(
+      AccountAction.deleteLocalSpace,
+      () =>
+          _actions.deleteLocalSpaceById(spaceId: space.id, label: space.label),
+    );
+    // 删掉的是别的空间：当前空间的内容不变，不需要重读；当前空间在应用根里换掉。
+    if (mounted && space.id != scope.spaceId) {
+      unawaited(_load(keepNotice: true));
     }
   }
 
@@ -993,11 +630,9 @@ class _AccountPageState extends State<AccountPage> {
     identifier: _identifier,
     onSignedIn: _signedIn,
     onForgotPassword: () {
-      setState(() {
-        _showReset = true;
-        _codeSent = false;
-        _clearResendCooldown();
-      });
+      setState(() => _showReset = true);
+      _actions.clearCode();
+      _actions.clearCooldown();
       _report('先点“发送验证码”，再填写邮件里的六位数字');
     },
   );
@@ -1005,6 +640,7 @@ class _AccountPageState extends State<AccountPage> {
   /// 找回密码的表单；邮箱与登录卡共用同一个输入框控制器。
   Widget _resetForm(BuildContext context) {
     final theme = context.zhixin;
+    final codeSent = _state.codeSentFor(AccountAction.sendResetCode);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1014,7 +650,7 @@ class _AccountPageState extends State<AccountPage> {
           label: const Text('邮箱'),
         ),
         SizedBox(height: theme.space.gap),
-        if (_codeSent) ...[
+        if (codeSent) ...[
           forui.FTextField(
             control: .managed(controller: _resetCode),
             keyboardType: TextInputType.number,
@@ -1032,23 +668,26 @@ class _AccountPageState extends State<AccountPage> {
           spacing: theme.space.sm,
           runSpacing: theme.space.sm,
           children: [
-            _sendCodeButton(send: _sendResetCode),
-            if (_codeSent)
+            _sendCodeButton(
+              action: AccountAction.sendResetCode,
+              send: _sendResetCode,
+            ),
+            if (codeSent)
               forui.FButton(
                 variant: forui.FButtonVariant.outline,
                 mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : _resetPassword,
+                onPress: _state.busy ? null : _resetPassword,
                 child: const Text('重设密码'),
               ),
             forui.FButton(
               variant: forui.FButtonVariant.ghost,
               mainAxisSize: MainAxisSize.min,
-              onPress: _busy
+              onPress: _state.busy
                   ? null
                   : () => setState(() {
                       _showReset = false;
-                      _codeSent = false;
-                      _clearResendCooldown();
+                      _actions.clearCode();
+                      _actions.clearCooldown();
                       _resetCode.clear();
                       _newPassword.clear();
                     }),
@@ -1056,7 +695,7 @@ class _AccountPageState extends State<AccountPage> {
             ),
           ],
         ),
-        if (_codeSent) ...[
+        if (codeSent) ...[
           SizedBox(height: theme.space.sm),
           Text(
             '没收到先看垃圾邮件；同一条登录方式一分钟内只能发一封，反复重发要等几小时。',
@@ -1105,6 +744,8 @@ class _AccountPageState extends State<AccountPage> {
   List<Widget> _loggedIn(BuildContext context, AccountSnapshot snapshot) {
     final theme = context.zhixin;
     final sync = _sync;
+    // 确认登录方式的卡片用这一份：验证码只对“确认登录方式”那一次流程生效。
+    final codeSent = _state.codeSentFor(AccountAction.sendIdentityCode);
     return [
       SectionHeading(
         title: '账号',
@@ -1166,7 +807,7 @@ class _AccountPageState extends State<AccountPage> {
                 label: const Text('自动同步'),
                 description: const Text('写入之后在后台推送；关闭后只在上面的“立即同步”里执行。'),
                 value: snapshot.autoSync,
-                onChange: _busy ? null : _setAutoSync,
+                onChange: _state.busy ? null : _setAutoSync,
               ),
             ],
           ),
@@ -1187,29 +828,32 @@ class _AccountPageState extends State<AccountPage> {
                   '${_unverifiedIdentity!.kindLabel} ${_unverifiedIdentity!.identifier}',
                   style: theme.text.bodyMedium,
                 ),
-                if (_codeSent) SizedBox(height: theme.space.md),
-                if (_codeSent)
+                if (codeSent) SizedBox(height: theme.space.md),
+                if (codeSent)
                   forui.FTextField(
                     control: .managed(controller: _verifyCode),
                     keyboardType: TextInputType.number,
                     label: const Text('邮件里的六位验证码'),
                   ),
-                if (_codeSent) SizedBox(height: theme.space.md),
+                if (codeSent) SizedBox(height: theme.space.md),
                 Wrap(
                   spacing: theme.space.sm,
                   runSpacing: theme.space.sm,
                   children: [
-                    _sendCodeButton(send: _sendVerification),
-                    if (_codeSent)
+                    _sendCodeButton(
+                      action: AccountAction.sendIdentityCode,
+                      send: _sendVerification,
+                    ),
+                    if (codeSent)
                       forui.FButton(
                         variant: forui.FButtonVariant.outline,
                         mainAxisSize: MainAxisSize.min,
-                        onPress: _busy ? null : _confirmVerification,
+                        onPress: _state.busy ? null : _confirmVerification,
                         child: const Text('确认'),
                       ),
                   ],
                 ),
-                if (_codeSent) ...[
+                if (codeSent) ...[
                   SizedBox(height: theme.space.sm),
                   Text(
                     '没收到先看垃圾邮件；同一条登录方式一分钟内只能发一封，反复重发要等几小时。',
@@ -1268,7 +912,7 @@ class _AccountPageState extends State<AccountPage> {
                 forui.FButton(
                   variant: forui.FButtonVariant.outline,
                   mainAxisSize: MainAxisSize.min,
-                  onPress: _busy || sync.syncing
+                  onPress: _state.busy || sync.syncing
                       ? null
                       : _rebuildCloudFromLocal,
                   child: const Text('以本机为准重建云端'),
@@ -1298,7 +942,7 @@ class _AccountPageState extends State<AccountPage> {
                 SizedBox(height: theme.space.sm),
                 InlineNotice(
                   message: sync!.lastError!,
-                  onRetry: _busy ? null : _syncNow,
+                  onRetry: _state.busy ? null : _syncNow,
                 ),
               ],
               SizedBox(height: theme.space.md),
@@ -1308,14 +952,18 @@ class _AccountPageState extends State<AccountPage> {
                 children: [
                   forui.FButton(
                     mainAxisSize: MainAxisSize.min,
-                    onPress: _busy || sync?.syncing == true ? null : _syncNow,
+                    onPress: _state.busy || sync?.syncing == true
+                        ? null
+                        : _syncNow,
                     prefix: const Icon(FLucideIcons.refreshCw),
                     child: const Text('立即同步'),
                   ),
                   forui.FButton(
                     variant: forui.FButtonVariant.outline,
                     mainAxisSize: MainAxisSize.min,
-                    onPress: _busy ? null : () => openCloudBackup(context),
+                    onPress: _state.busy
+                        ? null
+                        : () => openCloudBackup(context),
                     child: const Text('云端备份'),
                   ),
                 ],
@@ -1363,7 +1011,7 @@ class _AccountPageState extends State<AccountPage> {
         QuotaPurchasePanel(
           key: ValueKey((_snapshot!.serverBaseUrl, _snapshot!.session!.userId)),
           account: AppScope.of(context).accountServices.account,
-          enabled: !_busy,
+          enabled: !_state.busy,
           dailyTokens: _quota?.dailyTokens,
           onPaid: _load,
         ),
@@ -1374,7 +1022,7 @@ class _AccountPageState extends State<AccountPage> {
         title: const Text('清除全部数据'),
         subtitle: const Text('清空当前本机空间和云端数据，保留账号与登录状态。'),
         suffix: const Icon(FLucideIcons.trash2),
-        onPress: _busy ? null : _clearAllData,
+        onPress: _state.busy ? null : _clearAllData,
       ),
       SizedBox(height: theme.space.sm),
       forui.FTile(
@@ -1383,7 +1031,7 @@ class _AccountPageState extends State<AccountPage> {
         title: const Text('删除账号'),
         subtitle: const Text('删除账号、云端数据及这个账号的本机空间。'),
         suffix: const Icon(FLucideIcons.trash2),
-        onPress: _busy ? null : _deleteAccount,
+        onPress: _state.busy ? null : _deleteAccount,
       ),
       SizedBox(height: theme.space.md),
       forui.FTile(
@@ -1391,7 +1039,7 @@ class _AccountPageState extends State<AccountPage> {
         title: const Text('退出登录'),
         subtitle: const Text('退出这台设备；云端数据保留，下次登录可以继续同步。'),
         suffix: const Icon(FLucideIcons.chevronRight),
-        onPress: _busy ? null : _logout,
+        onPress: _state.busy ? null : _logout,
       ),
     ];
   }
@@ -1464,7 +1112,7 @@ class _AccountPageState extends State<AccountPage> {
                   ],
                 ),
                 Text(
-                  '${_maskedDeviceId(device.deviceId)} · ${_deviceSeen(device.lastSeen)}',
+                  '${maskedDeviceId(device.deviceId)} · ${_deviceSeen(device.lastSeen)}',
                   style: theme.text.bodySmall.copyWith(
                     color: theme.colors.onSurfaceVariant,
                   ),
@@ -1477,7 +1125,7 @@ class _AccountPageState extends State<AccountPage> {
             variant: forui.FButtonVariant.outline,
             size: forui.FButtonSizeVariant.sm,
             mainAxisSize: MainAxisSize.min,
-            onPress: _busy ? null : () => _renameDevice(device),
+            onPress: _state.busy ? null : () => _renameDevice(device),
             child: const Text('改名'),
           ),
         ],
@@ -1489,44 +1137,17 @@ class _AccountPageState extends State<AccountPage> {
   ///
   /// 取消不改动；失败按统一的失败说明提示，同步缓存保持原样（ADR-0048）。
   Future<void> _renameDevice(SyncRosterDevice device) async {
-    if (_busy) return;
+    if (_state.busy) return;
     final alias = await promptDeviceAlias(
       context,
       currentAlias: device.trimmedAlias,
     );
     if (alias == null || !mounted) return;
-    setState(() => _busy = true);
-    try {
-      await AppScope.of(context).accountServices.sync
-          .renameDevice(device.deviceId, alias);
-      if (!mounted) return;
-      final trimmed = alias.trim();
-      _report(trimmed.isEmpty ? '已清除这台设备的别名' : '已把设备名改为“$trimmed”');
-      // 改名接口返回的设备对象已经替换缓存里这一行，重绘列表现出来新的别名。
-      setState(() {});
-    } catch (error, stack) {
-      if (!mounted) return;
-      _report(
-        describeFailure(
-          context,
-          error,
-          stack,
-          action: '改设备名',
-          kind: 'account_device_rename',
-          kept: '设备名没有改动',
-          next: '可以稍后再试',
-        ),
-        failed: true,
-      );
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  /// 设备标识只露前 8 位，短的标识原样显示。
-  static String _maskedDeviceId(String deviceId) {
-    final value = deviceId.trim();
-    return value.length <= 8 ? value : value.substring(0, 8);
+    // 改名接口已经替换缓存里这一行，结论给出后的重绘就带出新别名。
+    await _run(
+      AccountAction.renameDevice,
+      () => _actions.renameDevice(deviceId: device.deviceId, alias: alias),
+    );
   }
 
   /// 最近出现时间：读不出时写“时间未知”，与提交列表同一套短时间格式。

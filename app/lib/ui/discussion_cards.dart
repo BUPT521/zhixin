@@ -8,6 +8,7 @@ import '../application/buddy_actions.dart';
 import '../application/discussion_service.dart';
 import '../application/memory_view.dart';
 import '../domain/models/buddy_protocol.dart';
+import '../domain/models/memory.dart' show MemorySourceKind;
 import '../domain/rules/time_format.dart';
 import 'discussion_message.dart';
 import 'workspace_widgets.dart';
@@ -42,7 +43,12 @@ class MemoryCard extends StatelessWidget {
     final theme = context.zhixin;
     final draft = item.draft;
     final pending = item.pending;
-    final source = draft.source == MemorySource.user ? '你说的' : '模型推断';
+    // 来源用领域标签：卡片与记忆页对同一条记忆说同一个词。
+    final source =
+        (draft.source == MemorySource.user
+                ? MemorySourceKind.user
+                : MemorySourceKind.message)
+            .label;
     final valid = draft.validUntil == null
         ? '长期有效'
         : '有效至 ${formatDate(draft.validUntil!)}';
