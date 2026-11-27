@@ -49,26 +49,32 @@ class SemanticSource {
   final DateTime? updatedAt;
 }
 
-/// 一批用户查找候选继续向后读取的位置；每种来源分别记主键或提交时间。
+/// 材料页的排序键：`(material_id DESC, page_no ASC)`，续读用同一组键。
+typedef MaterialPageSortKey = ({String materialId, int pageNo});
+
+/// 已提交作答的排序键：`(submitted_at DESC, id DESC)`，续读用同一组键。
+typedef AnswerSortKey = ({DateTime submittedAt, String attemptId});
+
+/// 一批用户查找候选继续向后读取的位置；每种来源分别记排序键或主键。
+///
+/// 一项为空表示这一类这一批没有读到过任何记录：查询因此不再加“往后读”的条件，
+/// 也不会重复读到已经返回的记录。某类先读完时沿用上一批的位置，不再用空字符串
+/// 与 `'0000'` 这类哨兵表示“已读完”，时间是 [DateTime] 而不是本地格式文本。
 class SearchCursor {
   const SearchCursor({
     this.materialPage,
     this.messageId,
     this.questionId,
-    this.answerSubmittedAt,
-    this.answerId,
+    this.answer,
   });
 
-  /// 材料页按 `(material_id DESC, page_no ASC)` 读出，记住最后一次的位置。
-  final (String, int)? materialPage;
+  final MaterialPageSortKey? materialPage;
 
   /// 消息与题目按主键倒序读出。
   final String? messageId;
   final String? questionId;
 
-  /// 已提交作答按 `(submitted_at DESC, id DESC)` 读出。
-  final String? answerSubmittedAt;
-  final String? answerId;
+  final AnswerSortKey? answer;
 }
 
 /// 一批用户查找候选；[cursor] 为空表示四类来源都已经读完。
@@ -109,34 +115,41 @@ class EvidenceRepository {
   }) async {
     final text = query.trim();
     if (text.isEmpty) return const [];
+    final pages = await _pages(
+      text,
+      scope,
+      limit: limitPerKind,
+      excludePage: excludePage,
+    );
+    final messages = await _messages(
+      text,
+      scope,
+      limit: limitPerKind,
+      excludeConversationId: excludeConversationId,
+    );
+    final questions = await _questions(text, scope, limit: limitPerKind);
+    final answers = await _answers(
+      text,
+      scope,
+      limit: limitPerKind,
+      excludeConversationId: excludeConversationId,
+    );
     return [
-      ...await _pages(
-        text,
-        scope,
-        limit: limitPerKind,
-        excludePage: excludePage,
-      ),
-      ...await _messages(
-        text,
-        scope,
-        limit: limitPerKind,
-        excludeConversationId: excludeConversationId,
-      ),
-      ...await _questions(text, scope, limit: limitPerKind),
-      ...await _answers(
-        text,
-        scope,
-        limit: limitPerKind,
-        excludeConversationId: excludeConversationId,
-      ),
+      ...pages.hits,
+      ...messages.hits,
+      ...questions.hits,
+      ...answers.hits,
     ];
   }
 
   /// 分批读取用户查找的候选：每类来源最多读 [batchSize] 条，从 [after] 之后
   /// 继续，返回这一批命中和下一次继续的位置。
   ///
-  /// 四类来源共用同一个游标对象，但各自按自己的主键或提交时间向后读；某一类
-  /// 先读完时，游标仍指向它最后一条，下一次查询因此不会再读到重复记录。只有
+  /// 四类来源共用同一个游标对象，但各自按自己的排序键向后读：材料页按
+  /// `(material_id DESC, page_no ASC)`，消息与题目按主键倒序，已提交作答按
+  /// `(submitted_at DESC, id DESC)`。续读位置取这一批实际返回的最后一条的排序
+  /// 键；某一类这一批没有记录时沿用上一批的位置，因此不会重复读到已经返回过的
+  /// 记录，也不再用空字符串、`'0000'` 或 `('', 0)` 表示“这一类已读完”。只有
   /// 至少一类还有更多候选时才返回游标，四类都读完时游标为空。
   Future<EvidenceSearchPage> searchBatch(
     String query, {
@@ -183,10 +196,10 @@ class EvidenceRepository {
       return rows.sublist(0, batchSize);
     }
 
-    final pagedPages = take(pages);
-    final pagedMessages = take(messages);
-    final pagedQuestions = take(questions);
-    final pagedAnswers = take(answers);
+    final pagedPages = take(pages.hits);
+    final pagedMessages = take(messages.hits);
+    final pagedQuestions = take(questions.hits);
+    final pagedAnswers = take(answers.hits);
     final hits = <EvidenceHit>[
       ...pagedPages,
       ...pagedMessages,
@@ -198,23 +211,17 @@ class EvidenceRepository {
       hits: hits,
       cursor: SearchCursor(
         materialPage: pagedPages.isEmpty
-            ? const ('', 0)
-            : (
-                pagedPages.last.location.materialId!,
-                pagedPages.last.location.pageNo!,
-              ),
+            ? after?.materialPage
+            : pages.keys[pagedPages.length - 1],
         messageId: pagedMessages.isEmpty
-            ? ''
-            : pagedMessages.last.location.messageId,
+            ? after?.messageId
+            : messages.keys[pagedMessages.length - 1],
         questionId: pagedQuestions.isEmpty
-            ? ''
-            : pagedQuestions.last.location.conversationId,
-        answerSubmittedAt: pagedAnswers.isEmpty
-            ? '0000'
-            : formatDateTime(pagedAnswers.last.createdAt!),
-        answerId: pagedAnswers.isEmpty
-            ? ''
-            : pagedAnswers.last.location.attemptId,
+            ? after?.questionId
+            : questions.keys[pagedQuestions.length - 1],
+        answer: pagedAnswers.isEmpty
+            ? after?.answer
+            : answers.keys[pagedAnswers.length - 1],
       ),
     );
   }
@@ -716,7 +723,7 @@ class EvidenceRepository {
   Future<bool> inScope(EvidenceHit hit, EvidenceScope scope) =>
       _db.selectGenerated((db) => hitInScope(db, hit, scope));
 
-  Future<List<EvidenceHit>> _pages(
+  Future<({List<EvidenceHit> hits, List<MaterialPageSortKey> keys})> _pages(
     String text,
     EvidenceScope scope, {
     required int limit,
@@ -729,12 +736,10 @@ class EvidenceRepository {
       before.add('NOT (mp.material_id = ? AND mp.page_no = ?)');
       beforeArgs.addAll([excludePage.$1, excludePage.$2]);
     }
-    final pageAfter = after?.materialPage;
-    if (pageAfter != null) {
-      before.add(
-        '(mp.material_id < ? OR (mp.material_id = ? AND mp.page_no > ?))',
-      );
-      beforeArgs.addAll([pageAfter.$1, pageAfter.$1, pageAfter.$2]);
+    final pageAfter = _materialPageAfter(after?.materialPage);
+    if (pageAfter.sql.isNotEmpty) {
+      before.add(pageAfter.sql);
+      beforeArgs.addAll(pageAfter.values);
     }
     final (match, matchArgs) = _literalMatch([
       'mp.content',
@@ -764,7 +769,7 @@ class EvidenceRepository {
             'mp.updated_at, m.title AS material_title, m.source_file_name '
             'FROM material_page mp JOIN material m ON m.id = mp.material_id '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY mp.material_id DESC, mp.page_no '
+            'ORDER BY $_materialPageOrder '
             'LIMIT ?',
             variables: [
               for (final value in args) Variable(value),
@@ -773,40 +778,41 @@ class EvidenceRepository {
           )
           .get();
     });
-    return rows
-        .map((row) {
-          final data = row.data;
-          final content = data['content']! as String;
-          final label = data['label'] as String?;
-          final pageNo = data['page_no']! as int;
-          final materialId = data['material_id']! as String;
-          final offset = _literalOffset(content, label, text);
-          return EvidenceHit(
-            kind: EvidenceKind.materialPage,
-            identity: EvidenceId.materialPage(materialId, pageNo).value,
-            title:
-                '《${data['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(data['source_file_name'] as String?))}',
-            snippet: searchSnippet(content, [text]),
-            text: content,
-            matchedText: _matchedText(content, text, offset),
-            literal: true,
-            score: literalMatchScore(
-              offset: offset,
-              textLength: content.length,
-            ),
-            location: EvidenceLocation(
-              materialId: materialId,
-              pageNo: pageNo,
-              offset: offset,
-            ),
-            sourceVersion: evidenceSourceVersion(content, data['updated_at']),
-            createdAt: optionalDateTime('${data['updated_at'] ?? ''}'),
-          );
-        })
-        .toList(growable: false);
+    final hits = <EvidenceHit>[];
+    final keys = <MaterialPageSortKey>[];
+    for (final row in rows) {
+      final data = row.data;
+      final content = data['content']! as String;
+      final label = data['label'] as String?;
+      final pageNo = data['page_no']! as int;
+      final materialId = data['material_id']! as String;
+      final offset = _literalOffset(content, label, text);
+      keys.add((materialId: materialId, pageNo: pageNo));
+      hits.add(
+        EvidenceHit(
+          kind: EvidenceKind.materialPage,
+          identity: EvidenceId.materialPage(materialId, pageNo).value,
+          title:
+              '《${data['material_title']}》${materialPosition(pageNo, isDocx: isDocxFile(data['source_file_name'] as String?))}',
+          snippet: searchSnippet(content, [text]),
+          text: content,
+          matchedText: _matchedText(content, text, offset),
+          literal: true,
+          score: literalMatchScore(offset: offset, textLength: content.length),
+          location: EvidenceLocation(
+            materialId: materialId,
+            pageNo: pageNo,
+            offset: offset,
+          ),
+          sourceVersion: evidenceSourceVersion(content, data['updated_at']),
+          createdAt: optionalDateTime('${data['updated_at'] ?? ''}'),
+        ),
+      );
+    }
+    return (hits: hits, keys: keys);
   }
 
-  Future<List<EvidenceHit>> _messages(
+  Future<({List<EvidenceHit> hits, List<String> keys})> _messages(
     String text,
     EvidenceScope scope, {
     required int limit,
@@ -822,9 +828,10 @@ class EvidenceRepository {
       before.add('m.conversation_id != ?');
       beforeArgs.add(excludeConversationId);
     }
-    if (after != null) {
-      before.add('m.id < ?');
-      beforeArgs.add(after.messageId ?? '');
+    final messageAfter = _idAfter('m.id', after?.messageId);
+    if (messageAfter.sql.isNotEmpty) {
+      before.add(messageAfter.sql);
+      beforeArgs.addAll(messageAfter.values);
     }
     final (match, matchArgs) = _literalMatch(['m.content'], text);
     final rows = await _db.selectGenerated((db) async {
@@ -850,7 +857,7 @@ class EvidenceRepository {
             'SELECT m.id, m.conversation_id, m.content, m.created_at, c.title '
             'FROM message m JOIN conversation c ON c.id = m.conversation_id '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY m.id DESC LIMIT ?',
+            'ORDER BY $_messageOrder LIMIT ?',
             variables: [
               for (final value in args) Variable(value),
               Variable<int>(limit),
@@ -858,38 +865,39 @@ class EvidenceRepository {
           )
           .get();
     });
-    return rows
-        .map((row) {
-          final data = row.data;
-          final content = data['content']! as String;
-          final messageId = data['id']! as String;
-          final conversationId = data['conversation_id']! as String;
-          final offset = _literalOffset(content, null, text);
-          return EvidenceHit(
-            kind: EvidenceKind.message,
-            identity: EvidenceId.message(messageId).value,
-            title: (data['title'] as String?) ?? '一次讨论',
-            snippet: searchSnippet(content, [text]),
-            text: content,
-            matchedText: _matchedText(content, text, offset),
-            literal: true,
-            score: literalMatchScore(
-              offset: offset,
-              textLength: content.length,
-            ),
-            location: EvidenceLocation(
-              conversationId: conversationId,
-              messageId: messageId,
-              offset: offset,
-            ),
-            sourceVersion: evidenceSourceVersion(content, data['created_at']),
-            createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
-          );
-        })
-        .toList(growable: false);
+    final hits = <EvidenceHit>[];
+    final keys = <String>[];
+    for (final row in rows) {
+      final data = row.data;
+      final content = data['content']! as String;
+      final messageId = data['id']! as String;
+      final conversationId = data['conversation_id']! as String;
+      final offset = _literalOffset(content, null, text);
+      keys.add(messageId);
+      hits.add(
+        EvidenceHit(
+          kind: EvidenceKind.message,
+          identity: EvidenceId.message(messageId).value,
+          title: (data['title'] as String?) ?? '一次讨论',
+          snippet: searchSnippet(content, [text]),
+          text: content,
+          matchedText: _matchedText(content, text, offset),
+          literal: true,
+          score: literalMatchScore(offset: offset, textLength: content.length),
+          location: EvidenceLocation(
+            conversationId: conversationId,
+            messageId: messageId,
+            offset: offset,
+          ),
+          sourceVersion: evidenceSourceVersion(content, data['created_at']),
+          createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
+        ),
+      );
+    }
+    return (hits: hits, keys: keys);
   }
 
-  Future<List<EvidenceHit>> _questions(
+  Future<({List<EvidenceHit> hits, List<String> keys})> _questions(
     String text,
     EvidenceScope scope, {
     required int limit,
@@ -899,9 +907,10 @@ class EvidenceRepository {
       'EXISTS (SELECT 1 FROM attempt a WHERE a.conversation_id = c.id)',
     ];
     final beforeArgs = <Object>[];
-    if (after != null) {
-      before.add('c.id < ?');
-      beforeArgs.add(after.questionId ?? '');
+    final questionAfter = _idAfter('c.id', after?.questionId);
+    if (questionAfter.sql.isNotEmpty) {
+      before.add(questionAfter.sql);
+      beforeArgs.addAll(questionAfter.values);
     }
     final (match, matchArgs) = _literalMatch([
       "COALESCE($_firstUserContent, '')",
@@ -932,7 +941,7 @@ class EvidenceRepository {
             'c.page_no, c.created_at, c.updated_at '
             'FROM conversation c '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY c.id DESC LIMIT ?',
+            'ORDER BY $_questionOrder LIMIT ?',
             variables: [
               for (final value in args) Variable(value),
               Variable<int>(limit),
@@ -940,49 +949,53 @@ class EvidenceRepository {
           )
           .get();
     });
-    return rows
-        .map((row) {
-          final data = row.data;
-          final sourceRef = data['source_ref'] as String?;
-          final context = (data['context_text'] as String?) ?? '';
-          final stem = (data['stem'] as String?) ?? '';
-          final content = '$stem\n${sourceRef ?? ''}';
-          final offset = _literalOffset(
+    final hits = <EvidenceHit>[];
+    final keys = <String>[];
+    for (final row in rows) {
+      final data = row.data;
+      final sourceRef = data['source_ref'] as String?;
+      final context = (data['context_text'] as String?) ?? '';
+      final stem = (data['stem'] as String?) ?? '';
+      final content = '$stem\n${sourceRef ?? ''}';
+      final offset = _literalOffset(
+        '$stem\n${sourceRef ?? ''}\n$context',
+        null,
+        text,
+      );
+      final conversationId = data['conversation_id']! as String;
+      keys.add(conversationId);
+      hits.add(
+        EvidenceHit(
+          kind: EvidenceKind.question,
+          identity: EvidenceId.question(conversationId).value,
+          title: _conversationTitle(sourceRef, data['title'] as String?),
+          snippet: searchSnippet(content, [text]),
+          text: content,
+          matchedText: _matchedText(content, text, offset),
+          literal: true,
+          score: literalMatchScore(
+            offset: offset,
+            textLength: content.length,
+            kindPriority: 2,
+          ),
+          location: EvidenceLocation(
+            conversationId: conversationId,
+            messageId: data['question_message_id'] as String?,
+            offset: offset,
+          ),
+          sourceVersion: evidenceSourceVersion(
             '$stem\n${sourceRef ?? ''}\n$context',
-            null,
-            text,
-          );
-          final conversationId = data['conversation_id']! as String;
-          return EvidenceHit(
-            kind: EvidenceKind.question,
-            identity: EvidenceId.question(conversationId).value,
-            title: _conversationTitle(sourceRef, data['title'] as String?),
-            snippet: searchSnippet(content, [text]),
-            text: content,
-            matchedText: _matchedText(content, text, offset),
-            literal: true,
-            score: literalMatchScore(
-              offset: offset,
-              textLength: content.length,
-              kindPriority: 2,
-            ),
-            location: EvidenceLocation(
-              conversationId: conversationId,
-              messageId: data['question_message_id'] as String?,
-              offset: offset,
-            ),
-            sourceVersion: evidenceSourceVersion(
-              '$stem\n${sourceRef ?? ''}\n$context',
-              data['updated_at'],
-            ),
-            createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
-            sourceRef: sourceRef,
-          );
-        })
-        .toList(growable: false);
+            data['updated_at'],
+          ),
+          createdAt: optionalDateTime('${data['created_at'] ?? ''}'),
+          sourceRef: sourceRef,
+        ),
+      );
+    }
+    return (hits: hits, keys: keys);
   }
 
-  Future<List<EvidenceHit>> _answers(
+  Future<({List<EvidenceHit> hits, List<AnswerSortKey> keys})> _answers(
     String text,
     EvidenceScope scope, {
     required int limit,
@@ -995,11 +1008,10 @@ class EvidenceRepository {
       before.add('a.conversation_id != ?');
       beforeArgs.add(excludeConversationId);
     }
-    final submittedAfter = after?.answerSubmittedAt;
-    if (submittedAfter != null) {
-      final answerId = after!.answerId ?? '';
-      before.add('(a.submitted_at < ? OR (a.submitted_at = ? AND a.id < ?))');
-      beforeArgs.addAll([submittedAfter, submittedAfter, answerId]);
+    final submittedAfter = _answerAfter(after?.answer);
+    if (submittedAfter.sql.isNotEmpty) {
+      before.add(submittedAfter.sql);
+      beforeArgs.addAll(submittedAfter.values);
     }
     final (match, matchArgs) = _literalMatch([
       "COALESCE(a.user_answer, '')",
@@ -1030,7 +1042,7 @@ class EvidenceRepository {
             'a.feedback, a.submitted_at, c.title, c.source_ref '
             'FROM attempt a JOIN conversation c ON c.id = a.conversation_id '
             'WHERE ${where.join(' AND ')} '
-            'ORDER BY a.submitted_at DESC, a.id DESC LIMIT ?',
+            'ORDER BY $_answerOrder LIMIT ?',
             variables: [
               for (final value in args) Variable(value),
               Variable<int>(limit),
@@ -1038,40 +1050,47 @@ class EvidenceRepository {
           )
           .get();
     });
-    return rows
-        .map((row) {
-          final data = row.data;
-          final content = answerText(
-            data['user_answer'] as String?,
-            data['solution'] as String?,
-            data['feedback'] as String?,
-          );
-          final offset = _literalOffset(content, null, text);
-          final attemptId = data['id']! as String;
-          return EvidenceHit(
-            kind: EvidenceKind.answer,
-            identity: EvidenceId.attempt(attemptId).value,
-            title: _answerTitle(attemptId),
-            snippet: searchSnippet(content, [text]),
-            text: content,
-            matchedText: _matchedText(content, text, offset),
-            literal: true,
-            score: literalMatchScore(
-              offset: offset,
-              textLength: content.length,
-              kindPriority: 1,
-            ),
-            location: EvidenceLocation(
-              conversationId: data['conversation_id']! as String,
-              attemptId: attemptId,
-              offset: offset,
-            ),
-            sourceVersion: evidenceSourceVersion(content, data['submitted_at']),
-            createdAt: optionalDateTime('${data['submitted_at'] ?? ''}'),
-            sourceRef: data['source_ref'] as String?,
-          );
-        })
-        .toList(growable: false);
+    final hits = <EvidenceHit>[];
+    final keys = <AnswerSortKey>[];
+    for (final row in rows) {
+      final data = row.data;
+      final content = answerText(
+        data['user_answer'] as String?,
+        data['solution'] as String?,
+        data['feedback'] as String?,
+      );
+      final offset = _literalOffset(content, null, text);
+      final attemptId = data['id']! as String;
+      // 查询只读已提交的作答，`submitted_at` 一定有值；坏值照 requiredDateTime
+      // 暴露，不能伪装成一个时刻把翻页位置带错。
+      final submittedAt = requiredDateTime('${data['submitted_at'] ?? ''}');
+      keys.add((submittedAt: submittedAt, attemptId: attemptId));
+      hits.add(
+        EvidenceHit(
+          kind: EvidenceKind.answer,
+          identity: EvidenceId.attempt(attemptId).value,
+          title: _answerTitle(attemptId),
+          snippet: searchSnippet(content, [text]),
+          text: content,
+          matchedText: _matchedText(content, text, offset),
+          literal: true,
+          score: literalMatchScore(
+            offset: offset,
+            textLength: content.length,
+            kindPriority: 1,
+          ),
+          location: EvidenceLocation(
+            conversationId: data['conversation_id']! as String,
+            attemptId: attemptId,
+            offset: offset,
+          ),
+          sourceVersion: evidenceSourceVersion(content, data['submitted_at']),
+          createdAt: submittedAt,
+          sourceRef: data['source_ref'] as String?,
+        ),
+      );
+    }
+    return (hits: hits, keys: keys);
   }
 
   static String _answerTitle(String attemptId) => '一次已提交作答 · 第 $attemptId 条';
@@ -1128,4 +1147,48 @@ class EvidenceRepository {
   static const String _firstUserContent =
       '(SELECT m.content FROM message m WHERE m.conversation_id = c.id '
       "AND m.role = 'user' AND m.id = $_questionMessageId LIMIT 1)";
+}
+
+/// 材料页的排序键：`(material_id DESC, page_no ASC)`。
+///
+/// 排序与续读条件写在一起：翻页条件与 `ORDER BY` 用的是同一组列与方向，改一处
+/// 就同时改另一处，不会出现“按 A 排序、按 B 过滤”而漏行或重复。
+const String _materialPageOrder = 'mp.material_id DESC, mp.page_no';
+
+/// 消息的排序键：主键倒序。
+const String _messageOrder = 'm.id DESC';
+
+/// 题目的排序键：记录主键倒序。
+const String _questionOrder = 'c.id DESC';
+
+/// 已提交作答的排序键：`(submitted_at DESC, id DESC)`。
+const String _answerOrder = 'a.submitted_at DESC, a.id DESC';
+
+/// 材料页的续读条件；游标为空时不加条件，表示这一类还没有读到过记录。
+({String sql, List<Object> values}) _materialPageAfter(
+  MaterialPageSortKey? after,
+) => after == null
+    ? (sql: '', values: const [])
+    : (
+        sql: '(mp.material_id < ? OR (mp.material_id = ? AND mp.page_no > ?))',
+        values: <Object>[after.materialId, after.materialId, after.pageNo],
+      );
+
+/// 按主键倒序的续读条件；游标为空时不加条件。
+({String sql, List<Object> values}) _idAfter(String column, String? after) =>
+    after == null
+    ? (sql: '', values: const [])
+    : (sql: '$column < ?', values: <Object>[after]);
+
+/// 已提交作答的续读条件：先比提交时间，同一时刻再比编号。
+///
+/// 提交时间在 SQL 里仍是 `YYYY-MM-DD HH:MM:SS` 文本，在这里从游标的
+/// [DateTime] 转成同一种格式，比较只发生在这一个函数里。
+({String sql, List<Object> values}) _answerAfter(AnswerSortKey? after) {
+  if (after == null) return (sql: '', values: const []);
+  final submittedAt = formatDateTime(after.submittedAt);
+  return (
+    sql: '(a.submitted_at < ? OR (a.submitted_at = ? AND a.id < ?))',
+    values: <Object>[submittedAt, submittedAt, after.attemptId],
+  );
 }
