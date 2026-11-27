@@ -7,12 +7,10 @@ import (
 	"io"
 )
 
-// ErrTooLarge reports an attachment above the configured size limit.
-var ErrTooLarge = errors.New("blobs: attachment exceeds the size limit")
-
-// Service owns the business rules of attachments: the single-object size limit,
-// the per-account total limit and account scoping. The handler deals with HTTP
-// and hashing; the store keeps bytes and the quota index.
+// Service owns the attachment rules that are not HTTP-level: the per-account
+// total limit and account scoping. The handler deals with HTTP, the content hash
+// and the single-object size limit (checked while spooling); the store keeps
+// bytes and the quota index.
 type Service struct {
 	store        Store
 	maxBytes     int64
@@ -43,15 +41,14 @@ func (s *Service) Open(ctx context.Context, userID, sha string) (io.ReadCloser, 
 	return s.store.Open(ctx, userID, sha)
 }
 
-// Put stores one attachment after the caller has verified the content hash.
+// Put stores one attachment after the caller has verified the content hash and
+// the single-object size limit (SpoolVerified enforces it before the body is
+// handed over).
 //
 // 顺序是先预留配额再写字节：并发上传按预留后的总量判断，后到的一个拿到
 // 413 storage_full，而不是两个都按旧的已用量通过检查、一起把账号写超。保存
 // 失败时回滚预留，配额与索引不会留下一次没写成功的上传。
 func (s *Service) Put(ctx context.Context, userID, sha string, size int64, data io.Reader) error {
-	if size > s.maxBytes {
-		return ErrTooLarge
-	}
 	if _, err := s.store.Reserve(ctx, userID, sha, size, s.accountBytes); err != nil {
 		return err
 	}

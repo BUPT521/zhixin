@@ -12,8 +12,8 @@ import (
 )
 
 // Handler 提供 /v1/blobs/{sha256} 的上传、下载与存在检查。附件按内容寻址，
-// 路径里的 sha256 就是内容的哈希；handler 核对哈希与协议，大小与账号范围由
-// Service 负责。
+// 路径里的 sha256 就是内容的哈希；handler 核对哈希、协议与单附件大小上限，
+// 账号总量与范围由 Service 负责。
 type Handler struct {
 	svc *Service
 	log *slog.Logger
@@ -91,10 +91,6 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	if err := h.svc.Put(r.Context(), p.UserID, sha, spool.Size, data); err != nil {
-		if errors.Is(err, ErrTooLarge) {
-			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "attachment is too large")
-			return
-		}
 		// 账号总量超限时给出已用量与上限：客户端据此提示用户先删附件，而不是
 		// 反复重试同一个请求（契约的 extra 字段）。
 		var full *StorageFullError

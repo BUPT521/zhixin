@@ -15,8 +15,9 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 )
 
-// Handler exposes /v1/backups. It only translates HTTP into service calls;
-// schema, size and retention rules live in Service.
+// Handler exposes /v1/backups. It checks the HTTP-level rules (schema version
+// and the exact body size while spooling) and otherwise only translates HTTP
+// into service calls; device-name cleaning and retention live in Service.
 type Handler struct {
 	svc *Service
 	log *slog.Logger
@@ -95,15 +96,6 @@ func (h *Handler) Upload(w http.ResponseWriter, r *http.Request, params api.Post
 		body,
 	)
 	if err != nil {
-		if errors.Is(err, ErrSchemaVersion) {
-			httpx.WriteProblemExtra(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest,
-				"schema version does not match the server", map[string]any{"schema_version": h.svc.SchemaVersion()})
-			return
-		}
-		if errors.Is(err, ErrTooLarge) {
-			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, tooLarge)
-			return
-		}
 		httpx.WriteInternal(w, r, h.log, err)
 		return
 	}

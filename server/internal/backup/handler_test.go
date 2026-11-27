@@ -240,8 +240,22 @@ func TestHandlerDeleteAllClearsOnlyCurrentAccount(t *testing.T) {
 	}
 }
 
-// 设备名带中文时客户端按 UTF-8 百分号编码放在头里，服务端保存解码后的原文，
-// 不能因为一个展示字段把整份备份拒绝掉。
+// TestHandlerRejectsOversizeSnapshot 守住大小上限在 HTTP 入口：SpoolVerified
+// 按 Content-Length 与 MaxBytesReader 拒绝超过上限的包体，service 不再重复判断，
+// 错误因此必须以 413 payload_too_large 返回。
+func TestHandlerRejectsOversizeSnapshot(t *testing.T) {
+	c, authSvc := newTestServer(t)
+	token := signIn(t, authSvc, "size@b.cn")
+
+	data := bytes.Repeat([]byte("x"), testMaxBytes+1)
+	p := testutil.ReadProblem(t, upload(t, c, token, data, testSchemaVersion))
+	if p.Status != http.StatusRequestEntityTooLarge || p.Code != string(httpx.CodePayloadTooLarge) {
+		t.Fatalf("oversize: %+v", p)
+	}
+}
+
+// TestHandlerDecodesPercentEncodedDeviceName 设备名带中文时客户端按 UTF-8
+// 百分号编码放在头里，服务端保存解码后的原文，不能因为一个展示字段拒绝整份备份。
 func TestHandlerDecodesPercentEncodedDeviceName(t *testing.T) {
 	c, authSvc := newTestServer(t)
 	token := signIn(t, authSvc, "name@b.cn")

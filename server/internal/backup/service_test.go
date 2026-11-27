@@ -8,16 +8,11 @@ import (
 	"time"
 )
 
-func TestServiceUploadValidatesSchemaAndSize(t *testing.T) {
+// TestServiceUploadStoresMetadata 守住服务层只做自己那一段：schema 与大小已由
+// 处理器在 HTTP 入口核对，这里原样写进元数据，设备名清洗后落库。
+func TestServiceUploadStoresMetadata(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewMemoryStore(), 8, 2, 27)
-
-	if _, err := svc.Upload(ctx, "u1", "sha", 25, "", 1, strings.NewReader("x")); !errors.Is(err, ErrSchemaVersion) {
-		t.Fatalf("other schema: want ErrSchemaVersion, got %v", err)
-	}
-	if _, err := svc.Upload(ctx, "u1", "sha", 27, "", 9, strings.NewReader("x")); !errors.Is(err, ErrTooLarge) {
-		t.Fatalf("oversize: want ErrTooLarge, got %v", err)
-	}
 
 	meta, err := svc.Upload(ctx, "u1", "sha", 27, "  phone  ", 4, strings.NewReader("zip1"))
 	if err != nil {

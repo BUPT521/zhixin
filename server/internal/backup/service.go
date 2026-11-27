@@ -2,7 +2,6 @@ package backup
 
 import (
 	"context"
-	"errors"
 	"io"
 	"strings"
 	"time"
@@ -11,16 +10,11 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
-var (
-	// ErrSchemaVersion reports a snapshot produced by another client schema.
-	ErrSchemaVersion = errors.New("backup: schema version does not match the server")
-	// ErrTooLarge reports a snapshot above the configured size limit.
-	ErrTooLarge = errors.New("backup: snapshot exceeds the size limit")
-)
-
-// Service owns the business rules of snapshots: which schema is accepted, how
-// large one may be, how a device name is stored and how many are retained.
-// The handler only deals with HTTP, and the store only keeps bytes and metadata.
+// Service owns the snapshot rules that are not HTTP-level: how a device name is
+// stored, which metadata is written and how many snapshots are retained. The
+// accepted schema version and size limit are only read back through
+// SchemaVersion and MaxBytes; the handler rejects requests that break them at
+// the HTTP entry, because it must do so before spooling the body.
 type Service struct {
 	store         Store
 	maxBytes      int64
@@ -53,8 +47,9 @@ func (s *Service) SchemaVersion() int { return s.schemaVersion }
 
 func (s *Service) MaxBytes() int64 { return s.maxBytes }
 
-// Upload validates one snapshot and stores it. The caller has already checked
-// the body hash; size and schema are business rules checked here.
+// Upload stores one snapshot. The caller has already checked the body hash, the
+// schema version against SchemaVersion and the size against MaxBytes; this layer
+// cleans the device name, builds the metadata and stores the bytes.
 func (s *Service) Upload(
 	ctx context.Context,
 	userID, sha string,
@@ -63,12 +58,6 @@ func (s *Service) Upload(
 	size int64,
 	data io.Reader,
 ) (Meta, error) {
-	if schema != s.schemaVersion {
-		return Meta{}, ErrSchemaVersion
-	}
-	if size > s.maxBytes {
-		return Meta{}, ErrTooLarge
-	}
 	device = cleanDevice(device)
 	meta := Meta{
 		ID:            newID(),
