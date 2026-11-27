@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
@@ -45,6 +47,9 @@ class _FakeAi implements BuddyAi {
   final sessionIds = <String?>[];
   BuddyContext? lastContext;
   String lastText = '';
+  LlmCancelToken? lastCancelToken;
+  Completer<void>? entered;
+  Completer<void>? resume;
 
   @override
   Future<Result<LlmConfig?>> config() async => Success(configValue);
@@ -63,7 +68,11 @@ class _FakeAi implements BuddyAi {
     lastContext = context;
     sessionIds.add(context.sessionId);
     lastText = text;
+    lastCancelToken = cancelToken;
     calls++;
+    entered?.complete();
+    final waiting = resume;
+    if (waiting != null) await waiting.future;
     if (failAtCall != null && calls == failAtCall) {
       throw const LlmException(LlmFailure.timeout, '测试超时');
     }
@@ -95,6 +104,9 @@ class _Harness {
   late StudyRepository study;
   late StudyPlanService service;
 
+  /// 数据代次：恢复、导入与清空之后递增，生成期间的旧结果不再返回。
+  int epoch = 0;
+
   Future<void> open() async {
     db = await openTestDb();
     conversations = ConversationRepository(db);
@@ -120,7 +132,7 @@ class _Harness {
       conversations: conversations,
       study: study,
       transactions: WriteTransactions(db, revisions: RevisionEngine()),
-      runtime: testRuntime(policy: () => policy),
+      runtime: testRuntime(policy: () => policy, dataEpoch: () => epoch),
     );
   }
 
@@ -409,6 +421,61 @@ void main() {
     expect(h.ai.sessionIds, hasLength(2));
     expect(h.ai.sessionIds.first, isNotNull);
     expect(h.ai.sessionIds.last, h.ai.sessionIds.first);
+  });
+
+  test('系统学习生成把同一份取消令牌交给每一批', () async {
+    final h = _Harness(
+      config: const LlmConfig(apiKey: 'test'),
+      replies: const [
+        BuddyReply(
+          text: '第一批',
+          studySteps: [
+            StudyStepDraft(title: '模型覆盖第 1–6 页', pageFrom: 1, pageTo: 6),
+          ],
+        ),
+        BuddyReply(
+          text: '第二批',
+          studySteps: [
+            StudyStepDraft(title: '模型覆盖第 7 页', pageFrom: 7, pageTo: 7),
+          ],
+        ),
+      ],
+    );
+    await h.open();
+    addTearDown(h.db.close);
+    final materialId = await h.materialWithPages([1, 2, 3, 4, 5, 6, 7]);
+    final cancel = LlmCancelToken();
+
+    await h.service.propose(
+      materialId: materialId,
+      pageFrom: 1,
+      pageTo: 7,
+      cancelToken: cancel,
+    );
+    expect(h.ai.calls, 2);
+    expect(identical(h.ai.lastCancelToken, cancel), isTrue);
+  });
+
+  test('生成期间数据代次变化时不再返回旧范围的顺序', () async {
+    final h = _Harness(config: const LlmConfig(apiKey: 'test'));
+    await h.open();
+    addTearDown(h.db.close);
+    final materialId = await h.materialWithPages([1, 2, 3, 4, 5, 6, 7]);
+    h.ai.entered = Completer<void>();
+    h.ai.resume = Completer<void>();
+
+    final pending = h.service.propose(
+      materialId: materialId,
+      pageFrom: 1,
+      pageTo: 7,
+    );
+    await h.ai.entered!.future;
+    // 等待模型期间整库恢复或清空：数据代次前进，旧范围不再有效。
+    h.epoch++;
+    h.ai.resume!.complete();
+
+    await expectLater(pending, throwsA(isA<StateError>()));
+    expect(await selectRows(h.db, 'study_plan'), isEmpty);
   });
 
   test('V4：保存计划时拒绝没有覆盖所选页码的顺序', () async {

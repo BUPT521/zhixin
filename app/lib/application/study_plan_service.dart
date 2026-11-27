@@ -1,5 +1,6 @@
 import '../ai/ai_chat_service.dart';
 import '../ai/buddy_prompt.dart';
+import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/repository/conversation_repository.dart';
@@ -232,13 +233,18 @@ class StudyPlanService {
   /// 每批模型结果都要经过 [studyStepsProblem] 的页码覆盖核对；某批失败时保留
   /// 前面已经通过核对的步骤，只给这一批按页补齐，并在 [StudyPlanProposal]
   /// 里标明整份结果的来源。
+  ///
+  /// [cancelToken] 与讨论、作答共用同一套取消：用户离开页面或停止时，正在等待
+  /// 的批次立即结束；等待期间整库恢复或清空时，本次结果不再返回。
   Future<StudyPlanProposal> propose({
     required String materialId,
     required int pageFrom,
     required int pageTo,
     String? goalId,
     String? conversationFocus,
+    LlmCancelToken? cancelToken,
   }) async {
+    final requestEpoch = runtime.dataEpoch;
     final isDocx = (await materials.byId(materialId))?.isDocx ?? false;
     final inRange = await materials.pagesBetween(
       materialId,
@@ -284,6 +290,7 @@ class StudyPlanService {
           config: config,
           batch: batch,
           previous: proposed,
+          cancelToken: cancelToken,
         );
         final problem = studyStepsProblem(
           steps: batchSteps,
@@ -306,6 +313,7 @@ class StudyPlanService {
         localBatches++;
       }
     }
+    _ensureCurrentEpoch(requestEpoch);
 
     final source = localBatches == 0
         ? StudyPlanSource.model
@@ -334,6 +342,7 @@ class StudyPlanService {
     required LlmConfig config,
     required List<MaterialPage> batch,
     required List<StudyStepDraft> previous,
+    required LlmCancelToken? cancelToken,
   }) async {
     final batchFrom = batch.first.pageNo;
     final batchTo = batch.last.pageNo;
@@ -365,6 +374,7 @@ class StudyPlanService {
       text: prompt,
       imagePaths: const [],
       config: config,
+      cancelToken: cancelToken,
       recordFailure: runtime.recordFailure,
     );
     final reply = run.answer;
@@ -388,6 +398,7 @@ class StudyPlanService {
     String? conversationId,
     String? title,
   }) async {
+    final requestEpoch = runtime.dataEpoch;
     if (steps.isEmpty) throw ArgumentError('请先生成学习步骤');
     if (pageFrom <= 0 || pageTo < pageFrom) {
       throw ArgumentError('学习计划页码范围无效');
@@ -412,8 +423,10 @@ class StudyPlanService {
     final planTitle = title?.trim().isNotEmpty == true
         ? title!.trim()
         : '${material.title} ${material.position(pageFrom, to: pageTo)}';
-    final planId = await transactions.run(
-      (txn) => plans.createWithDrafts(
+    final planId = await transactions.run((txn) {
+      // 生成与确认之间可能发生了整库恢复或清空：旧范围不再写回新数据。
+      _ensureCurrentEpoch(requestEpoch);
+      return plans.createWithDrafts(
         title: planTitle,
         drafts: steps,
         materialId: materialId,
@@ -422,9 +435,8 @@ class StudyPlanService {
         pageFrom: pageFrom,
         pageTo: pageTo,
         transaction: txn,
-      ),
-      label: '建立学习计划',
-    );
+      );
+    }, label: '建立学习计划');
     return view(planId);
   }
 
@@ -565,5 +577,12 @@ class StudyPlanService {
       );
     }
     return steps;
+  }
+
+  /// 生成与确认期间数据被整库恢复或清空时，旧范围与旧步骤不再使用。
+  void _ensureCurrentEpoch(int expected) {
+    if (runtime.dataEpoch != expected) {
+      throw StateError('数据已恢复或清空，请重新打开系统学习后再生成。');
+    }
   }
 }
