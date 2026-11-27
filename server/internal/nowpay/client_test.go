@@ -24,6 +24,9 @@ type fakeCaller struct {
 	// 关闭，用来验证概览的两次查询是并行的。
 	started chan string
 	release chan struct{}
+	// failPurchase 是接下来多少次 purchase.create 直接失败，用来验证创单失败之后
+	// 按原请求号重试。
+	failPurchase int
 }
 
 func (f *fakeCaller) Call(_ context.Context, method string, biz map[string]any) ([]byte, error) {
@@ -31,6 +34,10 @@ func (f *fakeCaller) Call(_ context.Context, method string, biz map[string]any) 
 	f.methods = append(f.methods, method)
 	f.biz = append(f.biz, biz)
 	f.mu.Unlock()
+	if method == methodPurchase && f.failPurchase > 0 {
+		f.failPurchase--
+		return nil, errors.New("支付宝网关超时")
+	}
 	if f.started != nil {
 		f.started <- method
 	}

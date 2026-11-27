@@ -475,8 +475,56 @@ func TestPurchaseRetriesACreatingEntryWithTheSameRequestNo(t *testing.T) {
 	}
 }
 
-// TestPurchaseReplacesAnExpiredEntry 守住过期之后的重新创单：同一个键在过期或失败之后
-// 换一个新请求号替换整行（ADR-0074）。
+// TestPurchaseRetriesAFailedEntryWithTheSameRequestNo 守住创单失败之后的重试口径：
+// failed 行沿用原来的 out_request_no 再创单，不生成新号，否则同一次点击会在即刻收侧
+// 产生第二个创单请求（S18，ADR-0074）。
+func TestPurchaseRetriesAFailedEntryWithTheSameRequestNo(t *testing.T) {
+	caller := &fakeCaller{
+		replies: map[string]string{
+			methodCharge:   purchaseCapability,
+			methodPurchase: purchaseReply,
+		},
+		failPurchase: 1,
+	}
+	purchases := &fakePurchases{}
+	handler := newTestHandler(newTestClient(t, caller), purchases)
+	const body = `{"sku_id":"S1","client_request_no":"req-1"}`
+	first := httptest.NewRecorder()
+	handler.Purchase(first, request(http.MethodPost, "/v1/me/model-quota-purchases", body))
+	if first.Code != http.StatusServiceUnavailable {
+		t.Fatalf("首次创单失败应回 503，得到 %d", first.Code)
+	}
+	failed := purchases.byKey["req-1"]
+	if failed.State != PurchaseFailed || failed.OutRequestNo == "" {
+		t.Fatalf("创单失败应记 failed 并保留请求号: %+v", failed)
+	}
+	second := httptest.NewRecorder()
+	handler.Purchase(second, request(http.MethodPost, "/v1/me/model-quota-purchases", body))
+	if second.Code != http.StatusOK {
+		t.Fatalf("重试应返回链接，得到 %d（%s）", second.Code, second.Body.String())
+	}
+	if link := decode[api.QuotaPurchaseLink](t, second); link.OutRequestNo != failed.OutRequestNo {
+		t.Fatalf("重试应复用原请求号 %s，得到 %s", failed.OutRequestNo, link.OutRequestNo)
+	}
+	var sent []any
+	for i, method := range caller.calls() {
+		if method == methodPurchase {
+			sent = append(sent, caller.biz[i]["out_request_no"])
+		}
+	}
+	if len(sent) != 2 || sent[0] != failed.OutRequestNo || sent[1] != failed.OutRequestNo {
+		t.Fatalf("两次创单应带同一个请求号，实际 %v", sent)
+	}
+	if len(purchases.byKey) != 1 {
+		t.Fatalf("失败重试不应多落一行，实际 %d 行", len(purchases.byKey))
+	}
+	if purchases.byKey["req-1"].State != PurchaseReady {
+		t.Fatalf("重试成功后应转 ready: %+v", purchases.byKey["req-1"])
+	}
+}
+
+// TestPurchaseReplacesAnExpiredEntry 守住过期之后的重新创单：链接过期之后同一个
+// 幂等键换一个新请求号替换整行（ADR-0074）。
 func TestPurchaseReplacesAnExpiredEntry(t *testing.T) {
 	caller := &fakeCaller{replies: map[string]string{
 		methodCharge:   purchaseCapability,

@@ -21,7 +21,9 @@ import (
 )
 
 // 购买入口的状态。creating 表示已经占住幂等键、正在向即刻收创单，此时 purchase_url
-// 为空；ready 表示链接可以打开；failed 表示这一次创单失败，下一次点击按同一个键重试。
+// 为空；ready 表示链接可以打开；failed 表示这一次创单失败，下一次点击沿用同一个
+// 请求号重试。out_request_no 在即刻收侧是幂等号，换号会让同一次点击产生第二个创单
+// 请求（ADR-0074）。
 const (
 	PurchaseCreating = "creating"
 	PurchaseReady    = "ready"
@@ -29,7 +31,7 @@ const (
 )
 
 // creatingTTL 是 creating 行的占位有效期。创单成功之后换成即刻收给出的真实有效期；
-// 超过它还是 creating，说明上一次创单中断了，下一次点击按同一个键重新创单。
+// 超过它还是 creating，说明上一次创单中断了，下一次点击按同一个幂等键重新创单。
 const creatingTTL = 15 * time.Minute
 
 // Purchase 是一次购买入口请求。ClientRequestNo 是客户端每次点击生成的幂等键，
@@ -315,6 +317,16 @@ func (h *Handler) purchaseLink(ctx context.Context, userID string, request Purch
 	switch {
 	case ok && existing.State == PurchaseReady && existing.URL != "" && existing.ExpiresAt.After(now):
 		return existing, nil
+	case ok && existing.State == PurchaseFailed:
+		// 创单失败之后重试沿用行里原有的请求号，用 ReplacePurchaseLink 以同一个号
+		// 回到 creating 再创单；换号会在即刻收侧多出一个创单请求（ADR-0074）。
+		purchase.SKU = request.SKU
+		purchase.State = PurchaseCreating
+		purchase.URL = ""
+		purchase.ExpiresAt = now.Add(creatingTTL)
+		if err := h.purchases.ReplacePurchaseLink(ctx, userID, purchase); err != nil {
+			return Purchase{}, fmt.Errorf("保存即刻收创单占位失败: %w", err)
+		}
 	case ok && existing.State == PurchaseCreating && existing.ExpiresAt.After(now):
 		// 上一次创单停在同一请求号上，按原号重试。
 	default:
@@ -339,7 +351,7 @@ func (h *Handler) purchaseLink(ctx context.Context, userID string, request Purch
 	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if err != nil {
-		// 创单失败记 failed，下一次点击用同一个键再试；请求号保留在行里。
+		// 创单失败记 failed，下一次点击用同一个幂等键、同一个请求号再试；请求号保留在行里。
 		if markErr := h.purchases.FailPurchaseLink(markCtx, purchase.OutRequestNo); markErr != nil {
 			h.log.Error("mark nowpay purchase link failed", "user_id", userID, "error", markErr)
 		}
