@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -480,7 +481,8 @@ func (h *Handler) CreateAPIKey(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrInvalidInput):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "name must be at most 64 characters")
 	case errors.Is(err, ErrKeyLimit):
-		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict, "at most 20 active api keys per account")
+		httpx.WriteProblem(w, r, http.StatusConflict, httpx.CodeConflict,
+			"at most "+strconv.Itoa(maxKeysPerUser)+" active api keys per account")
 	case err != nil:
 		httpx.WriteInternal(w, r, h.log, err)
 	default:
