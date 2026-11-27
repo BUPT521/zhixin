@@ -28,8 +28,11 @@ var (
 // 让自动部署回滚到上一份可执行文件（ADR-0074）；余额副本是 2026-11-25 补的一张纯
 // 新增表，缺表时只记日志并停用免费额度之外的放行（ADR-0069），这样已经在收款的
 // 实例可以先部署新版，再按运维手册建表并重启，不会因为建表顺序停服。
+//
+// 补查的尝试计数与 abandoned 状态缺任何一项都直接退出（ADR-0089）：缺列时补查写不
+// 进去，缺约束时到上限的流水落不成终态，两种情况下积压仍然会饿死更晚的流水。
 func (s *Store) CheckNowPaySchema(ctx context.Context) error {
-	var installed, balance, purchaseColumns, purchaseIndex, chargePending, chargeClaimed bool
+	var installed, balance, purchaseColumns, purchaseIndex, chargePending, chargeColumns, chargeStatus bool
 	err := s.pool.QueryRow(ctx, `SELECT
 		to_regclass('nowpay_charge') IS NOT NULL AND to_regclass('nowpay_purchase') IS NOT NULL,
 		to_regclass('nowpay_balance') IS NOT NULL,
@@ -39,8 +42,13 @@ func (s *Store) CheckNowPaySchema(ctx context.Context) error {
 		to_regclass('nowpay_purchase_client_request_idx') IS NOT NULL,
 		to_regclass('llm_charge_pending') IS NOT NULL,
 		(SELECT count(*) FROM information_schema.columns
-		  WHERE table_name = 'nowpay_charge' AND column_name = 'claimed_at') = 1`).
-		Scan(&installed, &balance, &purchaseColumns, &purchaseIndex, &chargePending, &chargeClaimed)
+		  WHERE table_name = 'nowpay_charge'
+		    AND column_name IN ('claimed_at', 'attempts', 'last_attempt_at')) = 3,
+		(SELECT count(*) FROM pg_constraint
+		  WHERE conrelid = to_regclass('nowpay_charge') AND contype = 'c'
+		    AND pg_get_constraintdef(oid) LIKE '%abandoned%') > 0`).
+		Scan(&installed, &balance, &purchaseColumns, &purchaseIndex, &chargePending,
+			&chargeColumns, &chargeStatus)
 	if err != nil {
 		return err
 	}
@@ -56,9 +64,16 @@ func (s *Store) CheckNowPaySchema(ctx context.Context) error {
 	if !chargePending {
 		return errors.New("pg: 缺少 llm_charge_pending 表，按运维手册 4.11 建表之后再启动")
 	}
-	// 认领是发送核销之前的一步，缺列时每一笔核销都发不出去（ADR-0088）。
-	if !chargeClaimed {
-		return errors.New("pg: nowpay_charge 缺 claimed_at 列，按运维手册 4.11 加列之后再启动")
+	// 认领、尝试计数与轮转时刻是发送与补查的必经步骤，缺列时每一笔核销都发不出去
+	// （ADR-0088、ADR-0089）。
+	if !chargeColumns {
+		return errors.New("pg: nowpay_charge 缺 claimed_at、attempts 或 last_attempt_at 列，" +
+			"按运维手册 4.11 加列之后再启动")
+	}
+	// 状态约束不包含 abandoned 时，补查到上限的流水落不成终态，积压会重新变成死循环。
+	if !chargeStatus {
+		return errors.New("pg: nowpay_charge 的 status 检查约束还没有包含 abandoned，" +
+			"按运维手册 4.11 重建约束之后再启动")
 	}
 	s.balanceReady.Store(balance)
 	if !balance {
@@ -202,6 +217,26 @@ func (s *Store) ClaimCharge(ctx context.Context, id string, lease time.Duration)
 	return claimed > 0, nil
 }
 
+// NoteAttempt 记一次全局补查的尝试：attempts 加一、last_attempt_at 推到当前时刻，
+// 返回落定之后的状态。补查超过上限的那一次把流水落成 abandoned 并写备注，返回这个
+// 状态，调用方据此不再发送；流水在这之间已经被别的路径终结时没有可更新的行，返回
+// 空状态，这一份直接丢弃（ADR-0089）。
+func (s *Store) NoteAttempt(ctx context.Context, id string, maxAttempts int) (string, error) {
+	if id == "" || maxAttempts < 1 {
+		return "", nil
+	}
+	row, err := s.q.NoteChargeAttempt(ctx, db.NoteChargeAttemptParams{
+		ID: id, MaxAttempts: int32(maxAttempts),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("pg: 记录核销补查尝试失败: %w", err)
+	}
+	return row.Status, nil
+}
+
 // Unsettled 取账号还没有确认结果的流水，供下一轮对话开工前补查。
 func (s *Store) Unsettled(ctx context.Context, userID string, limit int) ([]nowpay.Charge, error) {
 	if limit < 1 {
@@ -216,6 +251,8 @@ func (s *Store) Unsettled(ctx context.Context, userID string, limit int) ([]nowp
 
 // UnsettledGlobal 取全局创建早于 before、仍未终结的流水，供每十分钟一次的补查兜底；
 // 它不按账号过滤，队列满或进程退出时留下的流水由这里清掉（ADR-0073 所在的整改方案）。
+// 取数按上一次尝试时刻轮转，反复失败的流水试过一次就排到后面，积压时更晚的流水也
+// 轮得到（ADR-0089）。
 func (s *Store) UnsettledGlobal(ctx context.Context, before time.Time, limit int) ([]nowpay.Charge, error) {
 	if limit < 1 {
 		return nil, nil
@@ -259,8 +296,8 @@ func (s *Store) DeleteExpiredPurchases(ctx context.Context, before time.Time, li
 	})
 }
 
-// DeleteTerminalCharges 分批删除终态（succeeded/failed）且更新时间早于 before 的核销
-// 流水，返回这一批删除的行数；pending 与 processing 不删。
+// DeleteTerminalCharges 分批删除终态（succeeded/failed/abandoned）且更新时间早于
+// before 的核销流水，返回这一批删除的行数；pending 与 processing 不删。
 func (s *Store) DeleteTerminalCharges(ctx context.Context, before time.Time, limit int) (int64, error) {
 	if limit < 1 {
 		return 0, nil

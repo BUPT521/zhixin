@@ -40,11 +40,32 @@ LIMIT sqlc.arg(max_rows);
 -- 留下的流水靠它兜底（ADR-0074 所在的整改方案 P6）。删号之后 user_id 被置空的行
 -- 不再取：即刻收的核销与补查都要带买家标识，没有买家标识的行无论补查多少次都只会
 -- 失败，留在结果里还会把更晚的流水挤出这一批。这类行由保留期按创建时间删除。
+--
+-- 按上一次尝试时刻轮转（ADR-0089）：反复失败的流水试过一次就排到后面，积压时更晚
+-- 的流水仍然轮得到；从没尝试过的流水排在最前。按创建时间取会让最老的一批永远占住
+-- 这一批的名额，后面的流水在 180 天保留期里永远轮不到。
 -- name: UnsettledChargesGlobal :many
 SELECT * FROM nowpay_charge
 WHERE user_id IS NOT NULL AND status IN ('pending', 'processing') AND created_at < sqlc.arg(before)
-ORDER BY created_at, id
+ORDER BY last_attempt_at ASC NULLS FIRST, created_at, id
 LIMIT sqlc.arg(max_rows);
+
+-- 记录一次全局补查的尝试：attempts 加一、last_attempt_at 推到当前时刻，返回落定之
+-- 后的状态。加完之后超过上限的流水在这一步落成 abandoned 并写备注，补查拿到这个
+-- 状态就不再发送。已经终结的流水不更新，调用方拿不到行、这一份直接丢弃。
+--
+-- 结果未知的流水不能记 failed：failed 不计入当天已申请量，下一次结算会按差额重新
+-- 申请，那一笔可能已经扣过，记 failed 就等于重复扣款（ADR-0089）。
+-- name: NoteChargeAttempt :one
+UPDATE nowpay_charge
+SET attempts = attempts + 1,
+    last_attempt_at = now(),
+    status = CASE WHEN attempts + 1 > sqlc.arg(max_attempts)::int THEN 'abandoned' ELSE status END,
+    note = CASE WHEN attempts + 1 > sqlc.arg(max_attempts)::int
+                THEN '补查超过尝试上限，结果未知，不再重试' ELSE note END,
+    updated_at = CASE WHEN attempts + 1 > sqlc.arg(max_attempts)::int THEN now() ELSE updated_at END
+WHERE id = sqlc.arg(id) AND status IN ('pending', 'processing')
+RETURNING status, attempts;
 
 -- 保留期：删号之后 user_id 被置空、又一直没有结论的流水分批删除。它们补查不到
 -- 结果，也不会再属于任何账号，只能按创建时间清掉，否则会一直积在 pending 上。
@@ -68,13 +89,14 @@ WHERE out_request_no IN (
   LIMIT sqlc.arg(max_rows)
 );
 
--- 保留期：终态（succeeded/failed）超过 180 天的核销流水分批删除。pending 与
--- processing 不删，它们还没有结论。
+-- 保留期：终态（succeeded/failed/abandoned）超过 180 天的核销流水分批删除。pending
+-- 与 processing 不删，它们还没有结论；abandoned 已经不再重试，按终态一起清理。
 -- name: DeleteTerminalCharges :execrows
 DELETE FROM nowpay_charge
 WHERE id IN (
   SELECT nowpay_charge.id FROM nowpay_charge
-  WHERE nowpay_charge.status IN ('succeeded', 'failed') AND nowpay_charge.updated_at < sqlc.arg(before)
+  WHERE nowpay_charge.status IN ('succeeded', 'failed', 'abandoned')
+    AND nowpay_charge.updated_at < sqlc.arg(before)
   ORDER BY nowpay_charge.updated_at
   LIMIT sqlc.arg(max_rows)
 );
@@ -151,18 +173,20 @@ SET remaining_points = GREATEST(sqlc.arg(remaining_points)::bigint, 0),
 WHERE nowpay_balance.synced_at <= EXCLUDED.synced_at;
 
 -- name: PointLedgerWithBalance :one
--- 在同一个查询快照中读余额与流水。余额扣减涵盖所有日期的待确认流水及快照后成功
--- 的流水，已申请和已成功的积分只统计指定记账日。synced_at 为空表示从未同步。
+-- 在同一个查询快照中读余额与流水。余额扣减涵盖所有日期的待确认流水、补查已经放弃
+-- 的流水及快照后成功的流水，已申请和已成功的积分只统计指定记账日。abandoned 算进
+-- 未反映的核销：它有没有扣过不知道，宁可少放行也不让同一笔积分被花两次（ADR-0089）。
+-- synced_at 为空表示从未同步。
 SELECT balance.synced_at,
        COALESCE(balance.remaining_points, 0)::bigint AS balance_points,
        COALESCE(SUM(charge.points) FILTER (WHERE charge.day = sqlc.arg(day)::date), 0)::bigint AS applied,
        COALESCE(SUM(charge.points) FILTER (WHERE charge.day = sqlc.arg(day)::date
            AND charge.status = 'succeeded'), 0)::bigint AS charged,
-       COALESCE(SUM(charge.points) FILTER (WHERE charge.status IN ('pending', 'processing')
+       COALESCE(SUM(charge.points) FILTER (WHERE charge.status IN ('pending', 'processing', 'abandoned')
            OR (charge.status = 'succeeded' AND charge.updated_at > balance.synced_at)), 0)::bigint AS unreflected
 FROM (SELECT sqlc.arg(user_id)::text AS user_id) account
 LEFT JOIN nowpay_balance AS balance USING (user_id)
 LEFT JOIN nowpay_charge AS charge ON charge.user_id = account.user_id AND charge.status <> 'failed'
-  AND (charge.day = sqlc.arg(day)::date OR charge.status IN ('pending', 'processing')
+  AND (charge.day = sqlc.arg(day)::date OR charge.status IN ('pending', 'processing', 'abandoned')
        OR (charge.status = 'succeeded' AND charge.updated_at > balance.synced_at))
 GROUP BY balance.synced_at, balance.remaining_points;

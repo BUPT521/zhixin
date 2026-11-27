@@ -198,16 +198,18 @@ type NowpayBalance struct {
 }
 
 type NowpayCharge struct {
-	ID           string
-	UserID       pgtype.Text
-	Day          pgtype.Date
-	Points       int64
-	BilledTokens int64
-	Status       string
-	Note         string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
-	ClaimedAt    pgtype.Timestamptz
+	ID            string
+	UserID        pgtype.Text
+	Day           pgtype.Date
+	Points        int64
+	BilledTokens  int64
+	Status        string
+	Note          string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	ClaimedAt     pgtype.Timestamptz
+	Attempts      int32
+	LastAttemptAt pgtype.Timestamptz
 }
 
 type NowpayPurchase struct {

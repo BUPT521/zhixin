@@ -45,6 +45,10 @@ type fakeLedger struct {
 	claimDenied map[string]bool
 	claimErr    error
 	claimedIDs  []string
+	// attemptStatus 是 NoteAttempt 对某笔流水返回的状态，没有预设的按 pending 记；
+	// attemptIDs 记下每次补查尝试的流水编号，供用例核对轮转取到的是哪几笔。
+	attemptStatus map[string]string
+	attemptIDs    []string
 }
 
 func (f *fakeLedger) ReservePoints(_ context.Context, charge Charge, required int64) (Charge, bool, error) {
@@ -105,6 +109,16 @@ func (f *fakeLedger) ClaimCharge(_ context.Context, id string, _ time.Duration) 
 	}
 	f.claimedIDs = append(f.claimedIDs, id)
 	return true, nil
+}
+
+func (f *fakeLedger) NoteAttempt(_ context.Context, id string, _ int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.attemptIDs = append(f.attemptIDs, id)
+	if status, ok := f.attemptStatus[id]; ok {
+		return status, nil
+	}
+	return StatusPending, nil
 }
 
 func (f *fakeLedger) SetStatus(_ context.Context, id, status, note string) (time.Time, error) {
@@ -599,12 +613,16 @@ func TestNewMeterValidatesArguments(t *testing.T) {
 }
 
 // TestSweepEnqueuesUnsettledCharges 守住全局补查：pending 的重试核销，processing 的
-// 只查结果，返回实际入队的条数（ADR-0073 所在的整改方案 P6）。
+// 只查结果，返回实际入队的条数（ADR-0073 所在的整改方案 P6）。入队方式按记完尝试
+// 之后的状态决定：取出来的那一份可能已经被别的路径改成 processing（ADR-0089）。
 func TestSweepEnqueuesUnsettledCharges(t *testing.T) {
-	ledger := &fakeLedger{unsettledGlobal: []Charge{
-		{ID: "nc_1", UserID: "user_1", Points: 2, Status: StatusPending},
-		{ID: "nc_2", UserID: "user_2", Points: 3, Status: StatusProcessing},
-	}}
+	ledger := &fakeLedger{
+		unsettledGlobal: []Charge{
+			{ID: "nc_1", UserID: "user_1", Points: 2, Status: StatusPending},
+			{ID: "nc_2", UserID: "user_2", Points: 3, Status: StatusProcessing},
+		},
+		attemptStatus: map[string]string{"nc_1": StatusPending, "nc_2": StatusProcessing},
+	}
 	meter := newTestMeter(t, ledger, &fakeCaller{})
 	count, err := meter.Sweep(context.Background(), time.Now().Add(-5*time.Minute), 50)
 	if err != nil || count != 2 {
@@ -615,6 +633,47 @@ func TestSweepEnqueuesUnsettledCharges(t *testing.T) {
 	}
 	if second := <-meter.queue; second.verify {
 		t.Fatal("processing 流水只查结果，不重新核销")
+	}
+}
+
+// TestSweepGivesUpAChargeAfterTooManyAttempts 守住补查的尝试上限：记到上限的那一笔
+// 落成 abandoned 之后不再入队，也不落 failed。failed 不计入当天已申请量，下一次结算
+// 会按差额重新申请，而这一笔可能已经扣过，记 failed 就等于重复扣款（ADR-0089）。
+func TestSweepGivesUpAChargeAfterTooManyAttempts(t *testing.T) {
+	ledger := &fakeLedger{
+		unsettledGlobal: []Charge{{ID: "nc_1", UserID: "user_1", Points: 2, Status: StatusPending}},
+		attemptStatus:   map[string]string{"nc_1": StatusAbandoned},
+	}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	count, err := meter.Sweep(context.Background(), time.Now().Add(-5*time.Minute), 50)
+	if err != nil || count != 0 {
+		t.Fatalf("超过上限的流水不应入队: %d %v", count, err)
+	}
+	if len(meter.queue) != 0 {
+		t.Fatalf("队列应为空，实际 %d", len(meter.queue))
+	}
+	if len(ledger.attemptIDs) != 1 || ledger.attemptIDs[0] != "nc_1" {
+		t.Fatalf("应记一次补查尝试: %v", ledger.attemptIDs)
+	}
+	if got := ledger.last(); got.status != "" {
+		t.Fatalf("放弃补查不落状态，实际 %+v", got)
+	}
+}
+
+// TestSweepSkipsAChargeSettledWhileSweeping 守住取数之后流水已经被别处终结的情况：
+// 记尝试时拿不到状态，这一份既不入队也不落状态，等下一轮补查看新的状态。
+func TestSweepSkipsAChargeSettledWhileSweeping(t *testing.T) {
+	ledger := &fakeLedger{
+		unsettledGlobal: []Charge{{ID: "nc_1", UserID: "user_1", Points: 2, Status: StatusPending}},
+		attemptStatus:   map[string]string{"nc_1": ""},
+	}
+	meter := newTestMeter(t, ledger, &fakeCaller{})
+	count, err := meter.Sweep(context.Background(), time.Now().Add(-5*time.Minute), 50)
+	if err != nil || count != 0 {
+		t.Fatalf("已经终结的流水不应入队: %d %v", count, err)
+	}
+	if len(meter.queue) != 0 {
+		t.Fatalf("队列应为空，实际 %d", len(meter.queue))
 	}
 }
 

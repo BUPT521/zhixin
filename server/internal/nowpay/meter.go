@@ -12,12 +12,16 @@ import (
 )
 
 // 核销流水的状态。pending 表示已经写进本地、还没有向即刻收发起核销；processing
-// 表示发起过但结果未知；succeeded 表示确认扣减；failed 表示确认没有扣减。
+// 表示发起过但结果未知；succeeded 表示确认扣减；failed 表示确认没有扣减；
+// abandoned 表示补查超过尝试上限、结果仍然未知，不再重试（ADR-0089）。abandoned 不
+// 记 failed：failed 不计入当天已申请量，下一次结算会按差额重新申请，而那一笔可能
+// 已经扣过，记 failed 就等于重复扣款。
 const (
 	StatusPending    = "pending"
 	StatusProcessing = "processing"
 	StatusSucceeded  = "succeeded"
 	StatusFailed     = "failed"
+	StatusAbandoned  = "abandoned"
 )
 
 // consumeReason 是提交给即刻收的消费说明。它只写业务类别，不写提示词、用户内容或
@@ -49,6 +53,11 @@ type Ledger interface {
 	// pending、且上一次认领已经超过 lease 时返回 true。发送核销之前调用它，同一笔
 	// 流水同一时刻只有一处能发出去（ADR-0088）。
 	ClaimCharge(ctx context.Context, id string, lease time.Duration) (bool, error)
+	// NoteAttempt 记一次全局补查的尝试，返回落定之后的状态：attempts 加一、
+	// last_attempt_at 推到当前时刻，加完之后超过上限的那一次落成 abandoned，流水
+	// 已经终结时返回空状态。补查按它轮转取数，反复失败的流水不会被反复取到
+	// （ADR-0089）。
+	NoteAttempt(ctx context.Context, id string, maxAttempts int) (string, error)
 	// SetStatus 落流水状态并返回这次的确认时刻；写余额副本时用它做快照的下限，
 	// 这一笔才不会被算成“快照之后才确认”（ADR-0073）。
 	SetStatus(ctx context.Context, id, status, note string) (time.Time, error)

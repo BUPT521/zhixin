@@ -45,6 +45,7 @@ func (e AdminHealthState) Valid() bool {
 
 // Defines values for AdminPointChargeStatus.
 const (
+	Abandoned  AdminPointChargeStatus = "abandoned"
 	Failed     AdminPointChargeStatus = "failed"
 	Pending    AdminPointChargeStatus = "pending"
 	Processing AdminPointChargeStatus = "processing"
@@ -54,6 +55,8 @@ const (
 // Valid indicates whether the value is a known member of the AdminPointChargeStatus enum.
 func (e AdminPointChargeStatus) Valid() bool {
 	switch e {
+	case Abandoned:
+		return true
 	case Failed:
 		return true
 	case Pending:

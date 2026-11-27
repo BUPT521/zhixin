@@ -28,13 +28,17 @@ type MaintenanceStore interface {
 // 补查与保留期的参数。补查的间隔与宽限期按“核销最多晚一轮”估计；保留期按运维手册
 // 的约定，购买入口留 30 天、终态流水留 180 天，批次固定 1000 行。
 const (
-	sweepInterval    = 10 * time.Minute
-	sweepGrace       = 5 * time.Minute
-	sweepBatch       = 50
-	purchaseKeepDays = 30
-	chargeKeepDays   = 180
-	retentionBatch   = 1000
-	maintenanceLimit = 5 * time.Minute
+	sweepInterval = 10 * time.Minute
+	sweepGrace    = 5 * time.Minute
+	sweepBatch    = 50
+	// maxSettleAttempts 是全局补查对同一笔流水的尝试上限。补查每十分钟一轮，每轮每笔
+	// 最多记一次，一百次至少是十六个多小时；积压越大轮转越慢，实际时间更长。超过之后
+	// 落成 abandoned，不再重试，也不再占住这一批的位置（ADR-0089）。
+	maxSettleAttempts = 100
+	purchaseKeepDays  = 30
+	chargeKeepDays    = 180
+	retentionBatch    = 1000
+	maintenanceLimit  = 5 * time.Minute
 )
 
 // PendingChargeStore 是结算之后还没有申请核销的用量，由 store/pg 实现。
@@ -44,7 +48,8 @@ type PendingChargeStore interface {
 }
 
 // SweepLoop 每十分钟把创建超过五分钟、仍然没有终结的流水排进核销队列。它兜住队列
-// 满、进程重启与补查遗漏：核销失败不回滚已经交付的回答，流水只能靠补查收尾。
+// 满、进程重启与补查遗漏：核销失败不回滚已经交付的回答，流水只能靠补查收尾。取数
+// 按上一次尝试时刻轮转，单笔另有尝试上限，积压时更晚的流水也轮得到（ADR-0089）。
 // 失败只记日志，下一轮再试。
 //
 // 函数会先就地跑一次再进循环，一直阻塞到 ctx 结束，调用方要用 goroutine 启动它。
@@ -90,6 +95,10 @@ func ChargeSweepLoop(ctx context.Context, store PendingChargeStore, log *slog.Lo
 
 // Sweep 把一批超过宽限期仍未终结的流水排进核销队列，返回实际入队的条数。pending 的
 // 用原参数重试核销，processing 的只查结果，与 Resume 的口径一致。
+//
+// 每一笔先记一次尝试：取数按上一次尝试时刻轮转，记下这一轮试过之后它就排到后面，
+// 积压时更晚的流水下一轮就能轮到。超过上限的那一笔在这一步落成 abandoned，不再入队；
+// 取出来之后已经被别的路径终结的流水拿不到状态，这一份也直接丢弃（ADR-0089）。
 func (m *Meter) Sweep(ctx context.Context, olderThan time.Time, limit int) (int, error) {
 	charges, err := m.ledger.UnsettledGlobal(ctx, olderThan, limit)
 	if err != nil {
@@ -97,8 +106,22 @@ func (m *Meter) Sweep(ctx context.Context, olderThan time.Time, limit int) (int,
 	}
 	enqueued := 0
 	for _, charge := range charges {
-		if m.enqueue(job{charge: charge, verify: charge.Status == StatusPending}) {
-			enqueued++
+		status, err := m.ledger.NoteAttempt(ctx, charge.ID, maxSettleAttempts)
+		if err != nil {
+			m.log.Error("note a nowpay sweep attempt", "charge_id", charge.ID, "error", err)
+			continue
+		}
+		switch status {
+		case StatusPending, StatusProcessing:
+			// 按记完尝试之后的状态决定重试还是只查结果，取出来的那一份可能已经过时。
+			if m.enqueue(job{charge: charge, verify: status == StatusPending}) {
+				enqueued++
+			}
+		case StatusAbandoned:
+			m.log.Warn("gave up a nowpay charge after the attempt limit",
+				"charge_id", charge.ID, "attempts", maxSettleAttempts)
+		default:
+			// 空状态表示这一笔在取出来之后已经终结，补查不用再排。
 		}
 	}
 	return enqueued, nil
@@ -145,12 +168,14 @@ func reconcile(ctx context.Context, store MaintenanceStore, loc *time.Location, 
 		"processing", counts[StatusProcessing],
 		"succeeded", counts[StatusSucceeded],
 		"failed", counts[StatusFailed],
+		"abandoned", counts[StatusAbandoned],
 		"instance_tokens", instance)
 }
 
-// prune 按保留期分批删除：购买入口按有效期过期 30 天，核销流水按终态更新时间 180 天。
-// pending 与 processing 不删，它们还没有结论；只有删号之后失去归属、再也补查不到结果
-// 的流水按创建时间例外清理，否则它们会一直积在 pending 上。
+// prune 按保留期分批删除：购买入口按有效期过期 30 天，核销流水按终态更新时间 180 天，
+// 包括确认成功的、确认失败的与补查超过上限不再重试的流水。pending 与 processing 不删，
+// 它们还没有结论；只有删号之后失去归属、再也补查不到结果的流水按创建时间例外清理，
+// 否则它们会一直积在 pending 上。
 func prune(ctx context.Context, store MaintenanceStore, log *slog.Logger) {
 	now := time.Now()
 	purchases := deleteInBatches(ctx, log, "nowpay_purchase", func(batchCtx context.Context, limit int) (int64, error) {

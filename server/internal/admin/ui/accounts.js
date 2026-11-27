@@ -143,6 +143,7 @@ const pointChargeStatus = {
   processing: ['处理中', 'warn'],
   succeeded: ['已核销', 'ok'],
   failed: ['失败', 'bad'],
+  abandoned: ['不再补查', 'muted'],
 };
 
 function renderAccountPoints(points) {

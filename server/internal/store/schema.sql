@@ -360,6 +360,12 @@ CREATE TABLE llm_quota (
 -- “status 仍是 pending 且认领已过期”的条件把同一时刻的发送收成一次。状态不因此
 -- 改成 processing，因为请求可能根本没有发出去，标成 processing 之后只能按请求号
 -- 查结果，查不到就一直停在那里。
+--
+-- attempts 与 last_attempt_at 是全局补查的尝试次数与上一次尝试时刻（ADR-0089）：
+-- 补查按上一次尝试时刻轮转取数，反复失败的流水试过一次就排到后面，更晚的流水不会
+-- 被最老的一批挤掉。attempts 超过上限的流水落成 abandoned，不再重试；它不记 failed，
+-- 因为 failed 不计入当天已申请量，下一次结算会按差额重新申请，可能重复扣款。abandoned
+-- 在本地按“已经申请”处理，保留期与 failed、succeeded 一样按更新时间清理。
 CREATE TABLE nowpay_charge (
   id            TEXT PRIMARY KEY,
   user_id       TEXT REFERENCES app_user(id) ON DELETE SET NULL,
@@ -367,18 +373,22 @@ CREATE TABLE nowpay_charge (
   points        BIGINT NOT NULL CHECK (points > 0),
   billed_tokens BIGINT NOT NULL CHECK (billed_tokens > 0),
   status        TEXT NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending', 'processing', 'succeeded', 'failed')),
+                CHECK (status IN ('pending', 'processing', 'succeeded', 'failed', 'abandoned')),
   note          TEXT NOT NULL DEFAULT '',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  claimed_at    TIMESTAMPTZ
+  claimed_at    TIMESTAMPTZ,
+  attempts      INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  last_attempt_at TIMESTAMPTZ
 );
 CREATE INDEX nowpay_charge_user_day_idx ON nowpay_charge (user_id, day);
 CREATE INDEX nowpay_charge_unsettled_idx
   ON nowpay_charge (user_id, created_at) WHERE status IN ('pending', 'processing');
--- 全局补查按创建时间取还没有终结的流水，不按账号过滤，见运维手册的补查与保留期。
-CREATE INDEX nowpay_charge_unsettled_created_idx
-  ON nowpay_charge (created_at) WHERE status IN ('pending', 'processing');
+-- 全局补查按上一次尝试时刻取还没有终结的流水，不按账号过滤，见运维手册的补查与
+-- 保留期。从没尝试过的流水排在最前（NULLS FIRST），反复失败的一次就排到后面。
+CREATE INDEX nowpay_charge_retry_idx
+  ON nowpay_charge (last_attempt_at NULLS FIRST, created_at)
+  WHERE status IN ('pending', 'processing');
 
 -- 购买入口请求（ADR-0067、ADR-0074）。一行对应客户端的一次点击：client_request_no
 -- 是客户端生成的幂等键，同一次点击的重试复用它，换一次点击换一个键。state 为

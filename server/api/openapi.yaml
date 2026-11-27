@@ -1973,7 +1973,7 @@ components:
         day: { type: string, format: date, description: 记账自然日 }
         points: { type: integer, format: int64, description: 这次申请的积分 }
         billed_tokens: { type: integer, format: int64, description: 这次申请对应的计费 token 数 }
-        status: { type: string, enum: [pending, processing, succeeded, failed] }
+        status: { type: string, enum: [pending, processing, succeeded, failed, abandoned] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time, description: 终态行的确认时间 }
     AdminAccountPoints:

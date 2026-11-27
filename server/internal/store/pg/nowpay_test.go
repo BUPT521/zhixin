@@ -1072,7 +1072,8 @@ func TestPostgresRefusesToStartWithoutThePurchaseIdempotencyColumns(t *testing.T
 }
 
 // TestPostgresUnsettledGlobalOnlyTakesOldCharges 守住全局补查的范围：只取创建超过宽限
-// 期、仍然 pending 或 processing 的流水，按创建时间升序，结果上限按批次。
+// 期、仍然 pending 或 processing 的流水，按上一次尝试时刻与创建时间升序，结果上限按
+// 批次。
 func TestPostgresUnsettledGlobalOnlyTakesOldCharges(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -1105,7 +1106,7 @@ func TestPostgresUnsettledGlobalOnlyTakesOldCharges(t *testing.T) {
 		t.Fatalf("只应取超过五分钟的 pending/processing，实际 %+v", charges)
 	}
 	if charges[0].ID != "nc_old_pending" || charges[1].ID != "nc_old_processing" {
-		t.Fatalf("应按创建时间升序: %+v", charges)
+		t.Fatalf("应按上一次尝试时刻与创建时间升序: %+v", charges)
 	}
 	limited, err := st.UnsettledGlobal(ctx, now.Add(-5*time.Minute), 1)
 	if err != nil || len(limited) != 1 {
@@ -1113,8 +1114,99 @@ func TestPostgresUnsettledGlobalOnlyTakesOldCharges(t *testing.T) {
 	}
 }
 
+// TestPostgresUnsettledGlobalRotatesAttemptedCharges 守住轮转取数：刚试过的那一笔排到
+// 后面，从没试过的先取，即使它更晚创建。按创建时间取时最老的一批永远占住每次五十条
+// 的名额，只要它们一直处理不掉，更晚的流水在保留期里就永远轮不到（ADR-0089）。
+func TestPostgresUnsettledGlobalRotatesAttemptedCharges(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now()
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at, last_attempt_at)
+		 VALUES ('nc_retried', 'u1', current_date, 1, 1000, 'pending', now() - interval '2 hours', now()),
+		        ('nc_fresh', 'u1', current_date, 1, 1000, 'pending', now() - interval '10 minutes', NULL)`); err != nil {
+		t.Fatalf("insert charges: %v", err)
+	}
+	charges, err := st.UnsettledGlobal(ctx, now.Add(-5*time.Minute), 1)
+	if err != nil || len(charges) != 1 {
+		t.Fatalf("补查取数: %d %v", len(charges), err)
+	}
+	if charges[0].ID != "nc_fresh" {
+		t.Fatalf("应先取没有试过的那一笔，实际 %+v", charges)
+	}
+	charges, err = st.UnsettledGlobal(ctx, now.Add(-5*time.Minute), 50)
+	if err != nil || len(charges) != 2 {
+		t.Fatalf("第二批应同时取到两笔: %d %v", len(charges), err)
+	}
+	if charges[1].ID != "nc_retried" {
+		t.Fatalf("刚试过的那一笔应排到后面，实际 %+v", charges)
+	}
+}
+
+// TestPostgresNoteAttemptCountsAndGivesUp 守住补查的尝试计数与上限：每次尝试加一并
+// 推进 last_attempt_at，超过上限的那一次落成 abandoned 并写备注，之后的补查不再取
+// 它；已经终结的流水不更新，返回空状态（ADR-0089）。
+func TestPostgresNoteAttemptCountsAndGivesUp(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if err := createAccount(ctx, st, auth.User{ID: "u1", PasswordHash: "h"}, "u1@b.cn"); err != nil {
+		t.Fatalf("user: %v", err)
+	}
+	now := time.Now()
+	if _, err := st.pool.Exec(ctx,
+		`INSERT INTO nowpay_charge (id, user_id, day, points, billed_tokens, status, created_at)
+		 VALUES ('nc_1', 'u1', current_date, 1, 1000, 'pending', now() - interval '10 minutes')`); err != nil {
+		t.Fatalf("insert charge: %v", err)
+	}
+	for attempt := 1; attempt <= 2; attempt++ {
+		status, err := st.NoteAttempt(ctx, "nc_1", 2)
+		if err != nil || status != nowpay.StatusPending {
+			t.Fatalf("第 %d 次尝试仍应为 pending: %q %v", attempt, status, err)
+		}
+	}
+	var attempts int32
+	var lastAttemptAt time.Time
+	if err := st.pool.QueryRow(ctx,
+		`SELECT attempts, last_attempt_at FROM nowpay_charge WHERE id = 'nc_1'`).
+		Scan(&attempts, &lastAttemptAt); err != nil {
+		t.Fatalf("read charge: %v", err)
+	}
+	if attempts != 2 || lastAttemptAt.IsZero() {
+		t.Fatalf("应记下两次尝试与尝试时刻: attempts=%d at=%v", attempts, lastAttemptAt)
+	}
+	status, err := st.NoteAttempt(ctx, "nc_1", 2)
+	if err != nil || status != nowpay.StatusAbandoned {
+		t.Fatalf("超过上限应落成 abandoned: %q %v", status, err)
+	}
+	var note string
+	if err := st.pool.QueryRow(ctx,
+		`SELECT note FROM nowpay_charge WHERE id = 'nc_1'`).Scan(&note); err != nil {
+		t.Fatalf("read note: %v", err)
+	}
+	if note == "" {
+		t.Fatal("落成 abandoned 时应写一条备注")
+	}
+	if charges, err := st.UnsettledGlobal(ctx, now.Add(-5*time.Minute), 50); err != nil || len(charges) != 0 {
+		t.Fatalf("落成 abandoned 的流水不应再被补查取到: %+v %v", charges, err)
+	}
+	if status, err := st.NoteAttempt(ctx, "nc_1", 2); err != nil || status != "" {
+		t.Fatalf("已经终结的流水不应再被更新: %q %v", status, err)
+	}
+	counts, err := st.ChargeStatusCounts(ctx)
+	if err != nil {
+		t.Fatalf("charge status counts: %v", err)
+	}
+	if counts[nowpay.StatusAbandoned] != 1 {
+		t.Fatalf("放弃补查的流水应计入 abandoned: %+v", counts)
+	}
+}
+
 // TestPostgresPrunesExpiredPurchasesAndTerminalCharges 守住保留期边界：购买入口按过期
-// 30 天、核销流水按终态更新 180 天删除，pending 不删。
+// 30 天、核销流水按终态更新 180 天删除，pending 不删；补查放弃的 abandoned 也算终态，
+// 跟着一起清理（ADR-0089）。
 func TestPostgresPrunesExpiredPurchasesAndTerminalCharges(t *testing.T) {
 	st := newTestStore(t)
 	ctx := context.Background()
@@ -1143,6 +1235,7 @@ func TestPostgresPrunesExpiredPurchasesAndTerminalCharges(t *testing.T) {
 	}{
 		{"nc_old_succeeded", nowpay.StatusSucceeded, now.AddDate(0, 0, -181)},
 		{"nc_old_failed", nowpay.StatusFailed, now.AddDate(0, 0, -181)},
+		{"nc_old_abandoned", nowpay.StatusAbandoned, now.AddDate(0, 0, -181)},
 		{"nc_keep_succeeded", nowpay.StatusSucceeded, now.AddDate(0, 0, -179)},
 		{"nc_old_pending", nowpay.StatusPending, now.AddDate(0, 0, -181)},
 	} {
@@ -1158,7 +1251,7 @@ func TestPostgresPrunesExpiredPurchasesAndTerminalCharges(t *testing.T) {
 		t.Fatalf("应删除过期 30 天以上的购买入口: %d %v", deleted, err)
 	}
 	deleted, err = st.DeleteTerminalCharges(ctx, now.AddDate(0, 0, -180), 1000)
-	if err != nil || deleted != 2 {
+	if err != nil || deleted != 3 {
 		t.Fatalf("应删除终态超过 180 天的流水: %d %v", deleted, err)
 	}
 	var charges, purchases int64
@@ -1226,5 +1319,37 @@ func TestPostgresRefusesToStartWithoutTheClaimColumn(t *testing.T) {
 	}
 	if err := st.CheckNowPaySchema(ctx); err == nil {
 		t.Fatal("缺 claimed_at 列时启动应失败")
+	}
+}
+
+// TestPostgresRefusesToStartWithoutTheAttemptColumns 守住补查尝试的启动检查：缺列时
+// 补查写不进尝试、取数也轮转不起来，积压会重新饿死更晚的流水（ADR-0089）。
+func TestPostgresRefusesToStartWithoutTheAttemptColumns(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	enablePaidQuota(t, st)
+	if _, err := st.pool.Exec(ctx, `ALTER TABLE nowpay_charge DROP COLUMN attempts`); err != nil {
+		t.Fatalf("drop column: %v", err)
+	}
+	if err := st.CheckNowPaySchema(ctx); err == nil {
+		t.Fatal("缺 attempts 列时启动应失败")
+	}
+}
+
+// TestPostgresRefusesToStartWithoutTheAbandonedStatus 守住状态约束的启动检查：约束还
+// 只认四个状态时，超过上限的流水落不成终态，补查会一直重试同一批（ADR-0089）。
+func TestPostgresRefusesToStartWithoutTheAbandonedStatus(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	enablePaidQuota(t, st)
+	if _, err := st.pool.Exec(ctx, `ALTER TABLE nowpay_charge DROP CONSTRAINT nowpay_charge_status_check`); err != nil {
+		t.Fatalf("drop constraint: %v", err)
+	}
+	if _, err := st.pool.Exec(ctx, `ALTER TABLE nowpay_charge ADD CONSTRAINT nowpay_charge_status_check
+		CHECK (status IN ('pending', 'processing', 'succeeded', 'failed'))`); err != nil {
+		t.Fatalf("add constraint: %v", err)
+	}
+	if err := st.CheckNowPaySchema(ctx); err == nil {
+		t.Fatal("状态约束不含 abandoned 时启动应失败")
 	}
 }
