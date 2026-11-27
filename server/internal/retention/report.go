@@ -21,14 +21,14 @@ var ErrInvalidRange = errors.New("retention: days out of range")
 
 // DayCount 是一天的活跃数量；读取层只回有记录的日子，补零由 Reporter 做。
 type DayCount struct {
-	Day   string
+	Day   time.Time
 	Count int64
 }
 
 // Cohort 是一批第一次出现的匿名安装在一周与四周内的回访数量，回访不含首次
-// 当天。
+// 当天。读取层回日期值，报告直接使用，不再把日期转成字符串再解析回来。
 type Cohort struct {
-	FirstDay    string
+	FirstDay    time.Time
 	Installs    int64
 	Returned7d  int64
 	Returned28d int64
@@ -37,7 +37,7 @@ type Cohort struct {
 // DayActive 是报告里的一天。没有活跃的日期也占一行，数字为 0，页面因此每天
 // 都能对齐。
 type DayActive struct {
-	Day      string
+	Day      time.Time
 	Installs int64
 	Users    int64
 }
@@ -90,7 +90,7 @@ func (r *Reporter) Report(ctx context.Context, days int) (Report, error) {
 	today := r.now().In(r.loc)
 	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, r.loc)
 	first := today.AddDate(0, 0, 1-days)
-	since := first.Format("2006-01-02")
+	since := first.Format(DayLayout)
 
 	installs, err := r.reader.DailyInstallActive(ctx, since)
 	if err != nil {
@@ -107,16 +107,16 @@ func (r *Reporter) Report(ctx context.Context, days int) (Report, error) {
 
 	byDay := make(map[string]*DayActive, days)
 	for i := range days {
-		day := first.AddDate(0, 0, i).Format("2006-01-02")
-		byDay[day] = &DayActive{Day: day}
+		day := first.AddDate(0, 0, i)
+		byDay[day.Format(DayLayout)] = &DayActive{Day: day}
 	}
 	for _, row := range installs {
-		if day, ok := byDay[row.Day]; ok {
+		if day, ok := byDay[row.Day.Format(DayLayout)]; ok {
 			day.Installs = row.Count
 		}
 	}
 	for _, row := range users {
-		if day, ok := byDay[row.Day]; ok {
+		if day, ok := byDay[row.Day.Format(DayLayout)]; ok {
 			day.Users = row.Count
 		}
 	}
@@ -128,17 +128,18 @@ func (r *Reporter) Report(ctx context.Context, days int) (Report, error) {
 		Cohorts:  make([]Cohort, 0, len(cohorts)),
 	}
 	for i := range days {
-		day := first.AddDate(0, 0, i).Format("2006-01-02")
-		out.Daily = append(out.Daily, *byDay[day])
+		out.Daily = append(out.Daily, *byDay[first.AddDate(0, 0, i).Format(DayLayout)])
 	}
 	for _, cohort := range cohorts {
 		// 读取层已经按下界过滤，这里再挡一次：跨保留期被清理的安装不该让某一
 		// 天凭空出现在报告里。
-		if cohort.FirstDay < since {
+		if cohort.FirstDay.Format(DayLayout) < since {
 			continue
 		}
 		out.Cohorts = append(out.Cohorts, cohort)
 	}
-	sort.Slice(out.Cohorts, func(i, j int) bool { return out.Cohorts[i].FirstDay < out.Cohorts[j].FirstDay })
+	sort.Slice(out.Cohorts, func(i, j int) bool {
+		return out.Cohorts[i].FirstDay.Before(out.Cohorts[j].FirstDay)
+	})
 	return out, nil
 }

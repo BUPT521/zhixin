@@ -19,6 +19,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/feedback"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -1336,15 +1337,15 @@ func TestPostgresRetention(t *testing.T) {
 	if err != nil {
 		t.Fatalf("daily install active: %v", err)
 	}
-	if len(installDays) != 2 || installDays[0].Day != "2026-11-18" || installDays[0].Count != 1 ||
-		installDays[1].Day != "2026-11-25" || installDays[1].Count != 1 {
+	if len(installDays) != 2 || installDays[0].Day.Format(retention.DayLayout) != "2026-11-18" || installDays[0].Count != 1 ||
+		installDays[1].Day.Format(retention.DayLayout) != "2026-11-25" || installDays[1].Count != 1 {
 		t.Fatalf("每日匿名活跃不对：%+v", installDays)
 	}
 	userDays, err := st.DailyUserActive(ctx, "2026-11-01")
 	if err != nil {
 		t.Fatalf("daily user active: %v", err)
 	}
-	if len(userDays) != 1 || userDays[0].Day != "2026-11-18" || userDays[0].Count != 1 {
+	if len(userDays) != 1 || userDays[0].Day.Format(retention.DayLayout) != "2026-11-18" || userDays[0].Count != 1 {
 		t.Fatalf("每日登录活跃不对：%+v", userDays)
 	}
 	cohorts, err := st.InstallRetentionCohorts(ctx, "2026-11-01")
@@ -1355,7 +1356,7 @@ func TestPostgresRetention(t *testing.T) {
 		t.Fatalf("只有 11-18 这一批落在区间内：%+v", cohorts)
 	}
 	cohort := cohorts[0]
-	if cohort.FirstDay != "2026-11-18" || cohort.Installs != 1 || cohort.Returned7d != 1 || cohort.Returned28d != 1 {
+	if cohort.FirstDay.Format(retention.DayLayout) != "2026-11-18" || cohort.Installs != 1 || cohort.Returned7d != 1 || cohort.Returned28d != 1 {
 		t.Fatalf("11-25 是第 7 天回访，一周与四周都应算：%+v", cohort)
 	}
 

@@ -16,6 +16,9 @@ import (
 const (
 	// ActiveKeepDays 是匿名活跃数据的保留天数，见 ADR-0019 第 4 条。
 	ActiveKeepDays = 180
+	// DayLayout 是服务端表示自然日的唯一格式。写入时按它落库，读取时按它把日期
+	// 转回 time.Time，后台视图直接使用日期值，不再把格式化后的字符串解析一遍。
+	DayLayout = "2006-01-02"
 	// minInstallRunes 与 maxInstallRunes 限定安装标识的长度，避免客户端把整段
 	// 文本或空串当成标识发上来。
 	minInstallRunes = 16
@@ -98,7 +101,7 @@ func (m *MemoryStore) DailyInstallActive(_ context.Context, since string) ([]Day
 			counts[key[1]]++
 		}
 	}
-	return dayCounts(counts), nil
+	return dayCounts(counts)
 }
 
 // DailyUserActive 汇总 since 之后每天有鉴权请求的账号数。
@@ -111,7 +114,7 @@ func (m *MemoryStore) DailyUserActive(_ context.Context, since string) ([]DayCou
 			counts[key[1]]++
 		}
 	}
-	return dayCounts(counts), nil
+	return dayCounts(counts)
 }
 
 // InstallRetentionCohorts 按第一次出现的日子分组，数一周与四周内再次活跃的
@@ -138,7 +141,11 @@ func (m *MemoryStore) InstallRetentionCohorts(_ context.Context, since string) (
 		}
 		cohort := byFirst[first]
 		if cohort == nil {
-			cohort = &Cohort{FirstDay: first}
+			firstDay, err := time.Parse(DayLayout, first)
+			if err != nil {
+				return nil, err
+			}
+			cohort = &Cohort{FirstDay: firstDay}
 			byFirst[first] = cohort
 		}
 		cohort.Installs++
@@ -165,18 +172,18 @@ func (m *MemoryStore) InstallRetentionCohorts(_ context.Context, since string) (
 	for _, cohort := range byFirst {
 		out = append(out, *cohort)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].FirstDay < out[j].FirstDay })
+	sort.Slice(out, func(i, j int) bool { return out[i].FirstDay.Before(out[j].FirstDay) })
 	return out, nil
 }
 
 // withinDays 判断 day 是否落在 first 之后 days 天之内（含第 days 天，不含
 // first 当天）。SQL 里是 first_day + days 的比较，这里用同一段时间轴。
 func withinDays(first, day string, days int) bool {
-	from, err := time.Parse("2006-01-02", first)
+	from, err := time.Parse(DayLayout, first)
 	if err != nil {
 		return false
 	}
-	to, err := time.Parse("2006-01-02", day)
+	to, err := time.Parse(DayLayout, day)
 	if err != nil {
 		return false
 	}
@@ -184,13 +191,17 @@ func withinDays(first, day string, days int) bool {
 }
 
 // dayCounts 把日期到数量的映射排成按日期升序的行。
-func dayCounts(counts map[string]int64) []DayCount {
+func dayCounts(counts map[string]int64) ([]DayCount, error) {
 	out := make([]DayCount, 0, len(counts))
 	for day, count := range counts {
-		out = append(out, DayCount{Day: day, Count: count})
+		date, err := time.Parse(DayLayout, day)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, DayCount{Day: date, Count: count})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Day < out[j].Day })
-	return out
+	sort.Slice(out, func(i, j int) bool { return out[i].Day.Before(out[j].Day) })
+	return out, nil
 }
 
 // installCount 与 userDayCount 供本包测试核对保存与清理的结果，后台视图走
@@ -207,7 +218,7 @@ func (m *MemoryStore) userDayCount() int {
 	return len(m.users)
 }
 
-// dayOf 返回 loc 时区下某天对应的 YYYY-MM-DD，服务端自然日只从这一处取。
+// dayOf 返回 loc 时区下某天对应的自然日，服务端自然日只从这一处取。
 func dayOf(t time.Time, loc *time.Location) string {
-	return t.In(loc).Format("2006-01-02")
+	return t.In(loc).Format(DayLayout)
 }

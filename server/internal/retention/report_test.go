@@ -48,8 +48,8 @@ func TestReporterFillsDaysAndGroupsCohorts(t *testing.T) {
 	if len(report.Daily) != 30 {
 		t.Fatalf("区间内每天都应有一行，得到 %d", len(report.Daily))
 	}
-	if report.Daily[0].Day != "2026-11-01" || report.Daily[29].Day != "2026-11-30" {
-		t.Fatalf("区间首尾不对：%s 至 %s", report.Daily[0].Day, report.Daily[29].Day)
+	if report.Daily[0].Day.Format(DayLayout) != "2026-11-01" || report.Daily[29].Day.Format(DayLayout) != "2026-11-30" {
+		t.Fatalf("区间首尾不对：%s 至 %s", report.Daily[0].Day.Format(DayLayout), report.Daily[29].Day.Format(DayLayout))
 	}
 	if got := report.Daily[0]; got.Installs != 2 || got.Users != 0 {
 		t.Fatalf("11-01 应有两个安装、没有登录账号，得到 %+v", got)
@@ -68,7 +68,7 @@ func TestReporterFillsDaysAndGroupsCohorts(t *testing.T) {
 		t.Fatalf("只有 11-01 这一批落在区间内（install-c 首次出现在 10-31），得到 %+v", report.Cohorts)
 	}
 	first := report.Cohorts[0]
-	if first.FirstDay != "2026-11-01" || first.Installs != 2 {
+	if first.FirstDay.Format(DayLayout) != "2026-11-01" || first.Installs != 2 {
 		t.Fatalf("11-01 这一批应有两个安装，得到 %+v", first)
 	}
 	if first.Returned7d != 1 || first.Returned28d != 1 {
@@ -103,7 +103,7 @@ func TestReporterUsesServerDayBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("report: %v", err)
 	}
-	if len(report.Daily) != 1 || report.Daily[0].Day != "2026-12-01" {
+	if len(report.Daily) != 1 || report.Daily[0].Day.Format(DayLayout) != "2026-12-01" {
 		t.Fatalf("区间应按上海时间落在 12-01，得到 %+v", report.Daily)
 	}
 	if report.Daily[0].Installs != 1 {

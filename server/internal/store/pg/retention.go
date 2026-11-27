@@ -3,8 +3,6 @@ package pg
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgtype"
-
 	"github.com/BUPT521/zhixin/server/internal/retention"
 	"github.com/BUPT521/zhixin/server/internal/store/db"
 )
@@ -46,9 +44,6 @@ func (s *Store) PruneInstallsBefore(ctx context.Context, before string) error {
 	return s.q.PruneInstallActiveBefore(ctx, date)
 }
 
-// dayString 把数据库里的自然日转回服务层使用的 YYYY-MM-DD。
-func dayString(date pgtype.Date) string { return date.Time.Format("2006-01-02") }
-
 // DailyInstallActive 按自然日汇总匿名安装数。区间只影响读取，判断自然日的时区
 // 在写入时已经定下，这里不再换算。
 func (s *Store) DailyInstallActive(ctx context.Context, since string) ([]retention.DayCount, error) {
@@ -62,7 +57,7 @@ func (s *Store) DailyInstallActive(ctx context.Context, since string) ([]retenti
 	}
 	out := make([]retention.DayCount, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, retention.DayCount{Day: dayString(row.Day), Count: row.Installs})
+		out = append(out, retention.DayCount{Day: row.Day.Time, Count: row.Installs})
 	}
 	return out, nil
 }
@@ -79,7 +74,7 @@ func (s *Store) DailyUserActive(ctx context.Context, since string) ([]retention.
 	}
 	out := make([]retention.DayCount, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, retention.DayCount{Day: dayString(row.Day), Count: row.Users})
+		out = append(out, retention.DayCount{Day: row.Day.Time, Count: row.Users})
 	}
 	return out, nil
 }
@@ -97,7 +92,7 @@ func (s *Store) InstallRetentionCohorts(ctx context.Context, since string) ([]re
 	out := make([]retention.Cohort, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, retention.Cohort{
-			FirstDay: dayString(row.FirstDay), Installs: row.Installs,
+			FirstDay: row.FirstDay.Time, Installs: row.Installs,
 			Returned7d: row.Returned7d, Returned28d: row.Returned28d,
 		})
 	}

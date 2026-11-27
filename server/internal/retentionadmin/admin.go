@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
 
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -18,9 +17,6 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/retention"
 )
-
-// dayLayout 与服务端其余地方表示自然日的格式一致。
-const dayLayout = "2006-01-02"
 
 // Admin 承载留存视图的处理器。装配处传进来的 Reporter 决定时区与"今天"，这里
 // 只做参数校验与格式转换。
@@ -57,23 +53,13 @@ func (a *Admin) Report(w http.ResponseWriter, r *http.Request, params api.GetAdm
 		Cohorts:  make([]api.AdminRetentionCohort, 0, len(report.Cohorts)),
 	}
 	for _, day := range report.Daily {
-		date, err := time.Parse(dayLayout, day.Day)
-		if err != nil {
-			httpx.WriteInternal(w, r, a.log, fmt.Errorf("parse retention day %q: %w", day.Day, err))
-			return
-		}
 		out.Daily = append(out.Daily, api.AdminRetentionDay{
-			Day: openapi_types.Date{Time: date}, Installs: day.Installs, Users: day.Users,
+			Day: openapi_types.Date{Time: day.Day}, Installs: day.Installs, Users: day.Users,
 		})
 	}
 	for _, cohort := range report.Cohorts {
-		date, err := time.Parse(dayLayout, cohort.FirstDay)
-		if err != nil {
-			httpx.WriteInternal(w, r, a.log, fmt.Errorf("parse retention cohort %q: %w", cohort.FirstDay, err))
-			return
-		}
 		out.Cohorts = append(out.Cohorts, api.AdminRetentionCohort{
-			FirstDay: openapi_types.Date{Time: date}, Installs: cohort.Installs,
+			FirstDay: openapi_types.Date{Time: cohort.FirstDay}, Installs: cohort.Installs,
 			Returned7d: cohort.Returned7d, Returned28d: cohort.Returned28d,
 		})
 	}
