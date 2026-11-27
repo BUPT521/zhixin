@@ -18,6 +18,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/auth"
 	"github.com/BUPT521/zhixin/server/internal/devicename"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 	"github.com/BUPT521/zhixin/server/internal/testutil"
 )
 
@@ -56,7 +57,7 @@ func newTestServer(t *testing.T) (*testutil.Client, *auth.Service) {
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(NewService(NewMemoryStore(), testMaxBytes, testKept, testSchemaVersion), log)
+	handler := NewHandler(NewService(NewMemoryStore(), objectstore.NewMemory(), fakeAttachmentKeys{}, testMaxBytes, testKept, testSchemaVersion), log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
 		auth.Middleware(authSvc, log),

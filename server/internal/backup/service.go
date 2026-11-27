@@ -21,24 +21,29 @@ type Service struct {
 	schemaVersion int
 	now           func() time.Time
 	// objects 是写字节的同一份对象存储，后台对账用它列出 backups/ 与
-	// attachments/ 下的对象；由装配处经 SetObjects 注入，没有注入时对账返回错误。
+	// attachments/ 下的对象；由 NewService 的构造参数给出。
 	objects objectstore.Store
 	// attachmentKeys 列出仍然登记在附件索引里的对象键，对账据此把 attachments/
-	// 下的对象分成仍登记与遗留字节；由装配处经 SetAttachmentKeys 注入，没有
-	// 注入时对账返回错误，不会只对账备份而漏掉附件。
+	// 下的对象分成仍登记与遗留字节；由 NewService 的构造参数给出，保证对账不会
+	// 只处理备份而漏掉附件。
 	attachmentKeys AttachmentKeys
 	// reconcileInterval 是后台对账的周期，由配置项
 	// ZHIXIN_BACKUP_RECONCILE_INTERVAL 设置；0 表示只在启动时跑一次。
 	reconcileInterval time.Duration
 }
 
-func NewService(store Store, maxBytes int64, keep, schemaVersion int) *Service {
+// NewService 组装备份服务。objects 与 attachmentKeys 是后台对账的两份来源，
+// 前者列出对象存储里的键、后者列出附件索引里仍登记的键；装配处必须传入，
+// 对账因此没有“没有注入”的降级路径（ADR-0037）。
+func NewService(store Store, objects objectstore.Store, attachmentKeys AttachmentKeys, maxBytes int64, keep, schemaVersion int) *Service {
 	return &Service{
-		store:         store,
-		maxBytes:      maxBytes,
-		keep:          keep,
-		schemaVersion: schemaVersion,
-		now:           time.Now,
+		store:          store,
+		objects:        objects,
+		attachmentKeys: attachmentKeys,
+		maxBytes:       maxBytes,
+		keep:           keep,
+		schemaVersion:  schemaVersion,
+		now:            time.Now,
 	}
 }
 

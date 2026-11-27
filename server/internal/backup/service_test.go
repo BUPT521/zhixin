@@ -6,13 +6,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
 // TestServiceUploadStoresMetadata 守住服务层只做自己那一段：schema 与大小已由
 // 处理器在 HTTP 入口核对，这里原样写进元数据，设备名清洗后落库。
 func TestServiceUploadStoresMetadata(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 8, 2, 27)
+	svc := NewService(NewMemoryStore(), objectstore.NewMemory(), fakeAttachmentKeys{}, 8, 2, 27)
 
 	meta, err := svc.Upload(ctx, "u1", "sha", 27, "  phone  ", 4, strings.NewReader("zip1"))
 	if err != nil {
@@ -29,7 +31,7 @@ func TestServiceUploadStoresMetadata(t *testing.T) {
 
 func TestServiceKeepsNewestSnapshots(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 8, 2, 27)
+	svc := NewService(NewMemoryStore(), objectstore.NewMemory(), fakeAttachmentKeys{}, 8, 2, 27)
 	for _, body := range []string{"a", "b", "c"} {
 		if _, err := svc.Upload(ctx, "u1", "sha-"+body, 27, "", 1, strings.NewReader(body)); err != nil {
 			t.Fatalf("upload %s: %v", body, err)
@@ -49,7 +51,7 @@ func TestServiceKeepsNewestSnapshots(t *testing.T) {
 // 正常删除，重复删除停在 ErrNotFound。
 func TestServiceDeleteScopesToAccountAndRejectsBadIDs(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 64, 2, 27)
+	svc := NewService(NewMemoryStore(), objectstore.NewMemory(), fakeAttachmentKeys{}, 64, 2, 27)
 
 	mine, err := svc.Upload(ctx, "u1", "sha-1", 27, "", 1, strings.NewReader("a"))
 	if err != nil {
@@ -105,7 +107,7 @@ func TestServiceDeleteScopesToAccountAndRejectsBadIDs(t *testing.T) {
 // 元数据与字节一起消失；另一个账号的备份仍可列出与打开；空账号再清一次不算错误。
 func TestServiceDeleteAllClearsOnlyThatAccount(t *testing.T) {
 	ctx := context.Background()
-	svc := NewService(NewMemoryStore(), 8, 2, 27)
+	svc := NewService(NewMemoryStore(), objectstore.NewMemory(), fakeAttachmentKeys{}, 8, 2, 27)
 
 	gone, err := svc.Upload(ctx, "u1", "sha-1", 27, "", 1, strings.NewReader("a"))
 	if err != nil {

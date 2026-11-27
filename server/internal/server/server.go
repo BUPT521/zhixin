@@ -306,12 +306,10 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		SetSnapshotBytes(cfg.MaxAttachmentBytes)
 	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
 
-	backupSvc := backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
 	// 备份的元数据与字节分两步写，中断会留下没有元数据的对象：按周期对账一次，
 	// 删掉库里查不到、且写于一小时之前的遗留字节（ADR-0037）。attachments/ 与
 	// backups/ 共用这份对象存储，附件侧同样按 attachment 表对账。
-	backupSvc.SetObjects(st.Objects)
-	backupSvc.SetAttachmentKeys(st.Blobs)
+	backupSvc := backup.NewService(st.Backups, st.Objects, st.Blobs, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
 	backupSvc.SetReconcileInterval(cfg.BackupReconcileInterval)
 	backupHandler := backup.NewHandler(backupSvc, log)
 
