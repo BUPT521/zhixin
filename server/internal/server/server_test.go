@@ -713,7 +713,7 @@ func (failingSyncStore) Append(context.Context, string, int64, []syncsvc.Commit,
 	return syncsvc.AppendResult{}, errors.New("database is down")
 }
 
-func (failingSyncStore) After(context.Context, string, int64, int, int64) ([]syncsvc.Commit, error) {
+func (failingSyncStore) After(context.Context, string, int64, int) ([]syncsvc.Commit, error) {
 	return nil, errors.New("database is down")
 }
 
@@ -737,10 +737,6 @@ func (failingSyncStore) TouchDevice(context.Context, string, string, bool, int64
 	return errors.New("database is down")
 }
 
-func (failingSyncStore) EnsureDevice(context.Context, string, string) error {
-	return errors.New("database is down")
-}
-
 func (failingSyncStore) Devices(context.Context, string, int) ([]syncsvc.Device, error) {
 	return nil, errors.New("database is down")
 }
@@ -761,8 +757,8 @@ func (failingSyncStore) Refs(context.Context, string) ([]syncsvc.Ref, error) {
 	return nil, errors.New("database is down")
 }
 
-func (failingSyncStore) PutRef(context.Context, string, syncsvc.Ref) (syncsvc.Ref, bool, error) {
-	return syncsvc.Ref{}, false, errors.New("database is down")
+func (failingSyncStore) PutRef(context.Context, string, syncsvc.Ref) (syncsvc.Ref, error) {
+	return syncsvc.Ref{}, errors.New("database is down")
 }
 
 func TestInternalErrorsAreProblems(t *testing.T) {

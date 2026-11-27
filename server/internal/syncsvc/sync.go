@@ -68,8 +68,15 @@ var (
 )
 
 const (
-	MaxPushBytes     = 16 << 20
-	MaxCommitBytes   = 2 << 20
+	// MaxPushBytes 是整批推送的累计字节上限，单条提交另受 MaxCommitBytes 约束。
+	MaxPushBytes = 16 << 20
+	// MaxCommitBytes 是单条提交序列化之后的字节上限，也是拉取页预算的下限：
+	// 一页预算至少容纳一条提交（S12）。
+	MaxCommitBytes = 2 << 20
+	// MaxPullBytes 是拉取页预算的配置上限，页预算默认取 DefaultPullBytes。
+	MaxPullBytes = 16 << 20
+	// MaxRequestBytes 是同步写接口单次 JSON 请求体的上限。
+	MaxRequestBytes  = 16 << 20
 	MaxAccountBytes  = 256 << 20
 	DefaultPullBytes = 4 << 20
 	// DefaultSnapshotBytes 是单个快照附件的默认上限，装配时用单个附件的上限覆盖：
@@ -180,8 +187,10 @@ type Store interface {
 	// that device's position, otherwise every device named by a commit is
 	// ensured. A rejected push leaves the roster untouched.
 	Append(ctx context.Context, userID string, base int64, commits []Commit, policy CompactPolicy, roster DeviceRoster) (AppendResult, error)
-	// After bounds the page before loading commit contents.
-	After(ctx context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error)
+	// After returns commits with seq greater than after, at most limit of them,
+	// in sequence order. Bounding the page by bytes is the service's job: it
+	// serializes a page once and trims it there, so the store returns rows only.
+	After(ctx context.Context, userID string, after int64, limit int) ([]Commit, error)
 	// RegisterSnapshot stores the newest snapshot pointer, marks the old
 	// attachment as orphaned when the pointer moves to another hash, and, when
 	// policy allows it, compacts commits the snapshot makes unnecessary without
@@ -208,10 +217,6 @@ type Store interface {
 	// synced position moves to the larger of the stored one and position,
 	// bounded by the current head (ADR-0048, ADR-0054).
 	TouchDevice(ctx context.Context, userID, deviceID string, snapshotCapable bool, position int64) error
-	// EnsureDevice adds a device seen in a push without a device header. An
-	// existing row keeps its alias, capability and position and only moves
-	// last_seen.
-	EnsureDevice(ctx context.Context, userID, deviceID string) error
 	// Devices lists the roster, newest first, at most limit rows.
 	Devices(ctx context.Context, userID string, limit int) ([]Device, error)
 	// RenameDevice changes the alias of a known device and returns the updated
@@ -227,19 +232,17 @@ type Store interface {
 	// Refs lists every named ref of the account, tombstones included.
 	Refs(ctx context.Context, userID string) ([]Ref, error)
 	// PutRef stores one named ref or its tombstone and returns the row that is
-	// stored afterwards together with whether this call wrote it. A write older
-	// than the stored deletion time does not revive the name; it returns the
-	// existing tombstone and false. ErrRefLimit is returned when a new name
-	// would exceed the per-account limit.
-	PutRef(ctx context.Context, userID string, ref Ref) (Ref, bool, error)
+	// stored afterwards. A write older than the stored deletion time does not
+	// revive the name; it returns the existing tombstone. ErrRefLimit is
+	// returned when a new name would exceed the per-account limit.
+	PutRef(ctx context.Context, userID string, ref Ref) (Ref, error)
 }
 
-// AppendResult 是一次推送的结果：调用之后的 head、与请求逐条对应的序号，以及
-// 这批提交里有没有服务端新写入的。整批重放时 Fresh 为假，设备位置只按 base 推进。
+// AppendResult 是一次推送的结果：调用之后的 head，以及与请求逐条对应的序号。
+// 整批重放时序号都是原来的，设备位置只按 base 推进。
 type AppendResult struct {
-	Head  int64
-	Seqs  []int64
-	Fresh bool
+	Head int64
+	Seqs []int64
 }
 
 // DeviceClaim 是一次推送携带的设备标识与快照能力。请求没有可用的设备标识时不留
@@ -455,10 +458,10 @@ func (m *MemoryStore) Append(_ context.Context, userID string, base int64, commi
 	// 名册与提交序列在同一次写入里更新：推送成功之后不再单独补写设备行，
 	// 也不再用序号比较猜测有没有新提交（ADR-0048、ADR-0054）。
 	l.applyDeviceRoster(roster, base, l.head(), true, received.UTC())
-	return AppendResult{Head: l.head(), Seqs: plan.Seqs, Fresh: true}, nil
+	return AppendResult{Head: l.head(), Seqs: plan.Seqs}, nil
 }
 
-func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int, maxBytes int64) ([]Commit, error) {
+func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit int) ([]Commit, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.logs[userID]
@@ -473,7 +476,7 @@ func (m *MemoryStore) After(_ context.Context, userID string, after int64, limit
 		return nil, nil
 	}
 	end := min(start+int64(limit), int64(len(l.commits)))
-	return append([]Commit(nil), trimPullBytes(l.commits[start:end], maxBytes)...), nil
+	return append([]Commit(nil), l.commits[start:end]...), nil
 }
 
 func (m *MemoryStore) RegisterSnapshot(_ context.Context, userID string, snap Snapshot, policy CompactPolicy) (State, error) {
@@ -582,16 +585,8 @@ func (l *memoryLog) touchDevice(deviceID string, snapshotCapable bool, position 
 	}
 }
 
-// EnsureDevice 补一行设备；已有行只更新最近出现时间，能力、位置与别名保持原样。
-func (m *MemoryStore) EnsureDevice(_ context.Context, userID, deviceID string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	l := m.ensure(userID)
-	l.ensureDevice(deviceID, m.now().UTC())
-	return nil
-}
-
-// ensureDevice 在已经持有锁的情况下补一行设备。
+// ensureDevice 在已经持有锁的情况下补一行设备：已有行只更新最近出现时间，能力、
+// 位置与别名保持原样。DeviceRoster.Ensure 用它在推送事务里补行。
 func (l *memoryLog) ensureDevice(deviceID string, now time.Time) {
 	if d, ok := l.devices[deviceID]; ok {
 		d.lastSeen = now
@@ -729,22 +724,16 @@ func (m *MemoryStore) Refs(_ context.Context, userID string) ([]Ref, error) {
 }
 
 // PutRef 写入一个命名版本：后写覆盖先写，写入时间不晚于已存删除时间时不复活；
-// 返回写入之后存储里的那一行，以及这次调用有没有改动它。新增一个未删除的名字
-// 会超过上限时返回 ErrRefLimit。
-func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (Ref, bool, error) {
+// 返回写入之后存储里的那一行。新增一个未删除的名字会超过上限时返回 ErrRefLimit。
+func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (Ref, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	l := m.ensure(userID)
 	current, exists := l.refs[ref.Name]
-	revives := true
-
 	if exists && !current.DeletedAt.IsZero() &&
 		(!ref.DeletedAt.IsZero() || !ref.SourceTime().After(current.DeletedAt)) {
 		// 名字已经是墓碑，而这次写入不晚于删除时间：不复活，也不改变已存的行。
-		revives = false
-	}
-	if !revives {
-		return current, false, nil
+		return current, nil
 	}
 	// 写入一个名字会新增一个未删除的名字：原来的行不存在或已经是墓碑时都要看上限。
 	if ref.DeletedAt.IsZero() && (!exists || !current.DeletedAt.IsZero()) {
@@ -755,11 +744,11 @@ func (m *MemoryStore) PutRef(_ context.Context, userID string, ref Ref) (Ref, bo
 			}
 		}
 		if alive >= MaxRefsPerAccount {
-			return Ref{}, false, ErrRefLimit
+			return Ref{}, ErrRefLimit
 		}
 	}
 	l.refs[ref.Name] = ref
-	return ref, true, nil
+	return ref, nil
 }
 
 // SplitCapabilities 把逗号分隔的能力声明解析成小写名字：去首尾空白、丢掉空项、
@@ -854,7 +843,7 @@ func Validate(c Commit, schemaVersion int) error {
 	switch {
 	case c.Uid == "" || len(c.Uid) > MaxRefUIDBytes,
 		!c.Kind.Valid(),
-		c.DeviceId == "" || len(c.DeviceId) > 64,
+		c.DeviceId == "" || len(c.DeviceId) > maxDeviceIDBytes,
 		c.SchemaVersion != schemaVersion,
 		!c.Actor.Valid(),
 		c.Action == "",

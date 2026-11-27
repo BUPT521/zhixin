@@ -97,9 +97,13 @@ func NewService(store Store, schemaVersion int) *Service {
 
 // SetMaxPullBytes 设置一次拉取返回的提交内容累计字节上限，装配时传
 // ZHIXIN_SYNC_PULL_MAX_BYTES。非正值使用默认上限。
+//
+// 下限是单条提交上限 MaxCommitBytes：一页预算至少要容纳一条提交，否则已经存入的
+// 提交永远拉不下来，Pull 只会返回 ErrPullTooLarge。上限是拉取页预算上限
+// MaxPullBytes。
 func (s *Service) SetMaxPullBytes(n int64) *Service {
 	if n > 0 {
-		s.maxPullBytes = min(n, int64(MaxPushBytes))
+		s.maxPullBytes = min(max(n, int64(MaxCommitBytes)), int64(MaxPullBytes))
 	}
 	return s
 }
@@ -205,7 +209,7 @@ func (s *Service) Pull(
 	if position+1 < state.EarliestSeq {
 		return PullResult{}, &CompactedError{State: state}
 	}
-	commits, err := s.store.After(ctx, userID, position, pageSize, s.maxPullBytes)
+	commits, err := s.store.After(ctx, userID, position, pageSize)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -231,7 +235,8 @@ func (s *Service) Pull(
 	}, nil
 }
 
-// trimPullBytes 按实际序列化后的累计字节数截断本页。
+// trimPullBytes 按实际序列化后的累计字节数截断本页，是拉取页预算唯一的一道裁剪：
+// 存储只按条数取行，序列化与截断都在这里完成。
 func trimPullBytes(commits []Commit, maxBytes int64) []Commit {
 	var total int64
 	for i := range commits {
@@ -425,16 +430,6 @@ func (s *Service) TouchDevice(ctx context.Context, userID, deviceID string, snap
 	return s.store.TouchDevice(ctx, userID, deviceID, snapshotCapable, position)
 }
 
-// EnsureDevice 在名册里补一行推送中出现的设备标识，快照能力、位置与别名留空
-// （ADR-0048）。
-func (s *Service) EnsureDevice(ctx context.Context, userID, deviceID string) error {
-	deviceID = strings.TrimSpace(deviceID)
-	if deviceID == "" || len(deviceID) > maxDeviceIDBytes {
-		return ErrInvalid
-	}
-	return s.store.EnsureDevice(ctx, userID, deviceID)
-}
-
 // Devices 返回账号名册，按最近出现时间倒序，最多 50 条（ADR-0048）。
 func (s *Service) Devices(ctx context.Context, userID string) ([]Device, error) {
 	return s.store.Devices(ctx, userID, deviceListLimit)
@@ -497,7 +492,7 @@ func (s *Service) PutRef(ctx context.Context, userID string, in api.SyncRefWrite
 	}
 	// 存储返回写入之后的那一行：不复活时它仍是已存的墓碑，写入失败时按错误返回，
 	// 这里不再重读整份命名版本去找这一行。
-	ref, _, err := s.store.PutRef(ctx, userID, write)
+	ref, err := s.store.PutRef(ctx, userID, write)
 	if err != nil {
 		return Ref{}, err
 	}

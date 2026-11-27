@@ -101,25 +101,15 @@ SET snapshot_seq = EXCLUDED.snapshot_seq,
     snapshot_digest = EXCLUDED.snapshot_digest,
     snapshot_created_at = EXCLUDED.snapshot_created_at;
 
+-- 一页只按条数取：页预算由服务层按序列化之后的大小裁剪，SQL 不再用
+-- octet_length 估算一遍，同一条提交不会在一页里被序列化两次（S25）。
 -- name: CommitsAfter :many
-WITH page AS MATERIALIZED (
-  SELECT p.seq AS page_seq, octet_length(p.changes::text)::bigint + octet_length(p.action)
-    + octet_length(p.uid) + octet_length(p.device_id) + octet_length(p.kind) + 256 AS bytes
-  FROM sync_commit p
-  WHERE p.user_id = sqlc.arg(user_id) AND p.seq > sqlc.arg(after_seq)
-  ORDER BY p.seq
-  LIMIT sqlc.arg(page_limit)
-), budget AS (
-  SELECT page_seq, sum(bytes) OVER (ORDER BY page_seq) AS total FROM page
-)
-SELECT c.seq, c.uid, c.kind, c.device_id, c.schema_version, c.actor, c.action,
-  c.created_at, c.received_at, c.changes, c.state_digest, c.table_digests
-FROM sync_commit c
-WHERE c.user_id = sqlc.arg(user_id) AND c.seq IN (
-  SELECT budget.page_seq FROM budget
-  WHERE budget.total <= sqlc.arg(max_bytes)::bigint
-)
-ORDER BY c.seq;
+SELECT seq, uid, kind, device_id, schema_version, actor, action,
+  created_at, received_at, changes, state_digest, table_digests
+FROM sync_commit
+WHERE user_id = sqlc.arg(user_id) AND seq > sqlc.arg(after_seq)
+ORDER BY seq
+LIMIT sqlc.arg(page_limit);
 
 -- name: SyncStorageBytes :one
 SELECT coalesce(sum(pg_column_size(changes)::bigint + octet_length(action)

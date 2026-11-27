@@ -177,7 +177,7 @@ func (s *Store) Append(ctx context.Context, userID string, base int64, commits [
 	if err := tx.Commit(ctx); err != nil {
 		return replayed, err
 	}
-	return syncsvc.AppendResult{Head: plan.NewHead, Seqs: plan.Seqs, Fresh: true}, nil
+	return syncsvc.AppendResult{Head: plan.NewHead, Seqs: plan.Seqs}, nil
 }
 
 // applyDeviceRoster 在 Append 的事务里写设备名册：请求带设备标识时把这一台的
@@ -474,12 +474,6 @@ func (s *Store) currentHead(ctx context.Context, userID string) (int64, error) {
 	return row.Head, nil
 }
 
-// EnsureDevice 补一行设备；已有行只更新最近出现时间，快照能力、位置与别名保持
-// 原样。
-func (s *Store) EnsureDevice(ctx context.Context, userID, deviceID string) error {
-	return s.q.EnsureSyncDevice(ctx, db.EnsureSyncDeviceParams{UserID: userID, DeviceID: deviceID})
-}
-
 // Devices 按最近出现时间倒序列出名册，最多 limit 条。
 func (s *Store) Devices(ctx context.Context, userID string, limit int) ([]syncsvc.Device, error) {
 	rows, err := s.q.SyncDevices(ctx, db.SyncDevicesParams{UserID: userID, RowLimit: int32(limit)})
@@ -574,27 +568,27 @@ func (s *Store) Refs(ctx context.Context, userID string) ([]syncsvc.Ref, error) 
 	return out, nil
 }
 
-// PutRef 写入或删除一个命名版本，返回写入之后存储里的那一行与这次调用有没有改动
-// 它。写入时间不晚于已存删除时间时不复活，返回 false 与原来的墓碑；新增一个未删除
-// 的名字会超过上限（syncsvc.MaxRefsPerAccount）时返回 syncsvc.ErrRefLimit。
-func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (syncsvc.Ref, bool, error) {
+// PutRef 写入或删除一个命名版本，返回写入之后存储里的那一行。写入时间不晚于已存
+// 删除时间时不复活，返回原来的墓碑；新增一个未删除的名字会超过上限
+// （syncsvc.MaxRefsPerAccount）时返回 syncsvc.ErrRefLimit。
+func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (syncsvc.Ref, error) {
 	updated, err := pgTime(ref.UpdatedAt)
 	if err != nil {
-		return syncsvc.Ref{}, false, err
+		return syncsvc.Ref{}, err
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return syncsvc.Ref{}, false, err
+		return syncsvc.Ref{}, err
 	}
 	defer tx.Rollback(ctx)
 	q := s.q.WithTx(tx)
 	if _, err := q.LockUser(ctx, userID); err != nil {
-		return syncsvc.Ref{}, false, err
+		return syncsvc.Ref{}, err
 	}
 	if ref.DeletedAt.IsZero() {
 		sourceTime, err := pgTime(ref.SourceTime())
 		if err != nil {
-			return syncsvc.Ref{}, false, err
+			return syncsvc.Ref{}, err
 		}
 		row, err := q.PutSyncRefWithinLimit(ctx, db.PutSyncRefWithinLimitParams{
 			UserID:          userID,
@@ -610,23 +604,23 @@ func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (syn
 			// 未删除的名字已经到上限。前者这一行存在，后者不存在。
 			state, err := q.SyncRef(ctx, db.SyncRefParams{UserID: userID, Name: ref.Name})
 			if errors.Is(err, pgx.ErrNoRows) {
-				return syncsvc.Ref{}, false, syncsvc.ErrRefLimit
+				return syncsvc.Ref{}, syncsvc.ErrRefLimit
 			}
 			if err != nil {
-				return syncsvc.Ref{}, false, err
+				return syncsvc.Ref{}, err
 			}
 			if state.DeletedAt.Valid && !ref.SourceTime().After(state.DeletedAt.Time) {
-				return refFromRow(state.Name, state.CommitUid, state.Note, state.UpdatedAt.Time, state.DeletedAt), false, nil
+				return refFromRow(state.Name, state.CommitUid, state.Note, state.UpdatedAt.Time, state.DeletedAt), nil
 			}
-			return syncsvc.Ref{}, false, syncsvc.ErrRefLimit
+			return syncsvc.Ref{}, syncsvc.ErrRefLimit
 		}
 		if err != nil {
-			return syncsvc.Ref{}, false, err
+			return syncsvc.Ref{}, err
 		}
 		if err := tx.Commit(ctx); err != nil {
-			return syncsvc.Ref{}, false, err
+			return syncsvc.Ref{}, err
 		}
-		return refFromRow(row.Name, row.CommitUid, row.Note, row.UpdatedAt.Time, row.DeletedAt), true, nil
+		return refFromRow(row.Name, row.CommitUid, row.Note, row.UpdatedAt.Time, row.DeletedAt), nil
 	}
 	row, err := q.DeleteSyncRef(ctx, db.DeleteSyncRefParams{
 		UserID:    userID,
@@ -639,17 +633,17 @@ func (s *Store) PutRef(ctx context.Context, userID string, ref syncsvc.Ref) (syn
 		// 名字已经是墓碑：这次删除不改动它，读回原来的墓碑。
 		state, err := q.SyncRef(ctx, db.SyncRefParams{UserID: userID, Name: ref.Name})
 		if err != nil {
-			return syncsvc.Ref{}, false, err
+			return syncsvc.Ref{}, err
 		}
-		return refFromRow(state.Name, state.CommitUid, state.Note, state.UpdatedAt.Time, state.DeletedAt), false, nil
+		return refFromRow(state.Name, state.CommitUid, state.Note, state.UpdatedAt.Time, state.DeletedAt), nil
 	}
 	if err != nil {
-		return syncsvc.Ref{}, false, err
+		return syncsvc.Ref{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return syncsvc.Ref{}, false, err
+		return syncsvc.Ref{}, err
 	}
-	return refFromRow(row.Name, row.CommitUid, row.Note, row.UpdatedAt.Time, row.DeletedAt), true, nil
+	return refFromRow(row.Name, row.CommitUid, row.Note, row.UpdatedAt.Time, row.DeletedAt), nil
 }
 
 // refFromRow 把库里的一行命名版本转成 syncsvc 的类型；deleted_at 为空表示名字仍然
@@ -667,13 +661,13 @@ func refFromRow(name, commitUID, note string, updatedAt time.Time, deletedAt pgt
 	return ref
 }
 
-// After 返回 seq 大于 after 的提交，按顺序最多 limit 条。
-func (s *Store) After(ctx context.Context, userID string, after int64, limit int, maxBytes int64) ([]syncsvc.Commit, error) {
+// After 返回 seq 大于 after 的提交，按顺序最多 limit 条。页预算只由服务层按
+// 序列化之后的大小裁剪，存储这一层只按条数取行。
+func (s *Store) After(ctx context.Context, userID string, after int64, limit int) ([]syncsvc.Commit, error) {
 	rows, err := s.q.CommitsAfter(ctx, db.CommitsAfterParams{
 		UserID:    userID,
 		AfterSeq:  after,
 		PageLimit: int32(limit),
-		MaxBytes:  maxBytes,
 	})
 	if err != nil {
 		return nil, err

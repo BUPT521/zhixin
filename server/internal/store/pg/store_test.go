@@ -555,7 +555,7 @@ func TestPostgresClearAccountData(t *testing.T) {
 	if state, err := st.State(ctx, "u1"); err != nil || state.Head != 0 {
 		t.Fatalf("head after reset = %d, %v", state.Head, err)
 	}
-	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 0 {
+	if commits, err := st.After(ctx, "u1", 0, 10); err != nil || len(commits) != 0 {
 		t.Fatalf("commits after reset = %+v, %v", commits, err)
 	}
 	// 重置之后从 0 重新推送，序号重新从 1 开始。
@@ -847,16 +847,17 @@ func TestPostgresSyncSequence(t *testing.T) {
 		t.Fatalf("base 落后应返回 ErrHeadMoved，得到 %+v %v", result, err)
 	}
 
-	commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes)
+	commits, err := st.After(ctx, "u1", 0, 10)
 	if err != nil || len(commits) != 2 {
 		t.Fatalf("拉取应有两条，得到 %d %v", len(commits), err)
 	}
 	if commits[0].Seq == nil || *commits[0].Seq != 1 || commits[0].Uid != "r1" || len(commits[0].Changes) != 1 {
 		t.Fatalf("第一条不符合预期: %+v", commits[0])
 	}
-	limited, err := st.After(ctx, "u1", 0, 10, 500)
+	// 分页只按条数：条数上限之外不再按字节裁剪，字节预算由服务层做。
+	limited, err := st.After(ctx, "u1", 0, 1)
 	if err != nil || len(limited) != 1 || limited[0].Uid != "r1" {
-		t.Fatalf("按字节分页应保留连续前缀: %+v, %v", limited, err)
+		t.Fatalf("按条数分页应保留连续前缀: %+v, %v", limited, err)
 	}
 }
 
@@ -917,7 +918,7 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 	if state, err = st.RegisterSnapshot(ctx, "u1", snap, syncsvc.CompactPolicy{Keep: time.Nanosecond, AllowDelete: true}); err != nil || state.EarliestSeq != 4 || state.Head != 3 {
 		t.Fatalf("压缩之后: %+v %v", state, err)
 	}
-	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 0 {
+	if commits, err := st.After(ctx, "u1", 0, 10); err != nil || len(commits) != 0 {
 		t.Fatalf("压缩之后不应再拉到提交: %+v %v", commits, err)
 	}
 	// 去重表保留了接收过的身份：重放旧提交被跳过，head 不变。
@@ -928,7 +929,7 @@ func TestPostgresSyncSnapshot(t *testing.T) {
 	if r, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")}, syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{}); err != nil || r.Head != 4 {
 		t.Fatalf("压缩之后的追加: %+v %v", r, err)
 	}
-	if commits, err := st.After(ctx, "u1", 3, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 1 || commits[0].Uid != "r4" {
+	if commits, err := st.After(ctx, "u1", 3, 10); err != nil || len(commits) != 1 || commits[0].Uid != "r4" {
 		t.Fatalf("压缩之后的增量: %+v %v", commits, err)
 	}
 
@@ -992,7 +993,7 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 	if err != nil || state.EarliestSeq != 1 || state.Snapshot == nil || state.Snapshot.SHA256 != shaA {
 		t.Fatalf("不允许删除时登记: %+v %v", state, err)
 	}
-	if commits, err := st.After(ctx, "u1", 0, 10, syncsvc.DefaultPullBytes); err != nil || len(commits) != 3 {
+	if commits, err := st.After(ctx, "u1", 0, 10); err != nil || len(commits) != 3 {
 		t.Fatalf("不允许删除时提交应全部保留: %d %v", len(commits), err)
 	}
 
@@ -1041,11 +1042,13 @@ func TestPostgresSnapshotOrphansAndDevices(t *testing.T) {
 		t.Fatalf("回收之后待回收行应删除: %v %v", orphans, err)
 	}
 
-	// 设备名册：带标识的请求更新最近出现时间与能力，补行不动已有能力。
+	// 设备名册：带标识的请求更新最近出现时间与能力，补行不动已有能力。补行走
+	// Append 事务里的 DeviceRoster.Ensure，名册与提交同一次写入。
 	if err := st.TouchDevice(ctx, "u1", "d1", true, 0); err != nil {
 		t.Fatalf("记录 d1: %v", err)
 	}
-	if err := st.EnsureDevice(ctx, "u1", "d2"); err != nil {
+	if _, err := st.Append(ctx, "u1", 3, []syncsvc.Commit{mk("r4")},
+		syncsvc.CompactPolicy{}, syncsvc.DeviceRoster{Ensure: []string{"d2"}}); err != nil {
 		t.Fatalf("补行 d2: %v", err)
 	}
 	devices, err := st.Devices(ctx, "u1", 50)
