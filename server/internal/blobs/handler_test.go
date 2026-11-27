@@ -42,7 +42,9 @@ func newTestServer(t *testing.T, maxBytes, accountBytes int64) (*testutil.Client
 	t.Helper()
 	authSvc := auth.NewService(auth.NewMemoryStore(), time.Hour, 24*time.Hour)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	handler := NewHandler(NewService(NewStore(objectstore.NewMemory()), maxBytes).SetAccountBytes(accountBytes), log)
+	store := NewStore(objectstore.NewMemory())
+	svc := NewService(store, maxBytes).SetAccountBytes(accountBytes)
+	handler := NewHandler(store, svc, log)
 	return testutil.NewClient(t, testutil.NewServer(
 		testAPI{h: handler},
 		auth.Middleware(authSvc, log),

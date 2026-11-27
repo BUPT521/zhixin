@@ -26,6 +26,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/BUPT521/zhixin/server/internal/devicename"
 	"github.com/BUPT521/zhixin/server/internal/periodic"
 	"github.com/BUPT521/zhixin/server/internal/ratelimit"
 )
@@ -391,12 +392,10 @@ func checkPassword(p string) error {
 	return nil
 }
 
+// cleanDevice 清洗会话里记下的设备名，规则与备份入口共用：去首尾空白，超过
+// 64 个字符按字符截断，非法 UTF-8 按空串处理。
 func cleanDevice(name string) string {
-	name = strings.TrimSpace(name)
-	if utf8.RuneCountInString(name) > 64 {
-		name = string([]rune(name)[:64])
-	}
-	return name
+	return devicename.Clean(name)
 }
 
 // Register creates an account with one login identity and signs the device in.

@@ -2,25 +2,18 @@ package backup
 
 import (
 	"context"
-	"errors"
 	"io"
-	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/BUPT521/zhixin/server/internal/devicename"
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
-var (
-	// ErrSchemaVersion reports a snapshot produced by another client schema.
-	ErrSchemaVersion = errors.New("backup: schema version does not match the server")
-	// ErrTooLarge reports a snapshot above the configured size limit.
-	ErrTooLarge = errors.New("backup: snapshot exceeds the size limit")
-)
-
-// Service owns the business rules of snapshots: which schema is accepted, how
-// large one may be, how a device name is stored and how many are retained.
-// The handler only deals with HTTP, and the store only keeps bytes and metadata.
+// Service owns the snapshot rules that are not HTTP-level: how a device name is
+// stored, which metadata is written and how many snapshots are retained. The
+// accepted schema version and size limit are only read back through
+// SchemaVersion and MaxBytes; the handler rejects requests that break them at
+// the HTTP entry, because it must do so before spooling the body.
 type Service struct {
 	store         Store
 	maxBytes      int64
@@ -28,24 +21,29 @@ type Service struct {
 	schemaVersion int
 	now           func() time.Time
 	// objects 是写字节的同一份对象存储，后台对账用它列出 backups/ 与
-	// attachments/ 下的对象；由装配处经 SetObjects 注入，没有注入时对账返回错误。
+	// attachments/ 下的对象；由 NewService 的构造参数给出。
 	objects objectstore.Store
 	// attachmentKeys 列出仍然登记在附件索引里的对象键，对账据此把 attachments/
-	// 下的对象分成仍登记与遗留字节；由装配处经 SetAttachmentKeys 注入，没有
-	// 注入时对账返回错误，不会只对账备份而漏掉附件。
+	// 下的对象分成仍登记与遗留字节；由 NewService 的构造参数给出，保证对账不会
+	// 只处理备份而漏掉附件。
 	attachmentKeys AttachmentKeys
 	// reconcileInterval 是后台对账的周期，由配置项
 	// ZHIXIN_BACKUP_RECONCILE_INTERVAL 设置；0 表示只在启动时跑一次。
 	reconcileInterval time.Duration
 }
 
-func NewService(store Store, maxBytes int64, keep, schemaVersion int) *Service {
+// NewService 组装备份服务。objects 与 attachmentKeys 是后台对账的两份来源，
+// 前者列出对象存储里的键、后者列出附件索引里仍登记的键；装配处必须传入，
+// 对账因此没有“没有注入”的降级路径（ADR-0037）。
+func NewService(store Store, objects objectstore.Store, attachmentKeys AttachmentKeys, maxBytes int64, keep, schemaVersion int) *Service {
 	return &Service{
-		store:         store,
-		maxBytes:      maxBytes,
-		keep:          keep,
-		schemaVersion: schemaVersion,
-		now:           time.Now,
+		store:          store,
+		objects:        objects,
+		attachmentKeys: attachmentKeys,
+		maxBytes:       maxBytes,
+		keep:           keep,
+		schemaVersion:  schemaVersion,
+		now:            time.Now,
 	}
 }
 
@@ -53,8 +51,9 @@ func (s *Service) SchemaVersion() int { return s.schemaVersion }
 
 func (s *Service) MaxBytes() int64 { return s.maxBytes }
 
-// Upload validates one snapshot and stores it. The caller has already checked
-// the body hash; size and schema are business rules checked here.
+// Upload stores one snapshot. The caller has already checked the body hash, the
+// schema version against SchemaVersion and the size against MaxBytes; this layer
+// cleans the device name, builds the metadata and stores the bytes.
 func (s *Service) Upload(
 	ctx context.Context,
 	userID, sha string,
@@ -63,13 +62,7 @@ func (s *Service) Upload(
 	size int64,
 	data io.Reader,
 ) (Meta, error) {
-	if schema != s.schemaVersion {
-		return Meta{}, ErrSchemaVersion
-	}
-	if size > s.maxBytes {
-		return Meta{}, ErrTooLarge
-	}
-	device = cleanDevice(device)
+	device = devicename.Clean(device)
 	meta := Meta{
 		ID:            newID(),
 		SHA256:        sha,
@@ -129,12 +122,4 @@ func validID(id string) bool {
 // 规则留在这里而不是处理器里：账下没有备份时同样成功，存储失败原样上抛。
 func (s *Service) DeleteAll(ctx context.Context, userID string) error {
 	return s.store.DeleteAll(ctx, userID)
-}
-
-func cleanDevice(name string) string {
-	name = strings.TrimSpace(name)
-	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > 64 {
-		return ""
-	}
-	return name
 }

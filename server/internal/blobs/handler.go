@@ -12,16 +12,17 @@ import (
 )
 
 // Handler 提供 /v1/blobs/{sha256} 的上传、下载与存在检查。附件按内容寻址，
-// 路径里的 sha256 就是内容的哈希；handler 核对哈希与协议，大小与账号范围由
-// Service 负责。
+// 路径里的 sha256 就是内容的哈希；handler 核对哈希、协议与单附件大小上限，
+// 读取直接走 Store，账号总量与写入规则由 Service 负责。
 type Handler struct {
-	svc *Service
-	log *slog.Logger
+	store Store
+	svc   *Service
+	log   *slog.Logger
 }
 
-// NewHandler 组装附件接口。
-func NewHandler(svc *Service, log *slog.Logger) *Handler {
-	return &Handler{svc: svc, log: log}
+// NewHandler 组装附件接口。Stat 与 Open 只是取字节与大小，不经过 Service。
+func NewHandler(store Store, svc *Service, log *slog.Logger) *Handler {
+	return &Handler{store: store, svc: svc, log: log}
 }
 
 // Head 只回答存在与否。HEAD 不返回响应体，所以错误也只给状态码，客户端按
@@ -32,7 +33,7 @@ func (h *Handler) Head(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	p := auth.MustPrincipal(r.Context())
-	size, err := h.svc.Stat(r.Context(), p.UserID, sha)
+	size, err := h.store.Stat(r.Context(), p.UserID, sha)
 	if errors.Is(err, ErrNotFound) {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -51,7 +52,7 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	p := auth.MustPrincipal(r.Context())
-	rc, size, err := h.svc.Open(r.Context(), p.UserID, sha)
+	rc, size, err := h.store.Open(r.Context(), p.UserID, sha)
 	if errors.Is(err, ErrNotFound) {
 		httpx.WriteProblem(w, r, http.StatusNotFound, httpx.CodeNotFound, "")
 		return
@@ -91,10 +92,6 @@ func (h *Handler) Put(w http.ResponseWriter, r *http.Request, sha string) {
 		return
 	}
 	if err := h.svc.Put(r.Context(), p.UserID, sha, spool.Size, data); err != nil {
-		if errors.Is(err, ErrTooLarge) {
-			httpx.WriteProblem(w, r, http.StatusRequestEntityTooLarge, httpx.CodePayloadTooLarge, "attachment is too large")
-			return
-		}
 		// 账号总量超限时给出已用量与上限：客户端据此提示用户先删附件，而不是
 		// 反复重试同一个请求（契约的 extra 字段）。
 		var full *StorageFullError

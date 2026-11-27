@@ -19,17 +19,25 @@ type Info struct {
 	ContentType string
 }
 
-// Object 是前缀下列出的一个对象：键、字节数与写入时间。列目录只服务于回填
-// 附件索引、排查遗留对象与备份对账，不返回内容类型这类只有写入方关心的字段；
-// ModTime 由备份对账用来判断对象是否超过宽限期，见 ADR-0037。
+// Object 是前缀下列出的一个对象：键与写入时间。列目录只服务于备份对账（按
+// 前缀找出没有元数据的遗留对象）与排查遗留字节，不返回大小、内容类型这类只有
+// 写入方关心的字段；ModTime 由备份对账用来判断对象是否超过宽限期，见 ADR-0037。
 type Object struct {
 	Key     string
-	Size    int64
 	ModTime time.Time
 }
 
 // ErrNotFound 表示键下没有对象。
 var ErrNotFound = errors.New("objectstore: 对象不存在")
+
+// 对象键的公共前缀只在这里定义：备份与附件的键、删除账号时的账号前缀，以及
+// 后台对账扫描的前缀都从这两个常量拼出来，键规则因此只有一处（ADR-0037）。
+const (
+	// BackupObjectPrefix 是全部整库备份对象共用的键前缀。
+	BackupObjectPrefix = "backups/"
+	// AttachmentObjectPrefix 是全部附件对象共用的键前缀。
+	AttachmentObjectPrefix = "attachments/"
+)
 
 // BackupKey 是整库备份在对象存储里的键：backups/<账号>/<id>.zip。
 func BackupKey(userID, id string) string {
@@ -37,7 +45,7 @@ func BackupKey(userID, id string) string {
 }
 
 // BackupPrefix 是一个账号全部备份的前缀，删除账号时按它清理。
-func BackupPrefix(userID string) string { return "backups/" + userID + "/" }
+func BackupPrefix(userID string) string { return BackupObjectPrefix + userID + "/" }
 
 // AttachmentKey 是附件在对象存储里的键：attachments/<账号>/<sha256>。
 func AttachmentKey(userID, sha string) string {
@@ -46,7 +54,7 @@ func AttachmentKey(userID, sha string) string {
 
 // AttachmentPrefix 是一个账号全部附件的前缀。
 func AttachmentPrefix(userID string) string {
-	return "attachments/" + userID + "/"
+	return AttachmentObjectPrefix + userID + "/"
 }
 
 // Store 是三种实现共用的接口。

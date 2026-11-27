@@ -50,8 +50,8 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 	if err := s.Put(ctx, "attachments/u2/bb", bytes.NewReader(body), Info{Size: int64(len(body))}); err != nil {
 		t.Fatalf("Put other attachment: %v", err)
 	}
-	// 列目录：前缀下的键与字节数都能读到，写入时间也要填上，备份对账靠它判断
-	// 宽限期；不存在的前缀返回空切片。
+	// 列目录：前缀下的键与写入时间都能读到，备份对账靠写入时间判断宽限期；
+	// 不存在的前缀返回空切片。
 	objects, err := s.List(ctx, "attachments/")
 	if err != nil || len(objects) != 2 {
 		t.Fatalf("List(attachments/) = %+v, %v", objects, err)
@@ -62,7 +62,7 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 		}
 	}
 	objects, err = s.List(ctx, "attachments/u1/")
-	if err != nil || len(objects) != 1 || objects[0].Key != "attachments/u1/aa" || objects[0].Size != int64(len(body)) || objects[0].ModTime.IsZero() {
+	if err != nil || len(objects) != 1 || objects[0].Key != "attachments/u1/aa" || objects[0].ModTime.IsZero() {
 		t.Fatalf("List(attachments/u1/) = %+v, %v", objects, err)
 	}
 	if objects, err = s.List(ctx, "missing/"); err != nil || len(objects) != 0 {
@@ -90,6 +90,26 @@ func testStore(t *testing.T, newStore func(t *testing.T) Store) {
 	}
 	if err := s.Ping(ctx); err != nil {
 		t.Fatalf("Ping: %v", err)
+	}
+}
+
+// TestObjectPrefixesAndKeysShareOneDefinition 核对键规则只有一处：前缀常量、
+// 账号前缀与完整键逐层拼出来，后台对账扫描的前缀因此与写入方一致。
+func TestObjectPrefixesAndKeysShareOneDefinition(t *testing.T) {
+	if got, want := BackupPrefix("u1"), BackupObjectPrefix+"u1/"; got != want {
+		t.Fatalf("BackupPrefix = %q，want %q", got, want)
+	}
+	if got, want := BackupKey("u1", "b1"), BackupPrefix("u1")+"b1.zip"; got != want {
+		t.Fatalf("BackupKey = %q，want %q", got, want)
+	}
+	if got, want := AttachmentPrefix("u1"), AttachmentObjectPrefix+"u1/"; got != want {
+		t.Fatalf("AttachmentPrefix = %q，want %q", got, want)
+	}
+	if got, want := AttachmentKey("u1", "aa"), AttachmentPrefix("u1")+"aa"; got != want {
+		t.Fatalf("AttachmentKey = %q，want %q", got, want)
+	}
+	if !strings.HasPrefix(BackupKey("u1", "b1"), BackupObjectPrefix) || !strings.HasPrefix(AttachmentKey("u1", "aa"), AttachmentObjectPrefix) {
+		t.Fatal("完整键必须落在对账扫描的前缀下")
 	}
 }
 

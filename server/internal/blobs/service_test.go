@@ -11,21 +11,20 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/objectstore"
 )
 
-func TestServicePutRespectsLimit(t *testing.T) {
+// TestServicePutStoresBytes 守住服务层的写入与读取：大小已由处理器在 HTTP
+// 入口核对，这里只预留配额、写字节并读回。
+func TestServicePutStoresBytes(t *testing.T) {
 	ctx := context.Background()
 	svc := NewService(NewStore(objectstore.NewMemory()), 4).SetAccountBytes(1024)
 
-	if err := svc.Put(ctx, "u1", "sha", 5, bytes.NewReader([]byte("12345"))); !errors.Is(err, ErrTooLarge) {
-		t.Fatalf("oversize: want ErrTooLarge, got %v", err)
-	}
 	if err := svc.Put(ctx, "u1", "sha", 4, bytes.NewReader([]byte("1234"))); err != nil {
 		t.Fatalf("put: %v", err)
 	}
-	size, err := svc.Stat(ctx, "u1", "sha")
+	size, err := svc.store.Stat(ctx, "u1", "sha")
 	if err != nil || size != 4 {
 		t.Fatalf("stat = %d, %v", size, err)
 	}
-	rc, size, err := svc.Open(ctx, "u1", "sha")
+	rc, size, err := svc.store.Open(ctx, "u1", "sha")
 	if err != nil || size != 4 {
 		t.Fatalf("open = %d, %v", size, err)
 	}
@@ -34,7 +33,7 @@ func TestServicePutRespectsLimit(t *testing.T) {
 	if string(got) != "1234" {
 		t.Fatalf("bytes = %q", got)
 	}
-	if _, err := svc.Stat(ctx, "other", "sha"); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.store.Stat(ctx, "other", "sha"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("other account: want ErrNotFound, got %v", err)
 	}
 }

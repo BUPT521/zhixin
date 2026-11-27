@@ -306,21 +306,19 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 		SetSnapshotBytes(cfg.MaxAttachmentBytes)
 	syncHandler := syncsvc.NewHandler(syncSvc, log, 16*cfg.MaxJSONBytes)
 
-	backupSvc := backup.NewService(st.Backups, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
 	// 备份的元数据与字节分两步写，中断会留下没有元数据的对象：按周期对账一次，
 	// 删掉库里查不到、且写于一小时之前的遗留字节（ADR-0037）。attachments/ 与
 	// backups/ 共用这份对象存储，附件侧同样按 attachment 表对账。
-	backupSvc.SetObjects(st.Objects)
-	backupSvc.SetAttachmentKeys(st.Blobs)
+	backupSvc := backup.NewService(st.Backups, st.Objects, st.Blobs, cfg.MaxBackupBytes, cfg.BackupsKept, ClientSchemaVersion)
 	backupSvc.SetReconcileInterval(cfg.BackupReconcileInterval)
 	backupHandler := backup.NewHandler(backupSvc, log)
 
 	// 账号附件总量上限必须显式设置，否则只受单附件上限约束。
 	blobSvc := blobs.NewService(st.Blobs, cfg.MaxAttachmentBytes).SetAccountBytes(cfg.MaxAccountAttachmentBytes)
-	blobHandler := blobs.NewHandler(blobSvc, log)
-	// 快照登记要核对“这个哈希是这个账号的附件”，查询由附件服务提供；没有装配时
+	blobHandler := blobs.NewHandler(st.Blobs, blobSvc, log)
+	// 快照登记要核对“这个哈希是这个账号的附件”，查询由附件存储提供；没有装配时
 	// 登记接口返回 501，不静默接受一个查不到归属的哈希（ADR-0043）。
-	syncSvc.SetAttachments(syncAttachments{svc: blobSvc})
+	syncSvc.SetAttachments(syncAttachments{store: st.Blobs})
 
 	// 云端清除编排备份、提交序列、附件与遗留对象；清除与写请求的互斥、清除
 	// 期间写请求的 409 由进程内的 cloudOperations 中间件保证（审查 9.3 的 V10）。
@@ -451,12 +449,12 @@ func cachePublic(next http.Handler) http.Handler {
 	})
 }
 
-// syncAttachments 把附件服务的查询适配成登记快照需要的“这个账号有没有这份
+// syncAttachments 把附件存储的查询适配成登记快照需要的“这个账号有没有这份
 // 内容”：附件不存在不是错误，存储故障才向上返回（ADR-0043）。
-type syncAttachments struct{ svc *blobs.Service }
+type syncAttachments struct{ store blobs.Store }
 
 func (a syncAttachments) Stat(ctx context.Context, userID, sha string) (int64, bool, error) {
-	size, err := a.svc.Stat(ctx, userID, sha)
+	size, err := a.store.Stat(ctx, userID, sha)
 	if errors.Is(err, blobs.ErrNotFound) {
 		return 0, false, nil
 	}

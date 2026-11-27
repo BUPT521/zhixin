@@ -28,9 +28,7 @@ func TestReconcileRemovesOnlyStaleOrphans(t *testing.T) {
 	ctx := context.Background()
 	objects := objectstore.NewMemory()
 	store := NewMemoryStore()
-	svc := NewService(store, 1<<20, 2, 27)
-	svc.SetObjects(objects)
-	svc.SetAttachmentKeys(fakeAttachmentKeys{})
+	svc := NewService(store, objects, fakeAttachmentKeys{}, 1<<20, 2, 27)
 	fixed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixed }
 
@@ -85,15 +83,12 @@ func TestReconcileRemovesOnlyStaleOrphans(t *testing.T) {
 func TestReconcileAttachments(t *testing.T) {
 	ctx := context.Background()
 	objects := objectstore.NewMemory()
-	svc := NewService(NewMemoryStore(), 1<<20, 2, 27)
-	svc.SetObjects(objects)
-	fixed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
-	svc.now = func() time.Time { return fixed }
-
 	liveKey := objectstore.AttachmentKey("u1", strings.Repeat("a", 64))
 	staleKey := objectstore.AttachmentKey("u1", strings.Repeat("b", 64))
 	freshKey := objectstore.AttachmentKey("u2", strings.Repeat("c", 64))
-	svc.SetAttachmentKeys(fakeAttachmentKeys{keys: []string{liveKey}})
+	svc := NewService(NewMemoryStore(), objects, fakeAttachmentKeys{keys: []string{liveKey}}, 1<<20, 2, 27)
+	fixed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	svc.now = func() time.Time { return fixed }
 
 	for _, item := range []struct {
 		key  string
@@ -128,24 +123,12 @@ func TestReconcileAttachments(t *testing.T) {
 	}
 }
 
-// TestReconcileRequiresAttachmentKeys 守住装配遗漏：没有注入附件索引时对账
-// 返回错误，不会只处理 backups/、让 attachments/ 下的遗留字节一直留着。
-func TestReconcileRequiresAttachmentKeys(t *testing.T) {
-	svc := NewService(NewMemoryStore(), 1<<20, 2, 27)
-	svc.SetObjects(objectstore.NewMemory())
-	if _, err := svc.Reconcile(context.Background()); err == nil {
-		t.Fatal("没有注入附件索引时应返回错误")
-	}
-}
-
 // TestReconcileStopsOnAttachmentIndexError 核对附件索引读取失败时对账直接返回
 // 错误：两份已知键都拿到之后才开始删对象，不会先删掉一部分再停在半路。
 func TestReconcileStopsOnAttachmentIndexError(t *testing.T) {
 	ctx := context.Background()
 	objects := objectstore.NewMemory()
-	svc := NewService(NewMemoryStore(), 1<<20, 2, 27)
-	svc.SetObjects(objects)
-	svc.SetAttachmentKeys(fakeAttachmentKeys{err: errors.New("附件索引不可用")})
+	svc := NewService(NewMemoryStore(), objects, fakeAttachmentKeys{err: errors.New("附件索引不可用")}, 1<<20, 2, 27)
 	fixed := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	svc.now = func() time.Time { return fixed }
 
