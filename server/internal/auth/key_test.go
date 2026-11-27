@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"log/slog"
@@ -256,6 +257,27 @@ func TestLooksLikeAPIKeyChecksShape(t *testing.T) {
 	}
 	if LooksLikeAPIKey(tampered) {
 		t.Fatalf("校验码不对的串不应被当成密钥：%q", tampered)
+	}
+}
+
+// TestAPIKeyShapeDerivedFromConstants 守住生成器与长度常量的联动：随机部分与
+// 校验码的字节数都由字符数常量反推，常量变化之后新密钥仍然满足形状判断。
+func TestAPIKeyShapeDerivedFromConstants(t *testing.T) {
+	if got := base64.RawURLEncoding.EncodedLen(apiKeyRandomBytes); got != apiKeyRandomLength {
+		t.Fatalf("随机部分 %d 字节编码成 %d 个字符，与常量 %d 不一致",
+			apiKeyRandomBytes, got, apiKeyRandomLength)
+	}
+	if got := base64.RawURLEncoding.EncodedLen(apiKeyChecksumBytes); got != apiKeyChecksumLength {
+		t.Fatalf("校验码 %d 字节编码成 %d 个字符，与常量 %d 不一致",
+			apiKeyChecksumBytes, got, apiKeyChecksumLength)
+	}
+	token, prefix := newAPIKey()
+	if len(token) != apiKeyLength || len(prefix) != apiKeyPrefixLength {
+		t.Fatalf("新密钥长度 %d（前缀 %d），应为 %d（%d）",
+			len(token), len(prefix), apiKeyLength, apiKeyPrefixLength)
+	}
+	if !LooksLikeAPIKey(token) {
+		t.Fatalf("由常量反推生成的新密钥应通过形状判断：%q", token)
 	}
 }
 

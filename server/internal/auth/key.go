@@ -30,10 +30,16 @@ const (
 	revokedKeyKeep = 30 * 24 * time.Hour
 	// maxKeyNameRunes 是密钥名字的长度上限，名字只用于辨认，不参与鉴权。
 	maxKeyNameRunes = 64
-	// apiKeyRandomLength 是随机部分的字符数：24 字节的 base64url。
+	// apiKeyRandomLength 是随机部分的字符数：base64url 无填充编码 24 字节得到
+	// 32 个字符。生成器按它反推字节数，改这里之后新签发的密钥仍然合法。
 	apiKeyRandomLength = 32
+	// apiKeyRandomBytes 是随机部分的字节数，由字符数反推：base64url 每 4 个字符
+	// 编码 3 个字节，没有填充。
+	apiKeyRandomBytes = apiKeyRandomLength * 3 / 4
 	// apiKeyChecksumLength 是末尾校验码的字符数：SHA-256 前 3 字节的 base64url。
 	apiKeyChecksumLength = 4
+	// apiKeyChecksumBytes 是校验码取的字节数，由字符数反推，与随机部分同一规则。
+	apiKeyChecksumBytes = apiKeyChecksumLength * 3 / 4
 	// apiKeyLength 是密钥的总长度：前缀、随机部分与校验码，共 39 个字符。
 	apiKeyLength = len(APIKeyPrefix) + apiKeyRandomLength + apiKeyChecksumLength
 	// keyTouchInterval 是进程内跳过最近使用时间写库的间隔，与存储层条件更新的
@@ -59,22 +65,23 @@ func LooksLikeAPIKey(token string) bool {
 	return subtle.ConstantTimeCompare([]byte(apiKeyChecksum(body)), []byte(token[len(body):])) == 1
 }
 
-// newAPIKey 生成一把密钥并返回展示用的前缀。随机部分是 24 字节，末尾 4 个字符是
-// 对前面的部分算出的校验码，整个密钥共 39 个字符，与 43 个字符的访问令牌不会混淆；
-// 整个密钥只在签发那一次返回，库里只存摘要。
+// newAPIKey 生成一把密钥并返回展示用的前缀。随机部分的字节数由字符数常量反推，
+// 末尾校验码同样由常量反推，整个密钥共 39 个字符，与 43 个字符的访问令牌不会
+// 混淆；整个密钥只在签发那一次返回，库里只存摘要。
 func newAPIKey() (token, prefix string) {
-	b := make([]byte, 24)
+	b := make([]byte, apiKeyRandomBytes)
 	_, _ = rand.Read(b)
 	body := APIKeyPrefix + base64.RawURLEncoding.EncodeToString(b)
 	token = body + apiKeyChecksum(body)
 	return token, token[:apiKeyPrefixLength]
 }
 
-// apiKeyChecksum 返回一段密钥的校验码：对前缀与随机部分算 SHA-256，取前 3 字节做
-// base64url，正好 4 个字符。它只用于识别形状与拦截写错的串，不承担密钥强度。
+// apiKeyChecksum 返回一段密钥的校验码：对前缀与随机部分算 SHA-256，取常量规定的
+// 前几字节做 base64url，正好 apiKeyChecksumLength 个字符。它只用于识别形状与拦截
+// 写错的串，不承担密钥强度。
 func apiKeyChecksum(body string) string {
 	sum := sha256.Sum256([]byte(body))
-	return base64.RawURLEncoding.EncodeToString(sum[:3])
+	return base64.RawURLEncoding.EncodeToString(sum[:apiKeyChecksumBytes])
 }
 
 // keyTouchDue 报告这把密钥是否需要尝试写一次最近使用时间，并记下这次尝试的时刻。

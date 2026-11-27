@@ -15,6 +15,7 @@ import (
 
 // argon2id parameters follow the OWASP minimum (19 MiB, t=2, p=1). They are
 // encoded into every hash, so raising them later only affects new hashes.
+// argonMemoryKiB 是单次哈希占用的内存，密码预算用的 MiB 数由它换算（budget.go）。
 const (
 	argonMemoryKiB = 19 * 1024
 	argonTime      = 2

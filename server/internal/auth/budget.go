@@ -2,15 +2,15 @@ package auth
 
 import "context"
 
-// passwordMemoryMiB 是一次 Argon2 哈希占用的内存，与 password.go 里的参数一致。
-// 预算按它换算并发数，改哈希参数时两处要一起看。
-const passwordMemoryMiB = 19
+// passwordMemoryMiB 是一次 Argon2 哈希占用的内存，按 MiB 向上取整，由 password.go
+// 的 argonMemoryKiB 换算；并发数由内存预算除以它得到，单次占用因此只在一处声明。
+const passwordMemoryMiB = (argonMemoryKiB + 1023) / 1024
 
 // PasswordBudget 限制同时进行的 Argon2 计算数。
 //
-// 每次哈希固定占用约 19 MiB，若不加限制，一批并发登录就能把实例的内存占满，
-// 注册、登录、重设密码与删号都会被拖垮。容量由内存预算除以单次占用算出，至少
-// 为 1，否则预算配得比单次占用还小时所有密码操作都会永远排队。
+// 每次哈希占用的内存由哈希参数换算出整 MiB 数，若不加限制，一批并发登录就能把
+// 实例的内存占满，注册、登录、重设密码与删号都会被拖垮。容量由内存预算除以单次
+// 占用算出，至少为 1，否则预算配得比单次占用还小时所有密码操作都会永远排队。
 type PasswordBudget struct {
 	slots chan struct{}
 }
