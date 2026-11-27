@@ -1214,7 +1214,7 @@ void main() {
     expect(items[items.length - 2]['content'], startsWith('29 '));
   });
 
-  test('讨论历史里的工具交换按条目带回', () async {
+  test('讨论历史只有正文，不按标识前缀重建工具结果', () async {
     Map<String, Object?>? captured;
     final service = await serviceWith(
       MockClient((request) async {
@@ -1230,12 +1230,6 @@ void main() {
           conversationId: 'conv-1',
           role: MessageRole.assistant,
           content: '',
-        ),
-        ChatMessage(
-          id: 'tool-result:plan',
-          conversationId: 'conv-1',
-          role: MessageRole.system,
-          content: '{"result":"旧一轮的工具结果"}',
         ),
         ChatMessage(
           id: 'msg-9',

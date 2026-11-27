@@ -9,7 +9,6 @@ import 'llm_client.dart';
 import 'llm_config.dart';
 import 'llm_config_store.dart';
 import 'llm_context_budget.dart';
-import 'llm_protocol.dart' show ToolResultMessage;
 
 /// 回答来源的接口；应用只依赖它，测试可以换成固定回答。
 abstract class BuddyAi {
@@ -241,20 +240,12 @@ class AiChatService implements BuddyAi {
     return turn.isEmpty ? body : '$turn\n\n$body';
   }
 
-  /// 讨论历史里的工具交换来自更早一轮，那一轮的工具结果带着代码写的文字；
-  /// 按代码重新执行不了时改发保存时的原文。
+  /// 讨论历史里的消息只有用户与回答两种正文：工具交换属于当轮进程内的
+  /// 上下文，保存下来的历史里没有工具结果行，重发时按原文当普通消息即可。
   LlmMessage _historyMessage(ChatMessage message) {
     final content = message.content.trim().isEmpty
         ? '[发了一张图片]'
         : message.content;
-    final callId = ToolResultMessage.callIdOfResult(message.identity);
-    if (callId != null) {
-      return LlmMessage.toolResult(
-        callId: callId,
-        content: content,
-        compileArgs: false,
-      );
-    }
     return LlmMessage(
       id: message.identity,
       role: message.role.value,
