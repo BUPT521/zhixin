@@ -4,8 +4,10 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 /// 恢复阶段；只有 `replacing` 与 `reopening` 要在中断后回滚。
+///
+/// 包在进入恢复之前已经通过预检，因此没有“校验中”这一阶段：阶段记录的第一条
+/// 就是 `snapshotting`。
 enum RestoreStage {
-  preparing,
   snapshotting,
   replacing,
   reopening,

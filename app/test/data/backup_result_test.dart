@@ -8,9 +8,15 @@ import 'package:zhixin/data/backup/data_version_service.dart';
 import 'package:zhixin/data/backup/restore_inspection.dart';
 import 'package:zhixin/data/backup/restore_point_store.dart';
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/data/db/database_gate.dart';
+import 'package:zhixin/data/db/guarded_database.dart';
+import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
+import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
+import 'package:zhixin/data/revisions/revision_service.dart';
 import 'package:zhixin/domain/models/result.dart';
+import 'package:zhixin/domain/rules/time_policy.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 import '../support/test_db.dart';
@@ -82,6 +88,97 @@ void main() {
     );
     expect(imported, isA<Failure<String?>>());
     expect(imported.failureOrNull!.message, isNotEmpty);
+  });
+
+  test('恢复失败时当前库不变，恢复点保留', () async {
+    final dir = await Directory.systemTemp.createTemp(
+      'zhixin_restore_failure_',
+    );
+    addTearDown(() async {
+      if (await dir.exists()) await dir.delete(recursive: true);
+    });
+    final path = p.join(dir.path, zhixinDbFileName);
+    late RawDatabase active;
+    active = await openZhixinDatabase(path: path);
+    final engine = RevisionEngine();
+    final db = GuardedDatabase(
+      gate: DatabaseGate(),
+      resolve: () => active,
+      revisions: engine,
+    );
+    final cache = AttachmentCache(filesDir: () => dir.path);
+    final revisions = RevisionService(
+      db: db,
+      raw: () => active,
+      engine: engine,
+      clock: systemClock,
+      cache: cache,
+    );
+    var reopenAttempts = 0;
+    final service = DataVersionService(
+      gate: db.gate,
+      revisions: revisions,
+      revisionPackages: RevisionPackageService(
+        engine: engine,
+        assets: engine.assets,
+        schemaVersion: zhixinSchemaVersion,
+        appVersion: 'test',
+      ),
+      dataPackages: DataPackageService(
+        filesDir: dir.path,
+        dbPath: path,
+        appVersion: 'test',
+        schemaVersion: zhixinSchemaVersion,
+      ),
+      restorePointStore: RestorePointStore(filesDir: dir.path),
+      engine: engine,
+      cache: cache,
+      connection: () => active,
+      database: () => db,
+      reopen: () async {
+        reopenAttempts++;
+        // 第一次打开模拟“换库之后打不开”，回滚时的那一次要成功。
+        if (reopenAttempts == 1) throw StateError('模拟替换后的库打不开');
+        active = await openZhixinDatabase(path: path);
+        return active;
+      },
+      resetStudyData: () async {},
+      markPendingWorkInvalidated: () {},
+      notifyDataChanged: () {},
+      recordFailure: (error, stack, {required kind}) {},
+    );
+    addTearDown(() => active.close());
+
+    await db.command((txn) async {
+      await insertRow(txn, 'learning_goal', {
+        'id': 'goal-before-restore',
+        'title': '恢复失败前的目标',
+        'status': 'active',
+        'created_at': '2026-11-10 09:00:00',
+        'updated_at': '2026-11-10 09:00:00',
+      });
+    }, label: '恢复前写入');
+    final headBefore = await engine.headId(active);
+
+    final restored = await service.restoreInspected(
+      RestoreInspection(
+        kind: RestorePackageKind.currentData,
+        schemaVersion: zhixinSchemaVersion,
+        appVersion: 'test',
+        exportedAt: DateTime.utc(2026, 11, 7).toIso8601String(),
+        databaseBytes: Uint8List.fromList([1, 2, 3, 4]),
+        expectedRows: const {},
+      ),
+    );
+
+    expect(restored, isA<Failure<String?>>());
+    expect(restored.failureOrNull!.message, contains('已退回原来的数据'));
+    expect(await selectRows(active, 'learning_goal'), hasLength(1));
+    expect(await engine.headId(active), headBefore);
+    // 恢复点与回滚同时保留：恢复点没有被失败清掉，用户仍能回到恢复前。
+    final points = await service.restorePoints();
+    expect(points, hasLength(1));
+    expect(points.single.head, headBefore);
   });
 
   test('数据版本页的整屏读取跟随提交与恢复点删除更新', () async {
