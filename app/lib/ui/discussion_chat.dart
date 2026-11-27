@@ -133,7 +133,7 @@ class DiscussionChatState extends State<DiscussionChat> {
   late final DiscussionCardActions _cards = DiscussionCardActions(
     stream: _reply,
     onChanged: _onCardsChanged,
-    showNotice: (notice) => setState(() => _failure = notice),
+    showNotice: _showFailure,
   );
 
   /// 失败说明：用错误样式，按状态带重试入口。
@@ -169,6 +169,22 @@ class DiscussionChatState extends State<DiscussionChat> {
   /// 图片列表或取图状态变了就让页面重建。
   void _onAttachmentsChanged() {
     if (mounted) setState(() {});
+  }
+
+  /// 显示一条失败说明：上一次的回答说明让位，重试入口由读取与发送状态决定。
+  void _showFailure(String notice) {
+    setState(() {
+      _failure = notice;
+      _result = null;
+    });
+  }
+
+  /// 显示一条回答收尾或图片说明：上一次的失败说明不再保留。
+  void _showResult(String notice) {
+    setState(() {
+      _failure = null;
+      _result = notice;
+    });
   }
 
   /// 卡片操作改了等待状态就让页面重建。
@@ -350,7 +366,7 @@ class DiscussionChatState extends State<DiscussionChat> {
       kept: '已经保存的消息没有改动',
       next: '可以点下面「重试」再读一次',
     );
-    setState(() => _failure = message);
+    _showFailure(message);
   }
 
   /// 读取失败之后重新订阅这条讨论；已经显示的消息留到新结果到达。
@@ -419,6 +435,7 @@ class DiscussionChatState extends State<DiscussionChat> {
             kept: '已经看到的消息保持不变',
             next: '可以再点一次读取较早讨论',
           );
+          _result = null;
         });
       }
     }
@@ -525,6 +542,7 @@ class DiscussionChatState extends State<DiscussionChat> {
         _stream = _createStream();
       }
       _failure = reason;
+      _result = null;
       _retryableNotice = retryable;
     });
   }
@@ -627,7 +645,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     if (picks.isEmpty) return const [];
     final paths = await _attachments.persist(scope);
     if (paths.length < picks.length && mounted) {
-      setState(() => _result = '图片保存失败，本次已改为发送文字。');
+      _showResult('图片保存失败，本次已改为发送文字。');
     }
     return paths;
   }
@@ -662,8 +680,8 @@ class DiscussionChatState extends State<DiscussionChat> {
       await service.setGoal(record.id, choice.goalId);
     } catch (error, stack) {
       if (!mounted) return;
-      setState(
-        () => _failure = describeFailure(
+      _showFailure(
+        describeFailure(
           context,
           error,
           stack,
@@ -696,8 +714,8 @@ class DiscussionChatState extends State<DiscussionChat> {
       showToast(context, '已使用材料：${selection.label}');
     } catch (error, stack) {
       if (!mounted) return;
-      setState(
-        () => _failure = describeFailure(
+      _showFailure(
+        describeFailure(
           context,
           error,
           stack,
@@ -719,7 +737,7 @@ class DiscussionChatState extends State<DiscussionChat> {
     final material = await scope.library.material.byId(materialId);
     if (!mounted) return;
     if (material == null) {
-      setState(() => _failure = '未找到这份材料');
+      _showFailure('未找到这份材料');
       return;
     }
     await showStudyPlanSetup(
@@ -794,8 +812,8 @@ class DiscussionChatState extends State<DiscussionChat> {
       await service.end(id);
     } catch (error, stack) {
       if (!mounted) return;
-      setState(
-        () => _failure = describeFailure(
+      _showFailure(
+        describeFailure(
           context,
           error,
           stack,
@@ -838,8 +856,9 @@ class DiscussionChatState extends State<DiscussionChat> {
       kept: '这条讨论没有改动',
     );
     if (!mounted) return;
-    if (result.notice != null) {
-      setState(() => _failure = result.notice);
+    final failure = result.notice;
+    if (failure != null) {
+      _showFailure(failure);
       return;
     }
     final configured = result.configured;
