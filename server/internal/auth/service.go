@@ -670,8 +670,8 @@ func (s *Service) RequestPasswordReset(ctx context.Context, rawIdentifier string
 		return err
 	}
 	err = s.issueCode(ctx, u.ID, PurposeResetPassword, kind, identifier)
-	// 冷却、收件地址预算、实例总量与发信暂停都按“已受理”返回：重设密码的入口是
-	// 公开的，回得不一样就能试出邮箱是否注册过，也试出限流的状态。
+	// 冷却、收件地址预算、实例总量与发信暂停一律按“已受理”返回 nil：重设密码
+	// 的入口是公开的，回得不一样就能试出邮箱是否注册过，也试出限流的状态。
 	var paused mailPauseError
 	if errors.Is(err, ErrCodeTooSoon) || errors.As(err, new(sendRateError)) ||
 		errors.As(err, new(instanceSendRateError)) || errors.As(err, &paused) {

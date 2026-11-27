@@ -282,8 +282,6 @@ func (h *Handler) RequestIdentityVerification(w http.ResponseWriter, r *http.Req
 		httpx.TooMany(w, r, instanceRate.retryAfter)
 	case errors.As(err, &pause):
 		httpx.TooMany(w, r, pause.retryAfter)
-	case errors.Is(err, ErrMailPaused):
-		httpx.TooMany(w, r, h.cooldownSeconds())
 	case errors.Is(err, ErrSenderUnsupported):
 		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):
@@ -333,20 +331,14 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.svc.RequestPasswordReset(r.Context(), in.Identifier)
-	var pause mailPauseError
+	// 服务层把冷却、收件预算、实例总量与发信暂停都当作“已受理”处理并返回
+	// nil，所以这里只剩无效输入与发信不可用两条真实错误；回得不一样就能试出
+	// 邮箱是否注册过，也试出限流的状态。
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusNoContent)
 	case errors.Is(err, ErrInvalidInput):
 		httpx.WriteProblem(w, r, http.StatusBadRequest, httpx.CodeInvalidRequest, "identifier must be a plain email address")
-	case errors.Is(err, ErrCodeTooSoon):
-		httpx.TooMany(w, r, h.cooldownSeconds())
-	case errors.As(err, &pause):
-		httpx.TooMany(w, r, pause.retryAfter)
-	case errors.Is(err, ErrMailPaused):
-		httpx.TooMany(w, r, h.cooldownSeconds())
-	case errors.Is(err, ErrSenderUnsupported):
-		httpx.WriteProblem(w, r, http.StatusNotImplemented, httpx.CodeNotImplemented, "this identity kind cannot receive a code yet")
 	case errors.Is(err, ErrMailUnavailable):
 		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "mail is not configured")
 	default:
