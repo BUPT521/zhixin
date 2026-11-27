@@ -46,6 +46,30 @@ class AnswerOutcome {
 
   /// 额度用完的具体原因；只有 [LlmFailure.quotaExhausted] 时可能非空。
   final QuotaExhaustedReason? quotaReason;
+
+  /// 模型回答是否完整可用：正文来自模型、没有停止、没有中断、没有被截断。
+  ///
+  /// 讨论取下一步建议、引用与记忆卡片，作答取记忆建议，原先各写一份判断
+  /// （作答漏了 `fromModel`，还把 `modelFailed` 写死为假）；两处现在都读这一项。
+  bool get usable => fromModel && !stopped && !interrupted && !truncated;
+
+  /// 回答被长度截断；收尾提示里已经写明。
+  bool get truncated => notices.contains(Notice.answerTruncated);
+
+  /// 换掉正文或提示状态，其余收尾状态照旧。
+  AnswerOutcome copyWith({String? text, List<Notice>? notices}) =>
+      AnswerOutcome(
+        text: text ?? this.text,
+        fromModel: fromModel,
+        stopped: stopped,
+        interrupted: interrupted,
+        modelFailed: modelFailed,
+        notices: notices ?? this.notices,
+        detail: detail,
+        omittedImages: omittedImages,
+        failure: failure,
+        quotaReason: quotaReason,
+      );
 }
 
 /// 把停止、生成中断与长度截断统一成界面要显示的结果。

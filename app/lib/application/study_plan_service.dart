@@ -13,6 +13,7 @@ import '../domain/models/study_plan.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/notices.dart';
 import '../domain/rules/study_plan_steps.dart';
+import 'answer_pipeline.dart';
 import 'buddy_answer.dart';
 import 'context_request.dart';
 import 'context_service.dart';
@@ -325,7 +326,7 @@ class StudyPlanService {
         localBatches++;
       }
     }
-    _ensureCurrentEpoch(requestEpoch);
+    ensureAnswerEpoch(runtime, requestEpoch);
 
     final source = localBatches == 0
         ? StudyPlanSource.model
@@ -437,7 +438,7 @@ class StudyPlanService {
         : '${material.title} ${material.position(pageFrom, to: pageTo)}';
     final planId = await transactions.run((txn) {
       // 生成与确认之间可能发生了整库恢复或清空：旧范围不再写回新数据。
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       return plans.createWithDrafts(
         title: planTitle,
         drafts: steps,
@@ -589,12 +590,5 @@ class StudyPlanService {
       );
     }
     return steps;
-  }
-
-  /// 生成与确认期间数据被整库恢复或清空时，旧范围与旧步骤不再使用。
-  void _ensureCurrentEpoch(int expected) {
-    if (runtime.dataEpoch != expected) {
-      throw UserFailure('数据已恢复或清空，请重新打开系统学习后再生成。');
-    }
   }
 }

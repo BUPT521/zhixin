@@ -33,6 +33,7 @@ import 'context_service.dart';
 import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
+import 'answer_pipeline.dart';
 import 'service_runtime.dart';
 import 'user_failure.dart';
 import 'used_pages.dart';
@@ -449,7 +450,7 @@ class DiscussionService {
     final before = await _promptHistory(conversationId);
     final ingested = await _ingest(paths);
     final userMessage = await transactions.run((txn) async {
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       if (needsReopen) {
         await conversations.reopen(conversationId, transaction: txn);
       }
@@ -572,88 +573,58 @@ class DiscussionService {
                   ?.imagePaths ??
               const <String>[]);
     final sentImages = imageRefs.isNotEmpty ? imageRefs : earlierImages;
-    final run = await askBuddyModel(
+    final hasLocalImages = hasImages || earlierImages.isNotEmpty;
+    String localFallback() =>
+        localBuddyReply(facts, text: text, hasImages: hasLocalImages);
+    // 调用模型、核对代次与收尾状态都在共用的回答流水线里；这里只管讨论特有
+    // 的图片占位、建议与引用，以及消息的落库。
+    final run = await runAnswer(
       ai: ai,
       filesDir: () => runtime.filesDir,
+      runtime: runtime,
+      requestEpoch: requestEpoch,
       context: facts,
       history: history,
       prompt: text,
       text: text,
-      inputMessageId: userMessage.identity,
       imagePaths: sentImages,
+      inputMessageId: userMessage.identity,
       config: config,
       onPartial: onPartial,
       cancelToken: cancelToken,
-      recordFailure: runtime.recordFailure,
+      localFallback: localFallback,
     );
-    _ensureCurrentEpoch(requestEpoch);
-    final modelReady = run.config?.isConfigured ?? false;
-
-    final hasLocalImages = hasImages || earlierImages.isNotEmpty;
-    String fallback() =>
-        localBuddyReply(facts, text: text, hasImages: hasLocalImages);
-    var reply = fallback();
-    var fromModel = false;
-    var stopped = false;
-    var interrupted = false;
-    var modelFailed = run.modelFailed;
-    var notices = run.notices;
-    String? detail;
-    var failure = run.failure;
+    var outcome = run.outcome;
     var skipped = <MemorySkip>[];
     var nextSteps = const <NextStepDraft>[];
     var citations = const <Citation>[];
-    final answer = run.answer;
 
-    if (run.notSent) {
+    if (run.run.notSent) {
       // 图片已经存进讨论，只是这次发不出去；改发文字或重新选图可以继续。
-      if (modelReady) {
-        reply = '图片已保存在本次讨论中。请重新选择可读取的图片，或输入文字继续。';
+      if (run.run.config?.isConfigured ?? false) {
+        outcome = outcome.copyWith(text: '图片已保存在本次讨论中。请重新选择可读取的图片，或输入文字继续。');
       }
       nextSteps = localNextStep(facts, text: text, hasImages: hasLocalImages);
-    } else if (answer != null) {
-      final outcome = interpretModelAnswer(
-        answer,
-        notices: notices,
-        omittedImages: run.omittedImages,
-        failure: failure,
-        quotaReason: run.quotaReason,
-        localFallback: fallback,
-      );
-      reply = outcome.text;
-      fromModel = outcome.fromModel;
-      stopped = outcome.stopped;
-      interrupted = outcome.interrupted;
-      modelFailed = outcome.modelFailed;
-      notices = outcome.notices;
-      detail = outcome.detail;
-      if (fromModel && !stopped && !interrupted && !answer.truncated) {
-        nextSteps = uniqueById(
-          answer.nextSteps,
-          (draft) => draft.contentId,
-        ).toList();
-        citations = await _verifyCitations(
-          answer.citations,
-          sources: _citationSources(facts, answer.providedSources),
-        );
-      }
-    } else {
+    } else if (run.answer == null) {
       // 模型没配置或调用失败：本地回答已经写好，再补一条本地建议。
       nextSteps = localNextStep(facts, text: text, hasImages: hasLocalImages);
+    } else if (run.usable) {
+      nextSteps = uniqueById(
+        run.answer!.nextSteps,
+        (draft) => draft.contentId,
+      ).toList();
+      citations = await _verifyCitations(
+        run.answer!.citations,
+        sources: _citationSources(facts, run.answer!.providedSources),
+      );
     }
 
-    final drafts =
-        answer != null &&
-            fromModel &&
-            !stopped &&
-            !interrupted &&
-            !answer.truncated
-        ? answer.memories
-        : const <MemoryDraft>[];
     final scope = resolved.scope;
     // 记忆卡片统一在这里生成：超长的照常保留卡片并记下跳过原因，用户点
     // “记下”时给出“超过长度，未保存”，不再说成“已经存在”。
-    final cards = memoryCards(drafts);
+    final cards = memoryCards(
+      run.usable ? run.answer!.memories : const <MemoryDraft>[],
+    );
     skipped.addAll(cards.skipped);
     final memoryItems = <MemoryDraft>[];
     final userMemoryDrafts = <({String itemId, MemoryDraft draft})>[];
@@ -666,19 +637,19 @@ class DiscussionService {
 
     // 回答先独立落库；记忆写入另起一个事务，失败时只提示，不回滚正文。
     var assistantMessage = await transactions.run((txn) async {
-      _ensureCurrentEpoch(requestEpoch);
+      ensureAnswerEpoch(runtime, requestEpoch);
       return conversations.append(
         conversationId,
         role: MessageRole.assistant,
-        content: reply,
+        content: outcome.text,
         payload: ChatMessagePayload(
-          fromModel: fromModel,
-          stopped: stopped,
-          interrupted: interrupted,
-          modelFailed: modelFailed,
-          failureName: modelFailed ? failure?.name : null,
-          quotaReason: modelFailed ? run.quotaReason?.name : null,
-          notices: notices,
+          fromModel: outcome.fromModel,
+          stopped: outcome.stopped,
+          interrupted: outcome.interrupted,
+          modelFailed: outcome.modelFailed,
+          failureName: outcome.modelFailed ? outcome.failure?.name : null,
+          quotaReason: outcome.modelFailed ? outcome.quotaReason?.name : null,
+          notices: outcome.notices,
           memoryItems: memoryItems,
           nextSteps: [
             for (final (index, step) in nextSteps.indexed)
@@ -691,13 +662,7 @@ class DiscussionService {
               ),
           ],
           citations: citations,
-          usedPages: answer == null
-              ? const <ChatUsedPage>[]
-              : usedPagesOf(
-                  facts,
-                  answer.providedSources,
-                  currentPage: facts.materialPage?.pageKey,
-                ),
+          usedPages: run.usedPages,
         ),
         transaction: txn,
       );
@@ -706,7 +671,7 @@ class DiscussionService {
     if (userMemoryDrafts.isNotEmpty) {
       try {
         final refreshed = await transactions.run((txn) async {
-          _ensureCurrentEpoch(requestEpoch);
+          ensureAnswerEpoch(runtime, requestEpoch);
           final applied = await applyMemoryDrafts(
             transactions: transactions,
             memories: memories,
@@ -751,25 +716,16 @@ class DiscussionService {
         if (refreshed != null) assistantMessage = refreshed;
       } catch (_) {
         // 记忆可撤销，也只是回答的附带写入；失败不拖累已经保存的正文。
-        notices = [...notices, Notice.memorySaveFailed];
+        outcome = outcome.copyWith(
+          notices: [...outcome.notices, Notice.memorySaveFailed],
+        );
       }
     }
 
     return ChatResult(
       userMessage: userMessage,
       assistantMessage: assistantMessage,
-      outcome: AnswerOutcome(
-        text: reply,
-        fromModel: fromModel,
-        stopped: stopped,
-        interrupted: interrupted,
-        modelFailed: modelFailed,
-        notices: notices,
-        detail: detail,
-        omittedImages: run.omittedImages,
-        failure: failure,
-        quotaReason: run.quotaReason,
-      ),
+      outcome: outcome,
       skipped: skipped,
       nextSteps: nextSteps,
       citations: citations,
@@ -1280,12 +1236,6 @@ class DiscussionService {
         .where((value) => value.isNotEmpty)
         .toList(growable: false);
     return parts.isEmpty ? null : parts.join('；');
-  }
-
-  void _ensureCurrentEpoch(int expected) {
-    if (runtime.dataEpoch != expected) {
-      throw UserFailure('数据已恢复或清空，请重新打开这条讨论后再发送。');
-    }
   }
 
   static String _titleFor(String text) {

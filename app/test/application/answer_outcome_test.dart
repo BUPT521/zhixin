@@ -70,4 +70,40 @@ void main() {
     expect(truncated.fromModel, isTrue);
     expect(truncated.notices, [Notice.answerTruncated]);
   });
+
+  test('可用性判断统一：只有来自模型、未停止、未中断、未截断才算完整', () {
+    bool usable(BuddyReply reply) =>
+        interpretModelAnswer(reply, localFallback: fallback).usable;
+
+    expect(usable(const BuddyReply(text: '完整回答')), isTrue);
+    expect(usable(const BuddyReply(text: '先看定义', stopped: true)), isFalse);
+    expect(usable(const BuddyReply(text: '先看定义', interrupted: true)), isFalse);
+    expect(usable(const BuddyReply(text: '先看定义', truncated: true)), isFalse);
+    // 中断且没有正文时退回本地：正文不是模型给的，同样不可用。
+    expect(usable(const BuddyReply(text: '', interrupted: true)), isFalse);
+  });
+
+  test('截断与换正文只改说明与正文，其余收尾状态照旧', () {
+    final outcome = interpretModelAnswer(
+      const BuddyReply(
+        text: '先看定义',
+        interrupted: true,
+        interruptedReason: '连接中断',
+      ),
+      localFallback: fallback,
+    );
+    expect(outcome.truncated, isFalse);
+    final blanked = outcome.copyWith(text: '');
+    expect(blanked.text, '');
+    expect(blanked.interrupted, isTrue);
+    expect(blanked.detail, '连接中断');
+    final noticed = outcome.copyWith(
+      notices: [...outcome.notices, Notice.memorySaveFailed],
+    );
+    expect(noticed.notices, [
+      Notice.generationInterrupted,
+      Notice.memorySaveFailed,
+    ]);
+    expect(noticed.text, '先看定义');
+  });
 }

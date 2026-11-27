@@ -505,6 +505,9 @@ void main() {
     expect(result.fromModel, isFalse);
     expect(result.notices, [Notice.modelCallFailed]);
     expect(result.outcome.failure, LlmFailure.offline);
+    // 调用失败按统一口径记为模型失败，界面据此给重试入口；不再写死为假。
+    expect(result.outcome.modelFailed, isTrue);
+    expect(result.outcome.usable, isFalse);
     expect(result.attempt.helps.single.content, isNotEmpty);
   });
 
