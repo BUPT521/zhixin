@@ -60,7 +60,8 @@ func TestStartupPrunesOldUnverifiedAccounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stores := MemoryStores()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	stores := MemoryStores(cfg, log)
 	store, ok := stores.Auth.(*auth.MemoryStore)
 	if !ok {
 		t.Fatalf("内存装配应使用 MemoryStore，得到 %T", stores.Auth)
@@ -91,7 +92,7 @@ func TestStartupPrunesOldUnverifiedAccounts(t *testing.T) {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	Build(runCtx, cfg, stores, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	Build(runCtx, cfg, stores, log)
 
 	// 每日清理在启动后的 goroutine 里先跑一次，等它把过期账号删掉。
 	deadline := time.Now().Add(2 * time.Second)

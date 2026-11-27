@@ -24,10 +24,8 @@ var (
 // CheckNowPaySchema 确认即刻收的表与购买入口的新列已经建好。建表不在这条流水线里
 // 执行：生产库已有真实交易，改表用可回滚的增量语句，见 server/运维手册.md。
 //
-// 核销与购买入口这两张表是收款的前提，缺表或购买入口缺列、缺幂等键索引时直接退出，
-// 让自动部署回滚到上一份可执行文件（ADR-0074）；余额副本是 2026-11-25 补的一张纯
-// 新增表，缺表时只记日志并停用免费额度之外的放行（ADR-0069），这样已经在收款的
-// 实例可以先部署新版，再按运维手册建表并重启，不会因为建表顺序停服。
+// 收款依赖购买入口、核销流水与余额副本三张表；缺表、缺列或缺幂等键索引时
+// 拒绝启动，让自动部署回滚到上一份可执行文件。
 //
 // 补查的尝试计数与 abandoned 状态缺任何一项都直接退出（ADR-0089）：缺列时补查写不
 // 进去，缺约束时到上限的流水落不成终态，两种情况下积压仍然会饿死更晚的流水。
@@ -55,6 +53,9 @@ func (s *Store) CheckNowPaySchema(ctx context.Context) error {
 	if !installed {
 		return errors.New("pg: 即刻收收款需要按 schema.sql 建好 nowpay_charge 与 nowpay_purchase")
 	}
+	if !balance {
+		return errors.New("pg: 缺少 nowpay_balance 表，按运维手册 4.11 建表之后再启动")
+	}
 	if !purchaseColumns || !purchaseIndex {
 		return errors.New("pg: nowpay_purchase 缺 client_request_no、state、updated_at 或幂等键索引，" +
 			"按运维手册 4.11 的增量语句补齐")
@@ -75,19 +76,15 @@ func (s *Store) CheckNowPaySchema(ctx context.Context) error {
 		return errors.New("pg: nowpay_charge 的 status 检查约束还没有包含 abandoned，" +
 			"按运维手册 4.11 重建约束之后再启动")
 	}
-	s.balanceReady.Store(balance)
-	if !balance {
-		s.log.Error("nowpay_balance is missing: chat stays limited to the free allowance until the table is created and the service restarts",
-			"table", "nowpay_balance")
-	}
+	s.balanceReady.Store(true)
 	return nil
 }
 
 // SaveBalance 用即刻收报告的剩余积分覆盖本地余额副本（ADR-0069）。asOf 是这份余额
 // 对应的快照时刻：查询响应带 as_of_time 时用它，核销结果没有携带时用发起核销的时刻。
 // 副本只用于判断能不能放行，真正的余额在支付宝一侧；晚到的旧快照不会覆盖新副本
-// （ADR-0073）。账号已经删除时外键拒绝写入，按错误返回。副本表还没建好时不做任何
-// 事，等建表并重启之后才写。
+// （ADR-0073）。账号已经删除时外键拒绝写入，按错误返回。只有开启收款并通过启动
+// 检查之后才写入副本。
 func (s *Store) SaveBalance(ctx context.Context, userID string, remaining int64, asOf time.Time) error {
 	if userID == "" || !s.balanceReady.Load() {
 		return nil

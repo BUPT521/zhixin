@@ -32,6 +32,7 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/retentionadmin"
 	"github.com/BUPT521/zhixin/server/internal/routepolicy"
 	"github.com/BUPT521/zhixin/server/internal/secretbox"
+	"github.com/BUPT521/zhixin/server/internal/store/pg"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -50,19 +51,13 @@ type RetentionStore interface {
 // Stores groups every persistence dependency so main can swap the in-memory
 // implementations for PostgreSQL and object storage in one place.
 type Stores struct {
-	Auth    auth.Store
-	Sync    syncsvc.Store
-	Backups backup.Store
-	Blobs   blobs.Store
-	Quota   llmproxy.Quota
-	Usage   llmproxy.UsageStore
-	// Purchases 保存即刻收的购买入口与积分核销流水；只有 PostgreSQL 装配时提供。
-	Purchases nowpay.PurchaseStore
-	// Balances 保存积分余额的本地副本，额度预留按它放行免费额度之外的用量；只有
-	// PostgreSQL 装配时提供，为空时预留只看免费额度（ADR-0069）。
-	Balances nowpay.BalanceStore
-	// NowPay 是即刻收的调用入口；没有配置商品时保持为空，购买接口只返回空余额。
-	NowPay *nowpay.Client
+	Auth     auth.Store
+	Sync     syncsvc.Store
+	Backups  backup.Store
+	Blobs    blobs.Store
+	Quota    llmproxy.Quota
+	Usage    llmproxy.UsageStore
+	payments *nowpay.Handler
 	// Catalog 保存管理后台配置的模型来源与路由（ADR-0029）。
 	Catalog llmproxy.Catalog
 	// Cache 保存按账号隔离的嵌入向量缓存（ADR-0030），派生数据，清空云端数据
@@ -76,12 +71,12 @@ type Stores struct {
 	// DeleteAccount removes per-account data owned outside the auth store.
 	// It runs once before the account row disappears.
 	DeleteAccount auth.AccountDeleter
-	// Ready reports whether external dependencies are reachable; nil means always ready.
+	// Ready reports whether external dependencies are reachable.
 	Ready func(ctx context.Context) error
 }
 
 // MemoryStores returns in-process stores for development and tests.
-func MemoryStores() Stores {
+func MemoryStores(cfg config.Config, log *slog.Logger) Stores {
 	authStore := auth.NewMemoryStore()
 	syncStore := syncsvc.NewMemoryStore()
 	backupStore := backup.NewMemoryStore()
@@ -99,6 +94,7 @@ func MemoryStores() Stores {
 		Blobs:     blobStore,
 		Quota:     quotaStore,
 		Usage:     llmproxy.NewMemoryUsage(),
+		payments:  nowpay.NewDisabledHandler(log, cfg.RateLimitKeys, cfg.LLM.TokensPerPoint),
 		Catalog:   llmproxy.NewMemoryCatalog(),
 		Cache:     cacheStore,
 		Feedback:  feedback.NewMemoryStore(),
@@ -111,23 +107,54 @@ func MemoryStores() Stores {
 			quotaStore.DeleteUser,
 			cacheStore.DeleteUser,
 		),
+		Ready: func(context.Context) error { return nil },
 	}
 }
 
-// newPurchaseHandler 装配购买接口。即刻收的商品 ID 来自配置，没有配置时接口只回
-// 空余额与档位。
-func newPurchaseHandler(cfg config.Config, st Stores, log *slog.Logger) *nowpay.Handler {
-	callback := ""
-	tokensPerPoint := cfg.LLM.TokensPerPoint
-	if cfg.NowPay != nil {
-		callback = cfg.NowPay.CallbackURL
-		if st.NowPay == nil {
-			// 配了商品却没有客户端时购买接口只会回空余额，等于卖不了；这条日志
-			// 让装配漏项在启动时就看得见，而不是等用户点购买才发现。
-			log.Error("ZHIXIN_NOWPAY_PRODUCT_ID is set but no nowpay client is wired: purchases only return an empty balance")
-		}
+// ProductionStores assembles PostgreSQL, shared object storage and the payment
+// handler. An enabled product always uses PostgreSQL for purchases and balances.
+func ProductionStores(ctx context.Context, cfg config.Config, db *pg.Store, objects objectstore.Store, client *nowpay.Client, log *slog.Logger) (Stores, error) {
+	if db == nil || objects == nil {
+		return Stores{}, errors.New("production stores require PostgreSQL and object storage")
 	}
-	return nowpay.NewHandler(st.NowPay, st.Purchases, st.Balances, callback, log, cfg.RateLimitKeys, tokensPerPoint)
+	if (cfg.NowPay != nil) != (client != nil) {
+		return Stores{}, errors.New("ZHIXIN_NOWPAY_PRODUCT_ID and the NowPay client must be configured together")
+	}
+	var payments *nowpay.Handler
+	if cfg.NowPay != nil {
+		checkCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		defer cancel()
+		if err := db.CheckNowPaySchema(checkCtx); err != nil {
+			return Stores{}, err
+		}
+		payments = nowpay.NewHandler(client, db, db, cfg.NowPay.CallbackURL, log, cfg.RateLimitKeys, cfg.LLM.TokensPerPoint)
+	} else {
+		payments = nowpay.NewDisabledHandler(log, cfg.RateLimitKeys, cfg.LLM.TokensPerPoint)
+	}
+	// PostgreSQL owns metadata, while backups and attachments share the object
+	// store for their bytes. Account deletion must remove those objects too.
+	blobStore := pg.NewBlobStore(db)
+	return Stores{
+		Auth:          db,
+		Sync:          db,
+		Backups:       db,
+		Blobs:         blobStore,
+		Quota:         db,
+		Usage:         db,
+		payments:      payments,
+		Catalog:       db,
+		Cache:         pg.NewEmbeddingCache(db),
+		Feedback:      db,
+		Retention:     db,
+		Objects:       objects,
+		DeleteAccount: DeleteAccountData(db.DeleteUserObjects, blobStore.DeleteUser),
+		Ready: func(ctx context.Context) error {
+			if err := db.Ping(ctx); err != nil {
+				return err
+			}
+			return objects.Ping(ctx)
+		},
+	}, nil
 }
 
 // DeleteAccountData 把各存储的账号清理合成一次操作：auth.Service 在删除账号行
@@ -361,7 +388,7 @@ func Build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger) 
 		backups:  backupHandler,
 		blobs:    blobHandler,
 		llm:      llmProxy,
-		payments: newPurchaseHandler(cfg, st, log),
+		payments: st.payments,
 		llmAdmin: llmproxy.NewAdmin(llmProxy, st.Catalog, box, cfg.MaxJSONBytes),
 		accounts: accountadmin.New(st.Auth, st.Quota, authSvc.DeleteAccountByID,
 			cfg.LLM.DailyTokens, cfg.Location, log, cfg.MaxJSONBytes),

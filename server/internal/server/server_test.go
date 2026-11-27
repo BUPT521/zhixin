@@ -21,6 +21,8 @@ import (
 	"github.com/BUPT521/zhixin/server/internal/config"
 	"github.com/BUPT521/zhixin/server/internal/httpx"
 	"github.com/BUPT521/zhixin/server/internal/llmproxy"
+	"github.com/BUPT521/zhixin/server/internal/objectstore"
+	"github.com/BUPT521/zhixin/server/internal/store/pg"
 	"github.com/BUPT521/zhixin/server/internal/syncsvc"
 )
 
@@ -31,6 +33,14 @@ type harness struct {
 	srv    *httptest.Server
 	cfg    config.Config
 	stores Stores
+}
+
+func TestProductionStoresRejectsProductWithoutClient(t *testing.T) {
+	cfg := config.Config{NowPay: &config.NowPayConfig{ProductID: "test-product"}}
+	_, err := ProductionStores(t.Context(), cfg, &pg.Store{}, objectstore.NewMemory(), nil, slog.Default())
+	if err == nil || !strings.Contains(err.Error(), "NowPay client") {
+		t.Fatalf("missing payment client: %v", err)
+	}
 }
 
 func newHarness(t *testing.T, env map[string]string) *harness {
@@ -55,7 +65,7 @@ func newHarness(t *testing.T, env map[string]string) *harness {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stores := MemoryStores()
+	stores := MemoryStores(cfg, log)
 	srv := httptest.NewServer(Build(context.Background(), cfg, stores, log))
 	t.Cleanup(srv.Close)
 	return &harness{t: t, srv: srv, cfg: cfg, stores: stores}
@@ -433,7 +443,8 @@ func TestRefreshRateLimitFollowsAccountAcrossDevices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	handler := Build(context.Background(), cfg, MemoryStores(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	handler := Build(context.Background(), cfg, MemoryStores(cfg, log), log)
 	post := func(path, address string, body any) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(mustJSON(t, body)))
@@ -475,7 +486,8 @@ func TestAccessLogRecordsRouteAndRequestID(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	handler := Build(context.Background(), cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	handler := Build(context.Background(), cfg, MemoryStores(cfg, log), log)
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -500,7 +512,8 @@ func TestUnauthorizedHasRequestIDAndIsLogged(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	handler := Build(context.Background(), cfg, MemoryStores(), slog.New(slog.NewTextHandler(&logs, nil)))
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	handler := Build(context.Background(), cfg, MemoryStores(cfg, log), log)
 	req := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
@@ -602,10 +615,11 @@ func TestInternalErrorsAreProblems(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stores := MemoryStores()
-	stores.Sync = failingSyncStore{}
 	var logs bytes.Buffer
-	handler := Build(context.Background(), cfg, stores, slog.New(slog.NewTextHandler(&logs, nil)))
+	log := slog.New(slog.NewTextHandler(&logs, nil))
+	stores := MemoryStores(cfg, log)
+	stores.Sync = failingSyncStore{}
+	handler := Build(context.Background(), cfg, stores, log)
 
 	register := httptest.NewRequest(http.MethodPost, "/v1/auth/register",
 		bytes.NewReader(mustJSON(t, map[string]string{"identifier": "fail@b.cn", "password": "password1"})))

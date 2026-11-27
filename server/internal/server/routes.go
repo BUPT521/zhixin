@@ -55,11 +55,9 @@ func (rt routes) GetHealthz(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (rt routes) GetReadyz(w http.ResponseWriter, r *http.Request) {
-	if rt.ready != nil {
-		if err := rt.ready(r.Context()); err != nil {
-			httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "a dependency is not reachable")
-			return
-		}
+	if err := rt.ready(r.Context()); err != nil {
+		httpx.WriteProblem(w, r, http.StatusServiceUnavailable, httpx.CodeUnavailable, "a dependency is not reachable")
+		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, api.Ready{Status: api.ReadyStatusReady, SchemaVersion: rt.schemaVersion})
 }

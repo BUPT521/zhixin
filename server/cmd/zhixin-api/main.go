@@ -50,7 +50,7 @@ func run(log *slog.Logger) error {
 	var chargePending nowpay.PendingChargeStore
 	if cfg.DatabaseURL == "" {
 		log.Warn("ZHIXIN_DATABASE_URL is empty: using in-memory stores, all data is lost on exit")
-		stores = server.MemoryStores()
+		stores = server.MemoryStores(cfg, log)
 	} else {
 		objects, err := openObjects(cfg, log)
 		if err != nil {
@@ -78,69 +78,33 @@ func run(log *slog.Logger) error {
 		}
 		settlementFailures = pgStore
 		if cfg.NowPay != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-			err := pgStore.CheckNowPaySchema(ctx)
-			cancel()
+			nowpayClient, err = nowpay.NewClient(cfg.Alipay, cfg.NowPay.ProductID)
 			if err != nil {
 				return err
 			}
-			client, err := nowpay.NewClient(cfg.Alipay, cfg.NowPay.ProductID)
-			if err != nil {
-				return err
-			}
-			meter, err = nowpay.NewMeter(client, pgStore, cfg.LLM.TokensPerPoint, log)
+		}
+		stores, err = server.ProductionStores(context.Background(), cfg, pgStore, objects, nowpayClient, log)
+		if err != nil {
+			return err
+		}
+		if nowpayClient != nil {
+			meter, err = nowpay.NewMeter(nowpayClient, pgStore, cfg.LLM.TokensPerPoint, log)
 			if err != nil {
 				return err
 			}
 			pgStore.SetNowPay(meter)
-			nowpayClient = client
 			nowpayMaintenance = pgStore
 			chargePending = pgStore
 			// 启动时查一次商品收费能力：配置错、商品未审核或应用凭证不匹配会在日志里
 			// 先出现，购买接口的第一次请求不必承担这次排查；失败只记日志，不阻塞启动。
 			probeCtx, probeCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			if _, err := client.Charge(probeCtx); err != nil {
+			if _, err := nowpayClient.Charge(probeCtx); err != nil {
 				log.Error("查询即刻收商品失败，购买入口会在请求时再试",
 					"product_id", cfg.NowPay.ProductID, "error", err)
 			}
 			probeCancel()
 		}
 		log.Info("using PostgreSQL stores")
-		// 附件索引与配额写在 attachment 表里，BlobStore 负责索引与字节两件事；
-		// 备份与附件的字节仍共用同一份对象存储。
-		blobStore := pg.NewBlobStore(pgStore)
-		stores = server.Stores{
-			Auth:      pgStore,
-			Sync:      pgStore,
-			Backups:   pgStore,
-			Blobs:     blobStore,
-			Quota:     pgStore,
-			Usage:     pgStore,
-			Catalog:   pgStore,
-			Cache:     pg.NewEmbeddingCache(pgStore),
-			Feedback:  pgStore,
-			Retention: pgStore,
-			Objects:   objects,
-			// 账号行删除后其余表按外键级联；对象存储里的备份与附件字节没有外键，
-			// 由这里按前缀清理。
-			DeleteAccount: server.DeleteAccountData(
-				pgStore.DeleteUserObjects,
-				blobStore.DeleteUser,
-			),
-			Ready: func(ctx context.Context) error {
-				if err := pgStore.Ping(ctx); err != nil {
-					return err
-				}
-				return objects.Ping(ctx)
-			},
-		}
-		// 即刻收的购买入口、流水、余额副本与调用入口在整体装配之后补上：这里的
-		// 赋值必须在 stores 赋值之后，否则会被上面那份字面量覆盖掉。
-		if cfg.NowPay != nil {
-			stores.Purchases = pgStore
-			stores.Balances = pgStore
-			stores.NowPay = nowpayClient
-		}
 	}
 	if cfg.AdminToken == "" {
 		log.Info("ZHIXIN_ADMIN_TOKEN is empty: the admin page and /admin/v1 answer 404")

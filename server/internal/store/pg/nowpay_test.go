@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1356,6 +1357,17 @@ func TestPostgresRefusesToStartWithoutTheClaimColumn(t *testing.T) {
 	}
 	if err := st.CheckNowPaySchema(ctx); err == nil {
 		t.Fatal("缺 claimed_at 列时启动应失败")
+	}
+}
+
+func TestPostgresRefusesToStartWithoutTheBalanceStore(t *testing.T) {
+	st := newTestStore(t)
+	ctx := context.Background()
+	if _, err := st.pool.Exec(ctx, `DROP TABLE nowpay_balance`); err != nil {
+		t.Fatalf("drop balance table: %v", err)
+	}
+	if err := st.CheckNowPaySchema(ctx); err == nil || !strings.Contains(err.Error(), "nowpay_balance") {
+		t.Fatalf("missing balance store: %v", err)
 	}
 }
 
