@@ -117,9 +117,16 @@ const (
 	healthReasonCanceled    = "请求已取消或超时"
 )
 
+// 两类停止原因的健康状态是固定的：预算用完按到达来源处理，请求取消不算来源
+// 故障。代理收尾与 requestFailure 直接引用，不在每处重写。
+var (
+	roundBudgetHealth = healthOutcome{reason: healthReasonRoundBudget, sourceReached: true}
+	canceledHealth    = healthOutcome{reason: healthReasonCanceled}
+)
+
 func requestFailure(ctx context.Context, err error) healthOutcome {
 	if ctx.Err() != nil {
-		return healthOutcome{reason: healthReasonCanceled}
+		return canceledHealth
 	}
 	var connection sourceConnectionError
 	if errors.As(err, &connection) {
