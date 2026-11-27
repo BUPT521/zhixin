@@ -378,19 +378,22 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 
 	admin.RegisterUI(mux, adminGuard)
 	accountGuard := auth.Middleware(authSvc, log)
-	// 生成代码把 Middlewares 逐个套上，列表最后一个在最外层。因此按执行顺序
-	// 反过来写：运行起来依次是 记录路由 → 校验身份 → 按账号限流 → 标记可缓存
-	// → 处理器。记录路由在最外层，访问日志能拿到注册模式；鉴权在限流之前，未
-	// 认证的请求不会消耗账号的上传额度；限流在处理器之前，请求体落盘之前就被
-	// 拦住；可缓存标记在最内层，只有真正要进处理器的公开响应才会被标记。
+	// 生成代码把 Middlewares 逐个套上，列表最后一个在最外层。运行起来依次是
+	// 记录路由 → 校验身份（管理路由走管理鉴权）→ 按账号限流 → 云端写入互斥
+	// → 临时文件预算 → 同步并发槽 → 标记可缓存 → 处理器。记录路由在最外层，
+	// 访问日志能拿到注册模式；鉴权与限流在业务判断之前，未认证的请求不占账号
+	// 额度，未验证账号的 403 与清除期间的 409 一样耗掉一次上传额度，不能拿这
+	// 两条路径无限重试；云端写入互斥在临时文件预算与同步并发槽之外，被它拒绝
+	// 的请求不占临时空间与同步槽；可缓存标记在最内层，只有真正要进处理器的
+	// 公开响应才会被标记。
 	api.HandlerWithOptions(handlers, api.StdHTTPServerOptions{
 		BaseRouter: mux,
 		Middlewares: []api.MiddlewareFunc{
 			cachePublic,
 			syncConcurrency(),
 			temporaryUploadBudget(cfg.MaxBackupBytes, cfg.MaxAttachmentBytes),
-			uploadLimit(uploadLimits),
 			cloudOperations(cfg.DatabaseURL != ""),
+			uploadLimit(uploadLimits),
 			func(next http.Handler) http.Handler {
 				account := accountGuard(next)
 				management := adminGuard(next)
@@ -435,8 +438,8 @@ func build(ctx context.Context, cfg config.Config, st Stores, log *slog.Logger, 
 }
 
 // cachePublic 给明确可缓存的公开响应覆盖默认的 no-store，目前只有发布清单。
-// 其余响应保持默认，账号数据不会被中间层缓存。放在生成链的最内层：先鉴权、
-// 再限流，只有真正要进处理器的响应才会被标记。
+// 其余响应保持默认，账号数据不会被中间层缓存。放在生成链的最内层：鉴权、
+// 限流与云端写入互斥都在它之外，只有真正要进处理器的响应才会被标记。
 func cachePublic(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if seconds, ok := routepolicy.CacheSeconds(r.Pattern); ok {

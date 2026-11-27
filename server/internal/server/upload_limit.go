@@ -46,7 +46,8 @@ func temporaryUploadBudget(backupBytes, attachmentBytes int64) api.MiddlewareFun
 // uploadLimit 在鉴权后按账号限制备份、附件与同步提交的写入频率。
 //
 // 判断用 r.Pattern 而不是路径前缀：生成代码把注册模式写进 r.Pattern，编码路径
-// 与尾斜杠不会绕开；按账号计则要求鉴权已经先跑过。
+// 与尾斜杠不会绕开；按账号计则要求鉴权已经先跑过。限流在云端写入互斥之外，
+// 未验证账号的 403 与清除期间的 409 同样消耗额度，因此这两种拒绝不能反复重试。
 func uploadLimit(limiter *ratelimit.Limiter) api.MiddlewareFunc {
 	if limiter == nil {
 		return func(next http.Handler) http.Handler { return next }
