@@ -1,4 +1,4 @@
-import '../data/revisions/revision_models.dart';
+import '../domain/models/revision_models.dart';
 import '../data/revisions/revision_service.dart';
 import 'time_policy_controller.dart';
 

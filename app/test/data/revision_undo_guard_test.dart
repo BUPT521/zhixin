@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
-import 'package:zhixin/data/revisions/revision_actions.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/rules/revision_actions.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 import 'package:zhixin/domain/models/chat_message_payload.dart';
 import 'package:zhixin/domain/rules/time_format.dart';
 

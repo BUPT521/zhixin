@@ -2,41 +2,30 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
+import 'package:zhixin/data/cloud/sync_preferences_store.dart';
 
-/// cloud.json 的读写：默认值、往返保存，以及两个动作同时改这份偏好时各自改的键
-/// 都留在文件里。后一组用例盯的是并发写入：读改写之间没有排队时，后写的动作会
-/// 覆盖先写的键，两次写入还会共用同一个临时文件，Windows 上 rename 会报找不到
-/// 源文件。
+/// 空间级同步偏好的读写：默认值、往返保存，以及两个动作同时改这份偏好时各自
+/// 改的键都留在文件里。后一组用例盯的是并发写入：读改写之间没有排队时，后写
+/// 的动作会覆盖先写的键，两次写入还会共用同一个临时文件，Windows 上 rename
+/// 会报找不到源文件。
 void main() {
   late Directory directory;
-  late CloudPreferencesStore store;
+  late SyncPreferencesStore store;
 
   setUp(() async {
-    directory = await Directory.systemTemp.createTemp('zhixin-cloud-prefs-');
-    store = CloudPreferencesStore(filesDir: directory.path);
+    directory = await Directory.systemTemp.createTemp('zhixin-sync-prefs-');
+    store = SyncPreferencesStore(filesDir: directory.path);
   });
 
   tearDown(() async {
     await directory.delete(recursive: true);
   });
 
-  test('没有保存过时用默认地址、开启自动同步、没有同步状态', () async {
-    expect(await store.storedServerBaseUrl(), isEmpty);
-    expect(await store.usesDefaultServerBaseUrl(), isTrue);
-    expect(await store.serverBaseUrl(), defaultServerBaseUrl);
+  test('没有保存过时开启自动同步、没有上次身份与同步状态', () async {
     expect(await store.autoSync(), isTrue);
     expect(await store.lastIdentity(), isEmpty);
     expect(await store.syncState(), isNull);
-  });
-
-  test('地址按去掉首尾空白保存，清空之后回到默认地址', () async {
-    await store.setServerBaseUrl('  https://example.com  ');
-    expect(await store.storedServerBaseUrl(), 'https://example.com');
-    expect(await store.usesDefaultServerBaseUrl(), isFalse);
-    await store.setServerBaseUrl('   ');
-    expect(await store.usesDefaultServerBaseUrl(), isTrue);
-    expect(await store.serverBaseUrl(), defaultServerBaseUrl);
+    expect(await store.memoryUsageFlushedAt(), isNull);
   });
 
   test('开关与上次登录身份保存之后读得出', () async {
@@ -79,20 +68,18 @@ void main() {
   test('同时改不同的键，各自改的键都写进文件', () async {
     await Future.wait([
       store.setAutoSync(false),
-      store.setServerBaseUrl('https://example.com'),
       store.setLastIdentity('https://example.com#user-1'),
     ]);
 
     final raw = (jsonDecode(await File(store.path).readAsString()) as Map)
         .cast<String, Object?>();
     expect(raw['auto_sync'], isFalse);
-    expect(raw['server_base_url'], 'https://example.com');
     expect(raw['last_identity'], 'https://example.com#user-1');
     expect(await File('${store.path}.partial').exists(), isFalse);
   });
 
   test('两个实例写同一个目录时也排进同一条队列', () async {
-    final other = CloudPreferencesStore(filesDir: directory.path);
+    final other = SyncPreferencesStore(filesDir: directory.path);
     await Future.wait([
       store.setAutoSync(false),
       other.setLastIdentity('https://example.com#user-1'),
@@ -122,5 +109,10 @@ void main() {
       throwsA(isA<FileSystemException>()),
     );
     expect(await File('${store.path}.partial').exists(), isFalse);
+  });
+
+  test('同步偏好与设备偏好不是同一个文件', () async {
+    expect(store.path, isNot(contains('cloud.json')));
+    expect(store.path, endsWith(SyncPreferencesStore.fileName));
   });
 }

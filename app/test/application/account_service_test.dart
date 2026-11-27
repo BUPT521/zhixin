@@ -7,8 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
-import 'package:zhixin/data/db/app_database.dart'
-    show zhixinDbFileName, zhixinSchemaVersion;
+import 'package:zhixin/data/db/app_database.dart' show zhixinDbFileName;
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/ai/ai_chat_service.dart';
 import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';
@@ -18,13 +18,17 @@ import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/embedding_client.dart';
 import 'package:zhixin/application/service_runtime.dart';
 import 'package:zhixin/application/settings_service.dart';
+import 'package:zhixin/platform/diagnostics_store.dart';
 import 'package:zhixin/application/time_policy_controller.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/data_version_service.dart';
 import 'package:zhixin/data/backup/restore_point_store.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
-import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
+import 'package:zhixin/domain/models/account_models.dart';
+import 'package:zhixin/data/cloud/device_preferences_store.dart';
+import 'package:zhixin/data/cloud/sync_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/models/server_models.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/settings_repository.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
@@ -71,15 +75,18 @@ void main() {
   late FakeServer server;
   late Directory dir;
   late AccountService account;
-  late CloudPreferencesStore preferences;
+  late DevicePreferencesStore devicePreferences;
+  late SyncPreferencesStore preferences;
 
   setUp(() async {
     server = FakeServer();
     dir = await Directory.systemTemp.createTemp('zhixin_account_test');
-    preferences = CloudPreferencesStore(filesDir: dir.path);
+    devicePreferences = DevicePreferencesStore(filesDir: dir.path);
+    preferences = SyncPreferencesStore(filesDir: dir.path);
     account = AccountService(
       store: AccountStore(MemorySecretStore()),
-      preferences: preferences,
+      devicePreferences: devicePreferences,
+      syncPreferences: preferences,
       clientFactory: (baseUrl) =>
           ServerClient(baseUrl: baseUrl, httpClient: server.client),
     );
@@ -143,7 +150,8 @@ void main() {
     addTearDown(client.close);
     final keysAccount = AccountService(
       store: AccountStore(MemorySecretStore()),
-      preferences: preferences,
+      devicePreferences: devicePreferences,
+      syncPreferences: preferences,
       clientFactory: (baseUrl) =>
           ServerClient(baseUrl: baseUrl, httpClient: client),
     );
@@ -190,7 +198,8 @@ void main() {
     final defaultDir = Directory('${dir.path}/default');
     final defaultAccount = AccountService(
       store: AccountStore(MemorySecretStore()),
-      preferences: CloudPreferencesStore(filesDir: defaultDir.path),
+      devicePreferences: DevicePreferencesStore(filesDir: defaultDir.path),
+      syncPreferences: SyncPreferencesStore(filesDir: defaultDir.path),
       clientFactory: (baseUrl) =>
           ServerClient(baseUrl: baseUrl, httpClient: server.client),
     );
@@ -350,6 +359,7 @@ void main() {
         onChanged: () {},
       ),
       dataVersions: _settingsDataVersions(rig),
+      diagnostics: DiagnosticsStore(rig.filesDir),
       authorizeConfig: account.prepareModelConfig,
     );
 
@@ -876,7 +886,8 @@ void main() {
     addTearDown(client.close);
     final purchaseAccount = AccountService(
       store: AccountStore(MemorySecretStore()),
-      preferences: preferences,
+      devicePreferences: devicePreferences,
+      syncPreferences: preferences,
       clientFactory: (baseUrl) =>
           ServerClient(baseUrl: baseUrl, httpClient: client),
     );
@@ -930,7 +941,8 @@ void main() {
     addTearDown(client.close);
     final purchaseAccount = AccountService(
       store: AccountStore(MemorySecretStore()),
-      preferences: preferences,
+      devicePreferences: devicePreferences,
+      syncPreferences: preferences,
       clientFactory: (baseUrl) =>
           ServerClient(baseUrl: baseUrl, httpClient: client),
     );

@@ -1,10 +1,12 @@
 import '../data/db/write_transactions.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../data/repository/material_repository.dart';
 import '../domain/models/material.dart';
 import '../domain/models/write_result.dart';
 import '../../domain/rules/uuid_v7.dart';
 import 'docx_import.dart';
+import 'user_failure.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 
 /// 材料页的读写：导入材料、添加一页与更正页内文字。
@@ -28,32 +30,21 @@ class MaterialService {
   Future<List<Material>> list({String? goalId}) =>
       materials.list(goalId: goalId);
 
-  /// 材料页读到的表：材料行、页码与所属目标。
-  ///
-  /// 任一表被写入之后整份重读一次，材料列表与材料详情因此跟随其它入口的
-  /// 导入、更正与归属调整（ADR-0014）。
-  static const Set<String> _listTables = {
-    'material',
-    'material_page',
-    'learning_goal',
-  };
-
   /// 跟随写入更新的材料列表。
   Stream<List<Material>> watchList({String? goalId}) => runtime.watch(
-    tables: _listTables,
+    tables: ScreenTables.materialList,
     read: () => list(goalId: goalId),
   );
 
   /// 跟随写入更新的单份材料：材料行与它的页码。
   Stream<Material?> watchMaterial(String id) =>
-      runtime.watch(tables: _listTables, read: () => byId(id));
-
-  /// 材料详情与单页原文读到的表：材料行的时间与页码计数随页码一起变化。
-  static const Set<String> _pageTables = {'material', 'material_page'};
+      runtime.watch(tables: ScreenTables.materialList, read: () => byId(id));
 
   /// 跟随写入更新的页码列表；材料详情逐页显示时整份重读。
-  Stream<List<MaterialPage>> watchPages(String materialId) =>
-      runtime.watch(tables: _pageTables, read: () => pages(materialId));
+  Stream<List<MaterialPage>> watchPages(String materialId) => runtime.watch(
+    tables: ScreenTables.materialPages,
+    read: () => pages(materialId),
+  );
 
   Future<Material?> byId(String id) => materials.byId(id);
 
@@ -114,7 +105,7 @@ class MaterialService {
   }) {
     return transactions.run((txn) {
       if (runtime.dataEpoch != expectedEpoch) {
-        throw StateError('数据版本已变更，请重新选择 Word 文件');
+        throw UserFailure('数据版本已变更，请重新选择 Word 文件');
       }
       return materials.createWithPages(
         title: title,
@@ -167,11 +158,11 @@ class MaterialService {
     required String corrected,
   }) {
     final text = corrected.trim();
-    if (text.isEmpty) throw ArgumentError('这一页还没有内容');
+    if (text.isEmpty) throw UserFailure('这一页还没有内容');
     return transactions.run(
       (txn) async {
         final current = await materials.pageById(page.id, transaction: txn);
-        if (current == null) throw StateError('这一页已不存在');
+        if (current == null) throw UserFailure('这一页已不存在');
         if (current.content == text && current.label == page.label) {
           return const WriteResult.skipped('这一页的内容没有变化');
         }

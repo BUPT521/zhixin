@@ -1,5 +1,5 @@
 import '../../data/db/sql.dart';
-import '../../data/revisions/revision_models.dart';
+import '../../domain/models/revision_models.dart';
 import '../../data/revisions/revision_undo.dart';
 
 /// 学习事项的撤销要避开级联删除后续数据。

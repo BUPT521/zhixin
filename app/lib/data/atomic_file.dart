@@ -56,6 +56,11 @@ class AtomicFile {
   /// 整份替换文件内容，排进这条路径的队列。
   Future<void> writeText(String text) => _enqueue(() => _replace(text));
 
+  /// [writeText] 的字节版本：附件缓存这类二进制文件用同一个临时后缀与同一条
+  /// 队列，写失败时同样删掉半份文件。
+  Future<void> writeBytes(List<int> bytes) =>
+      _enqueue(() => _replaceBytes(bytes));
+
   /// [writeText] 的同步版本，给进程可能马上结束或不能等待异步的调用方使用。
   ///
   /// 与异步写入共用同一种临时文件后缀，但不进入排队：同步写入只在启动与崩溃
@@ -103,6 +108,23 @@ class AtomicFile {
     final temporary = File(_temporaryPath);
     try {
       await temporary.writeAsString(text, flush: true);
+      await temporary.rename(file.path);
+    } catch (_) {
+      // 失败时不留半份临时文件，下一次写入会重新生成。
+      if (await temporary.exists()) {
+        await temporary.delete();
+      }
+      rethrow;
+    }
+  }
+
+  /// 与 [_replace] 相同，写入的是字节。
+  Future<void> _replaceBytes(List<int> bytes) async {
+    final file = File(path);
+    await file.parent.create(recursive: true);
+    final temporary = File(_temporaryPath);
+    try {
+      await temporary.writeAsBytes(bytes, flush: true);
       await temporary.rename(file.path);
     } catch (_) {
       // 失败时不留半份临时文件，下一次写入会重新生成。

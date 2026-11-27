@@ -6,7 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
-import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/ui/model_api_keys_page.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
 

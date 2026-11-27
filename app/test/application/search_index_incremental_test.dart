@@ -15,7 +15,7 @@ import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/data/revisions/revision_cursor.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 import 'package:zhixin/data/revisions/semantic_change.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 
 import '../support/memory_vector_index.dart';
 import '../support/direct_vector_store.dart';

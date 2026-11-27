@@ -3,7 +3,7 @@ import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
-import '../data/cloud/server_client.dart' show ServerProblem;
+import '../domain/models/server_models.dart' show ServerProblem;
 import '../data/vector/embedding_codec.dart';
 import '../domain/rules/embedding.dart';
 

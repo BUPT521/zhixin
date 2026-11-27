@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import '../data/cloud/server_client.dart' show ServerProblem;
+import '../domain/models/server_models.dart' show ServerProblem;
 import 'account_service.dart';
 import 'sync_service.dart';
 

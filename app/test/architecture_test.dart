@@ -194,16 +194,11 @@ void main() {
 /// 目标与进度见 `docs/分层整改清单与提示词.md`。这份清单记录搬家还没做完的部分，
 /// 不是允许继续新增依赖的许可；每去掉一处引用，就把文件名删掉，用例会强制清单只减不增。
 const _uiDataAllowlist = <String>{
-  'account_page.dart',
-  'cloud_backup_page.dart',
+  // 这两个文件直接用数据层的 RevisionService 与 DataVersionService：
+  // `DataServices` 仍把这两个服务公开给页面，是否把它们迁到 `application`
+  // 待定，见 `docs/分层整改清单与提示词.md` 第一部分。作出决定之前留在白名单里。
   'data_version_page.dart',
-  'embedding_settings_page.dart',
-  'feedback_page.dart',
   'integrity_check.dart',
-  'mine_page.dart',
-  'restore_flow.dart',
-  'settings_page.dart',
-  'update_notice.dart',
 };
 
 /// 曾经公开在 [AppScopeState] 上的仓库与连接字段；现在只在测试入口里露出。

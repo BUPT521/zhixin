@@ -7,7 +7,7 @@ import '../../domain/models/chat_message_payload.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import 'revision_engine.dart';
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 
 /// 一次撤销核对需要读到的上下文：目标提交、这条净变化、当前行、同一次提交的
 /// 全部变化，以及判断“现在”的时间。

@@ -12,7 +12,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
 import '../application/feedback_service.dart';
-import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import '../domain/models/diagnostics.dart';
 import '../domain/rules/text.dart';
 import '../domain/rules/time_format.dart';

@@ -14,6 +14,7 @@ import 'package:zhixin/ui/learning_page.dart';
 import 'package:zhixin/data/db/sql.dart';
 
 import 'workspace_support.dart';
+import '../support/restore_helpers.dart';
 
 void main() {
   registerWorkspaceTests();
@@ -72,7 +73,8 @@ void main() {
       expect(uri, 'content://test/export.zip');
       expect(await temporary.parent.exists(), isFalse);
 
-      final restoredBytes = await settings.restoreBytes(
+      final restoredBytes = await restoreFromBytes(
+        scope!.data.versions,
         await exported.readAsBytes(),
       );
       expect(restoredBytes.isSuccess, isTrue);
@@ -86,7 +88,8 @@ void main() {
       expect((await scope!.testing.tasks.goalById(afterId))?.title, '恢复后新增目标');
 
       // 恢复点用同一条整库恢复流程，可以真正回到保存时的数据。
-      final restoredPoint = await scope!.data.versions.restore(
+      final restoredPoint = await restoreFromBytes(
+        scope!.data.versions,
         await File(points.single.path).readAsBytes(),
       );
       expect(restoredPoint.isSuccess, isTrue);
@@ -183,7 +186,7 @@ void main() {
     }
     expect(ai.entered.isCompleted, isTrue);
 
-    await tester.runAsync(() => scope!.data.versions.restore(bytes));
+    await tester.runAsync(() => restoreFromBytes(scope!.data.versions, bytes));
     ai.resume.complete();
     for (var i = 0; i < 80; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -229,7 +232,7 @@ void main() {
       await scope!.testing.tasks.createGoal(title: '恢复点目标');
       final backup = File('${directory.path}/restore.zip');
       await scope!.data.versions.backupRepository(backup.path);
-      await scope!.data.versions.restore(await backup.readAsBytes());
+      await restoreFromBytes(scope!.data.versions, await backup.readAsBytes());
     });
     await openMineEntry(tester, '数据版本');
 

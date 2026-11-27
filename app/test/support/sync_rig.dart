@@ -3,7 +3,8 @@ import 'dart:io';
 import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
-import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
+import 'package:zhixin/data/cloud/device_preferences_store.dart';
+import 'package:zhixin/data/cloud/sync_preferences_store.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
@@ -23,7 +24,8 @@ class SyncDevice {
   SyncDevice({
     required this.rig,
     required this.account,
-    required this.preferences,
+    required this.devicePreferences,
+    required this.syncPreferences,
     required this.sync,
     required this.dir,
     this.ownsDir = true,
@@ -31,7 +33,8 @@ class SyncDevice {
 
   final TestRig rig;
   final AccountService account;
-  final CloudPreferencesStore preferences;
+  final DevicePreferencesStore devicePreferences;
+  final SyncPreferencesStore syncPreferences;
   final SyncService sync;
   final Directory dir;
 
@@ -66,12 +69,14 @@ Future<SyncDevice> openSyncDevice(
 }) async {
   final dir =
       home ?? await Directory.systemTemp.createTemp('zhixin_sync_device');
-  final preferences = CloudPreferencesStore(filesDir: dir.path);
+  final devicePreferences = DevicePreferencesStore(filesDir: dir.path);
+  final syncPreferences = SyncPreferencesStore(filesDir: dir.path);
   final account = AccountService(
     store: AccountStore(
       MemorySecretStore({AccountStore.deviceIdKey: deviceId}),
     ),
-    preferences: preferences,
+    devicePreferences: devicePreferences,
+    syncPreferences: syncPreferences,
     now: clock.call,
     clientFactory: (baseUrl) =>
         ServerClient(baseUrl: baseUrl, httpClient: server.client),
@@ -84,7 +89,7 @@ Future<SyncDevice> openSyncDevice(
   }
   final sync = SyncService(
     account: account,
-    preferences: preferences,
+    syncPreferences: syncPreferences,
     revisions: rig.revisions,
     engine: rig.engine,
     database: rig.db,
@@ -97,7 +102,8 @@ Future<SyncDevice> openSyncDevice(
   return SyncDevice(
     rig: rig,
     account: account,
-    preferences: preferences,
+    devicePreferences: devicePreferences,
+    syncPreferences: syncPreferences,
     sync: sync,
     dir: dir,
     ownsDir: home == null,

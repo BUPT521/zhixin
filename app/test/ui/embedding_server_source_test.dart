@@ -10,6 +10,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/data/vector/embedding_config_store.dart';
+import 'package:zhixin/domain/models/embedding_config.dart';
 import 'package:zhixin/ui/embedding_settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_accent_controller.dart';

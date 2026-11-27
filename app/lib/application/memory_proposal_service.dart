@@ -2,7 +2,7 @@ import '../data/db/write_transactions.dart';
 import '../data/repository/attempt_repository.dart';
 import '../data/repository/conversation_repository.dart';
 import '../data/repository/memory_repository.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../domain/models/time_values.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/question.dart';
@@ -11,6 +11,7 @@ import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/text.dart';
 import '../../domain/rules/uuid_v7.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 
 /// 一条待确认的记忆提案。
@@ -102,21 +103,9 @@ class MemoryProposalService {
   final WriteTransactions transactions;
   final ServiceRuntime runtime;
 
-  /// 记忆建议页一屏读到的表：有作答的记录连同题干、最近一次作答与记忆。
-  ///
-  /// 记忆也列在这里，因为哪些来源已经处理过由记忆表判断：接受建议或撤销
-  /// 之后重读一次，页面与“已经处理过”的判断保持同一时刻（ADR-0014）。
-  static const Set<String> _questionTables = {
-    'conversation',
-    'message',
-    'attempt',
-    'material',
-    'memory',
-  };
-
   /// 跟随写入更新的“最近有作答的记录”；页面订阅之后不再自己重读。
   Stream<List<QuestionRow>> watchQuestions({int limit = 20}) => runtime.watch(
-    tables: _questionTables,
+    tables: ScreenTables.memoryProposal,
     read: () => questions(limit: limit),
   );
 

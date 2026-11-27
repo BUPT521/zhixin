@@ -1,6 +1,6 @@
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
-import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 import '../data/revisions/revision_engine.dart';
 import '../domain/models/backup_error.dart';
 import '../domain/models/material.dart';

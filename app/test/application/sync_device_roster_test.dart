@@ -9,7 +9,7 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/sync_service.dart';
-import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/models/server_models.dart';
 
 import '../support/fake_server.dart';
 import '../support/sync_rig.dart';

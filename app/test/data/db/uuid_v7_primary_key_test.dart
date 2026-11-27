@@ -3,7 +3,7 @@ import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart'
     show versionedTableNames;
-import 'package:zhixin/data/revisions/revision_models.dart' show ChangeOp;
+import 'package:zhixin/domain/models/revision_models.dart' show ChangeOp;
 import 'package:zhixin/data/repository/assessment_repository.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';

@@ -2,7 +2,7 @@ import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../db/raw_executor.dart';
 import '../db/sql.dart';
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 
 /// 只登记位置、不阻止裁剪的读取位置的名字（方案 3.12）。
 ///

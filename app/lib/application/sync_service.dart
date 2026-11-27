@@ -4,21 +4,22 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
-import '../data/cloud/cloud_preferences_store.dart';
-import '../data/cloud/server_client.dart';
-import '../data/db/app_database.dart' show zhixinSchemaVersion;
+import '../domain/models/server_models.dart';
 import '../data/db/guarded_database.dart';
 import '../data/db/sql.dart';
 import '../data/db/write_transactions.dart';
+import '../data/cloud/sync_preferences_store.dart';
 import '../data/revisions/asset_store.dart';
 import '../data/revisions/revision_cursor.dart';
 import '../data/revisions/revision_digest.dart';
 import '../data/revisions/revision_engine.dart';
-import '../data/revisions/revision_models.dart';
+import '../domain/models/revision_models.dart';
 import '../data/revisions/revision_service.dart';
 import '../data/revisions/revision_shadow.dart';
+import '../domain/rules/schema_version.dart';
 import '../domain/rules/time_format.dart';
 import '../domain/rules/time_policy.dart';
+import 'user_failure.dart';
 import 'account_service.dart';
 import 'failure_notice.dart';
 
@@ -298,7 +299,7 @@ class SyncRosterDevice {
 class SyncService {
   SyncService({
     required this.account,
-    required this.preferences,
+    required this.syncPreferences,
     required this.revisions,
     required this.engine,
     required this.database,
@@ -310,7 +311,7 @@ class SyncService {
   });
 
   final AccountService account;
-  final CloudPreferencesStore preferences;
+  final SyncPreferencesStore syncPreferences;
   final RevisionService revisions;
   final RevisionEngine engine;
   final GuardedDatabase database;
@@ -408,12 +409,12 @@ class SyncService {
   /// 账号页在同步与重建云端结束之后用它就地更新状态卡，再给结论；完整状态由
   /// [status] 随后补齐，页面因此不会在几帧里出现提示与状态卡互相矛盾（ADR-0045）。
   Future<bool> digestMismatch() async =>
-      (await preferences.syncState())?.digestMismatch ?? false;
+      (await syncPreferences.syncState())?.digestMismatch ?? false;
 
   Future<SyncStatus> status() async {
     final snapshot = await account.snapshot();
     final localHead = await engine.headId(database.raw);
-    final state = await preferences.syncState();
+    final state = await syncPreferences.syncState();
     if (!snapshot.signedIn) {
       return SyncStatus(
         signedIn: false,
@@ -543,7 +544,7 @@ class SyncService {
     // 别名（ADR-0048）。
     _devices.clear();
     _deviceAliases.clear();
-    await preferences.clearSyncState();
+    await syncPreferences.clearSyncState();
     if (!forgetPosition) {
       await releaseSyncCursor();
       return;
@@ -594,7 +595,7 @@ class SyncService {
       _ensureIdentity();
       // 服务端序列已经清空：本机的位置、遮蔽行与摘要标记都不再对应任何云端
       // 历史，清掉之后按首次同步整份上传，收尾由 `syncNow` 自己写回位置。
-      await preferences.clearSyncState();
+      await syncPreferences.clearSyncState();
       await _forgetSyncPosition();
       _lastSnapshotHash = null;
       _knownDigestMismatch = false;
@@ -673,10 +674,10 @@ class SyncService {
       }
       final userId = snapshot.session!.userId;
       final localHead = await engine.headId(database.raw);
-      var state = await preferences.syncState();
+      var state = await syncPreferences.syncState();
       if (state != null && !_sameIdentity(state, userId, origin)) {
         // 换了账号或实例：旧状态不再对应这个身份。
-        await preferences.clearSyncState();
+        await syncPreferences.clearSyncState();
         state = null;
       }
       // 已知不一致时这一轮推送不挂摘要：推送只补本机内容，删不掉云端多出来的
@@ -811,12 +812,12 @@ class SyncService {
       await _syncNamedRefs();
       // 收尾只更新“上次同步时间”。摘要比较与修复可能在这之前改过不一致标记，
       // 所以从偏好文件重读一次，不拿这次同步开头读到的那份覆盖它。
-      final stored = await preferences.syncState();
+      final stored = await syncPreferences.syncState();
       final base = stored != null && _sameIdentity(stored, userId, origin)
           ? stored
           : state;
       final finalState = base.copyWith(syncedAt: clock());
-      await preferences.saveSyncState(finalState);
+      await syncPreferences.saveSyncState(finalState);
       // 空闲登记：同步到 N、没有待推送提交时把当前投影压缩成快照登记到服务端，
       // 服务端据此可以压缩提交序列（同步方案 3.7 第 3 条）。失败只记诊断。
       await _registerSnapshotQuietly(
@@ -1243,7 +1244,7 @@ class SyncService {
     if (!snapshot.signedIn) return;
     final origin = await account.serverOrigin();
     final userId = snapshot.session!.userId;
-    final stored = await preferences.syncState();
+    final stored = await syncPreferences.syncState();
     final base = stored != null && _sameIdentity(stored, userId, origin)
         ? stored
         : SyncState(userId: userId, serverOrigin: origin);
@@ -1252,7 +1253,7 @@ class SyncService {
         base.differentTables.join(",") == differentTables.join(",")) {
       return;
     }
-    await preferences.saveSyncState(
+    await syncPreferences.saveSyncState(
       base.copyWith(digestMismatch: mismatch, differentTables: differentTables),
     );
   }
@@ -1464,7 +1465,7 @@ class SyncService {
     );
     if (result.skipped > 0) {
       recordFailure(
-        StateError('同步 ${commit.uid} 时跳过 ${result.skipped} 条对不上的变化'),
+        UserFailure('同步 ${commit.uid} 时跳过 ${result.skipped} 条对不上的变化'),
         StackTrace.current,
         kind: 'cloud_sync_apply_skipped',
       );

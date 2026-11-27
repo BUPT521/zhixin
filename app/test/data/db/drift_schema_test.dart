@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
-import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/db/drift/app_database.dart';
 import 'package:zhixin/data/db/schema.dart'
     show requiredColumns, schemaIndexNames, schemaTableNames;

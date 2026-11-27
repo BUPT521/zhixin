@@ -13,7 +13,7 @@ import '../db/sql.dart';
 import '../../domain/rules/attachments.dart';
 import '../../domain/rules/content_identity.dart';
 import '../../domain/rules/time_format.dart';
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 
 /// 附件对象：字节按内容哈希去重，分块保存在同一个 SQLite 文件里。
 ///
@@ -263,14 +263,7 @@ class AttachmentCache {
       return file;
     }
     await Directory(directory()).create(recursive: true);
-    final temporary = File('${file.path}${AtomicFile.temporarySuffix}');
-    try {
-      await temporary.writeAsBytes(bytes, flush: true);
-      await temporary.rename(file.path);
-    } catch (_) {
-      if (await temporary.exists()) await temporary.delete();
-      rethrow;
-    }
+    await AtomicFile(file.path).writeBytes(bytes);
     return file;
   }
 

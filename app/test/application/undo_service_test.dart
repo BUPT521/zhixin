@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/time_policy_controller.dart';
 import 'package:zhixin/application/undo_service.dart';
 import 'package:zhixin/data/repository/settings_repository.dart';
-import 'package:zhixin/data/revisions/revision_actions.dart';
+import 'package:zhixin/domain/rules/revision_actions.dart';
 
 import '../support/test_db.dart';
 

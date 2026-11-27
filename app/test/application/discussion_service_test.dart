@@ -15,7 +15,7 @@ import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/memory_scope_service.dart';
 import 'package:zhixin/data/attachment_store.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
-import 'package:zhixin/data/revisions/revision_actions.dart';
+import 'package:zhixin/domain/rules/revision_actions.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
 import 'package:zhixin/data/repository/evidence_repository.dart';

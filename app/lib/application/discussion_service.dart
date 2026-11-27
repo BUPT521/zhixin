@@ -9,7 +9,7 @@ import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
 import '../data/revisions/asset_store.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../domain/rules/notices.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_service.dart';
@@ -34,6 +34,7 @@ import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
 import 'answer_pipeline.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 import 'user_failure.dart';
 import 'used_pages.dart';
@@ -194,18 +195,6 @@ class DiscussionService {
 
   Future<ConversationRecord?> byId(String id) => conversations.byId(id);
 
-  /// 讨论页读到的表：任一表写入之后整屏重读一次（ADR-0014）。
-  ///
-  /// 记录行自身还会补出材料标题、是否有作答与是否有草稿，因此 `attempt` 与
-  /// `material` 也在这里；目标选择读 `learning_goal`。
-  static const Set<String> _conversationTables = {
-    'conversation',
-    'message',
-    'attempt',
-    'material',
-    'learning_goal',
-  };
-
   /// 跟随写入更新的讨论一屏。
   ///
   /// [olderMessages] 是页面已经按“读取较早讨论”读出来的更早消息，读取时与最近
@@ -214,7 +203,7 @@ class DiscussionService {
     String id, {
     List<ChatMessage> olderMessages = const [],
   }) => runtime.watch(
-    tables: _conversationTables,
+    tables: ScreenTables.conversation,
     read: () => conversationView(id, olderMessages: olderMessages),
   );
 

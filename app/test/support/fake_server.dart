@@ -5,7 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:zhixin/ai/llm_config.dart';
-import 'package:zhixin/data/db/app_database.dart' show zhixinSchemaVersion;
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/db/drift/tables.dart' show revisionKinds;
 
 /// 契约里提交类型的合法取值：与客户端 `RevisionKind` 的取值一致，没有

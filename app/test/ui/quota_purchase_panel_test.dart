@@ -12,7 +12,8 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/application/account_service.dart';
 import 'package:zhixin/data/cloud/account_store.dart';
-import 'package:zhixin/data/cloud/cloud_preferences_store.dart';
+import 'package:zhixin/data/cloud/device_preferences_store.dart';
+import 'package:zhixin/data/cloud/sync_preferences_store.dart';
 import 'package:zhixin/domain/models/quota_purchase.dart';
 import 'package:zhixin/ui/quota_purchase_panel.dart';
 import 'package:zhixin/ui/theme.dart';
@@ -24,7 +25,8 @@ class _FakeAccount extends AccountService {
   _FakeAccount({required this.overview})
     : super(
         store: AccountStore(MemorySecretStore()),
-        preferences: CloudPreferencesStore(filesDir: 'quota-panel-test'),
+        devicePreferences: DevicePreferencesStore(filesDir: 'quota-panel-test'),
+        syncPreferences: SyncPreferencesStore(filesDir: 'quota-panel-test'),
       );
 
   QuotaPurchaseOverview overview;

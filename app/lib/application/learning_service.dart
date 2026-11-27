@@ -3,7 +3,7 @@ import '../ai/llm_client.dart';
 import '../ai/buddy_prompts.dart';
 import '../ai/llm_config.dart';
 import '../data/db/write_transactions.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../data/revisions/revision_engine.dart';
 import '../data/revisions/revision_service.dart';
 import '../data/repository/assessment_repository.dart';
@@ -30,6 +30,7 @@ import 'memory_scope_service.dart';
 import 'memory_view.dart';
 import 'answer_outcome.dart';
 import 'answer_pipeline.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
 import 'user_failure.dart';
 import 'used_pages.dart';
@@ -180,23 +181,9 @@ class LearningService {
   /// 学习页在题目下方显示的消息条数。
   static const int _recentMessageCount = 6;
 
-  /// 学习页读到的表：任一表写入之后整屏重读一次（ADR-0014）。
-  ///
-  /// 题目视图里的出处与材料标题来自 `material`，材料改名之后也要重读；判断与
-  /// 记忆建议分别来自 `assessment` 与 `attempt`，接受记忆卡片时写入的 `memory`
-  /// 一并列上，避免漏掉只写记忆的那一次提交。
-  static const Set<String> _questionTables = {
-    'conversation',
-    'message',
-    'attempt',
-    'assessment',
-    'material',
-    'memory',
-  };
-
   /// 跟随写入更新的学习页一屏：原题、历次尝试、最近消息、判断与记忆建议。
   Stream<QuestionView> watchQuestion(String conversationId) => runtime.watch(
-    tables: _questionTables,
+    tables: ScreenTables.question,
     read: () => loadQuestion(conversationId),
   );
 
@@ -229,20 +216,6 @@ class LearningService {
     conversationIds: conversationIds,
   );
 
-  /// 记录页读到的一屏：目标、这一页记录，以及每题最近一次尝试的判断。
-  ///
-  /// 一次读取取回整屏，订阅之后由数据层在这几张表被写入时整屏重读
-  /// （ADR-0014）；分页仍按屏幕上的“继续读取”逐页追加。
-  static const Set<String> _recordsTables = {
-    'conversation',
-    'message',
-    'attempt',
-    'assessment',
-    'learning_goal',
-    'material',
-    'study_session',
-  };
-
   /// 跟随写入更新的记录一屏；筛选与分页条件都进读取闭包。
   Stream<RecordsView> watchRecords({
     String? goalId,
@@ -250,7 +223,7 @@ class LearningService {
     String? answerStatus,
     int limit = 30,
   }) => runtime.watch(
-    tables: _recordsTables,
+    tables: ScreenTables.records,
     read: () => recordsView(
       goalId: goalId,
       unassignedOnly: unassignedOnly,

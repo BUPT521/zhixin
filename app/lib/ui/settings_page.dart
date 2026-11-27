@@ -1,5 +1,4 @@
 import 'package:forui/forui.dart' as forui;
-import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
@@ -10,14 +9,12 @@ import '../ai/llm_config.dart';
 import '../app_scope.dart';
 import '../application/account_service.dart';
 import '../application/embedding_settings.dart';
+import '../application/prefetch_results.dart';
 import '../application/prefetch_service.dart';
 import '../application/settings_service.dart';
 import '../application/update_check_service.dart';
-import '../domain/models/result.dart';
 import '../domain/rules/time_policy.dart';
-import '../data/diagnostics/crash_log.dart';
 import '../platform/app_info.dart';
-import '../platform/diagnostics_store.dart';
 import 'accent_picker.dart';
 import 'account_dialogs.dart';
 import 'failure_feedback.dart';
@@ -30,16 +27,6 @@ import 'zhixin_dialog.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
-
-/// 一级界面切进来之后预读的设置页首屏；字段与预读任务返回的记录一致。
-typedef _SettingsPrewarm = ({
-  Result<LlmConfig?> config,
-  AccountSnapshot account,
-  List<String> models,
-  EmbeddingSummary embedding,
-  bool reportCrashes,
-  bool reportUsage,
-});
 
 /// 设置：模型、语义索引、学习、外观、诊断与危险操作。
 ///
@@ -97,7 +84,9 @@ class _SettingsPageState extends State<SettingsPage> {
     _themeMode = scope.themeMode.value;
     // 从“我的”打开时，一级界面切进来之后已经在后台读过这一页的首屏；
     // 先填上，再让下面这一次完整读取刷新。
-    final prewarm = scope.prefetch.take<_SettingsPrewarm>(PrefetchKey.settings);
+    final prewarm = scope.prefetch.take<SettingsPagePrewarm>(
+      PrefetchKey.settings,
+    );
     if (prewarm != null) {
       _account = prewarm.account;
       _serverModels = prewarm.models;
@@ -179,9 +168,7 @@ class _SettingsPageState extends State<SettingsPage> {
           // 模型列表只用于提示；读不到时保持空，不打断设置页。
         }
       }
-      final reportCrashes = await DiagnosticsStore(scope.devicePaths.filesDir)
-          .read(fallback: !kReleaseMode);
-      CrashLog.reportEnabled = reportCrashes;
+      final reportCrashes = await scope.settings.edit.crashReporting();
       final reportUsage = await scope.accountServices.activeReport.enabled();
       final themeMode = scope.themeMode.value;
       final embedding = await _readEmbeddingSummary(scope);
@@ -855,16 +842,13 @@ class _SettingsPageState extends State<SettingsPage> {
                   value: _reportCrashes,
                   onChange: (value) async {
                     final previous = _reportCrashes;
+                    final settings = AppScope.of(context).settings.edit;
                     setState(() => _reportCrashes = value);
-                    CrashLog.reportEnabled = value;
                     try {
-                      await DiagnosticsStore(
-                        AppScope.of(context).devicePaths.filesDir,
-                      ).write(value);
+                      await settings.setCrashReporting(value);
                     } catch (_) {
                       if (!context.mounted) return;
                       setState(() => _reportCrashes = previous);
-                      CrashLog.reportEnabled = previous;
                       _report(
                         SettingsArea.diagnostics,
                         '设置没有保存，可以再试一次',

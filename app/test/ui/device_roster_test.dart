@@ -15,7 +15,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app_scope.dart';
 import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/data/cloud/server_client.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 import 'package:zhixin/ui/account_page.dart';
 import 'package:zhixin/ui/data_version_page.dart';
 import 'package:zhixin/ui/theme.dart';

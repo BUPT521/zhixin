@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show ValueNotifier;
+import 'package:flutter/foundation.dart' show ValueNotifier, kReleaseMode;
 
 import 'ai/ai_chat_service.dart';
 import 'ai/llm_config.dart';
@@ -42,7 +42,8 @@ import 'data/backup/data_package_service.dart';
 import 'data/backup/data_version_service.dart';
 import 'data/backup/restore_point_store.dart';
 import 'data/cloud/account_store.dart';
-import 'data/cloud/cloud_preferences_store.dart';
+import 'data/cloud/device_preferences_store.dart';
+import 'data/cloud/sync_preferences_store.dart';
 import 'data/cloud/server_client.dart';
 import 'data/cloud/telemetry_store.dart';
 import 'data/db/app_database.dart';
@@ -66,13 +67,15 @@ import 'data/repository/task_repository.dart';
 import 'data/revisions/asset_store.dart';
 import 'data/revisions/revision_cursor.dart';
 import 'data/revisions/revision_engine.dart';
-import 'data/revisions/revision_models.dart';
+import 'domain/models/revision_models.dart';
 import 'data/revisions/revision_package.dart';
 import 'data/revisions/revision_service.dart';
 import 'data/revisions/semantic_change.dart';
 import 'data/vector/embedding_config_store.dart';
+import 'domain/rules/schema_version.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_info.dart';
+import 'platform/diagnostics_store.dart';
 import 'platform/app_paths.dart';
 import 'platform/release_signing_key.dart';
 import 'platform/secure_secret_store.dart';
@@ -201,7 +204,8 @@ class AppComposition {
   ActiveReportService? _activeReportService;
   FeedbackService? _feedbackService;
   UpdateCheckService? _updateCheckService;
-  late CloudPreferencesStore _cloudPreferences;
+  late DevicePreferencesStore _devicePreferences;
+  late SyncPreferencesStore _syncPreferences;
   CloudBackupService? _cloudBackups;
   SyncService? _cloudSync;
 
@@ -538,8 +542,8 @@ class AppComposition {
       }
     },
     clock: clock,
-    storedFlushAt: _cloudPreferences.memoryUsageFlushedAt,
-    recordFlushAt: _cloudPreferences.setMemoryUsageFlushedAt,
+    storedFlushAt: _syncPreferences.memoryUsageFlushedAt,
+    recordFlushAt: _syncPreferences.setMemoryUsageFlushedAt,
     onFlushed: () => maintenance.refreshSearchIndexNowAndWait(),
   );
 
@@ -554,6 +558,8 @@ class AppComposition {
     runtime: _runtime,
     timePolicy: _timePolicy,
     dataVersions: _dataVersions,
+    diagnostics: DiagnosticsStore(devicePaths.filesDir),
+    crashReportingDefault: !kReleaseMode,
     authorizeConfig: (config) => account.prepareModelConfig(config),
   );
 
@@ -610,13 +616,12 @@ class AppComposition {
     _db = GuardedDatabase(gate: _gate, resolve: () => _connection!);
     _db.onCommitted = maintenance.onCommitted;
     _llmStore = LlmConfigStore(_modelSettings);
-    _cloudPreferences = CloudPreferencesStore(
-      filesDir: devicePaths.filesDir,
-      spaceFilesDir: paths.filesDir,
-    );
+    _devicePreferences = DevicePreferencesStore(filesDir: devicePaths.filesDir);
+    _syncPreferences = SyncPreferencesStore(filesDir: paths.filesDir);
     _accountService = AccountService(
       store: AccountStore(SecureSecretStore()),
-      preferences: _cloudPreferences,
+      devicePreferences: _devicePreferences,
+      syncPreferences: _syncPreferences,
       deviceName: '知新 ${appVersion.split('+').first}',
       clientFactory: serverClientFactory,
       // 退出登录、删除账号、清除云端与重设密码之后，让同步服务把库里的推送
@@ -736,7 +741,7 @@ class AppComposition {
     );
     _cloudSync = SyncService(
       account: account,
-      preferences: _cloudPreferences,
+      syncPreferences: _syncPreferences,
       revisions: _revisions,
       engine: _engine,
       database: _db,

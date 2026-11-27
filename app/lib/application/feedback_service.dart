@@ -7,6 +7,7 @@
 library;
 
 import '../data/cloud/server_client.dart';
+import '../domain/models/server_models.dart';
 
 /// 一条待提交的反馈：正文必填，联系邮箱、诊断摘要可选。
 class FeedbackDraft {

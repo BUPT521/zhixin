@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/data/revisions/revision_actions.dart';
+import 'package:zhixin/domain/rules/revision_actions.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
 
 import '../support/test_db.dart';

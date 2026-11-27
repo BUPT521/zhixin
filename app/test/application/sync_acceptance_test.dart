@@ -13,7 +13,7 @@
 // 用例只依赖对外行为：两台设备的业务行、数据版本的冲突列表与同步结果。
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 
 import '../support/fake_server.dart';
 import '../support/sync_rig.dart';

@@ -8,6 +8,7 @@ import 'package:zhixin/domain/models/chat_message.dart';
 import 'package:zhixin/ui/copy.dart';
 
 import '../support/app_scope_teardown.dart';
+import '../support/restore_helpers.dart';
 import '../support/app_settle.dart';
 import '../support/telemetry.dart';
 
@@ -220,7 +221,7 @@ void main() {
 
     // 整库恢复换掉连接：订阅跟着新连接重读，屏幕上的列表回到备份时的数据。
     final restored = await tester.runAsync(
-      () => scope!.data.versions.restore(bytes),
+      () => restoreFromBytes(scope!.data.versions, bytes),
     );
     expect(
       restored!.isSuccess,

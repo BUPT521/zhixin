@@ -8,7 +8,7 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 import 'app.dart';
 import 'application/sync_service.dart' show syncScopeFor;
 import 'data/cloud/account_store.dart';
-import 'data/cloud/cloud_preferences_store.dart';
+import 'data/cloud/device_preferences_store.dart';
 import 'data/cloud/server_client.dart' show ServerClient;
 import 'data/cloud/telemetry_store.dart';
 import 'data/diagnostics/crash_log.dart';
@@ -128,7 +128,7 @@ Future<void> main() async {
 
 Future<({String id, bool signedIn})> _openStartupSpace(AppSpaces spaces) async {
   final previous = await spaces.lastOpened();
-  final preferences = CloudPreferencesStore(filesDir: spaces.device.filesDir);
+  final preferences = DevicePreferencesStore(filesDir: spaces.device.filesDir);
   final origin = ServerClient.originOf(await preferences.serverBaseUrl());
   final accounts = AccountStore(SecureSecretStore());
   final session = await accounts.read(origin: origin);

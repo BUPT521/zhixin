@@ -20,7 +20,7 @@ import 'package:zhixin/data/repository/memory_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/data/revisions/revision_cursor.dart';
 import 'package:zhixin/data/vector/embedding_codec.dart';
-import 'package:zhixin/data/vector/embedding_config_store.dart';
+import 'package:zhixin/domain/models/embedding_config.dart';
 
 import '../support/memory_vector_index.dart';
 

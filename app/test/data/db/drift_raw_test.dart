@@ -8,7 +8,7 @@ import 'package:zhixin/data/db/drift/drift_raw.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
 import 'package:zhixin/data/db/sql.dart';
 import 'package:zhixin/data/revisions/revision_engine.dart';
-import 'package:zhixin/data/revisions/revision_models.dart';
+import 'package:zhixin/domain/models/revision_models.dart';
 
 void main() {
   test('drift 执行器上可以安装版本引擎并形成提交', () async {

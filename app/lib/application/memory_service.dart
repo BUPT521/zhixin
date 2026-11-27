@@ -1,12 +1,14 @@
 import '../data/db/write_transactions.dart';
-import '../data/revisions/revision_actions.dart';
+import '../domain/rules/revision_actions.dart';
 import '../data/repository/material_repository.dart';
 import '../data/repository/memory_repository.dart';
 import '../data/repository/task_repository.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
+import 'screen_tables.dart';
 import 'service_runtime.dart';
+import 'user_failure.dart';
 import '../../domain/rules/uuid_v7.dart';
 
 /// 记忆页的一屏：记忆条目与适用范围的名字。
@@ -151,17 +153,9 @@ class MemoryService {
   final WriteTransactions transactions;
   final ServiceRuntime runtime;
 
-  /// 记忆页一屏读到的表：记忆条目、目标与材料标题，材料列表还读页码数量。
-  static const Set<String> _pageTables = {
-    'memory',
-    'learning_goal',
-    'material',
-    'material_page',
-  };
-
   /// 跟随写入更新的记忆页一屏；页面订阅之后不再在保存、删除与撤销之后重读。
   Stream<MemoryPageView> watchMemories() =>
-      runtime.watch(tables: _pageTables, read: loadPage);
+      runtime.watch(tables: ScreenTables.memoryPage, read: loadPage);
 
   /// 读一屏记忆：条目、目标与材料同时发出，范围名字在结果回来之后拼好。
   Future<MemoryPageView> loadPage() async {
@@ -236,12 +230,12 @@ class MemoryService {
     DateTime? validUntil,
   }) {
     final text = content.trim();
-    if (text.isEmpty) throw ArgumentError('记忆内容不能为空');
+    if (text.isEmpty) throw UserFailure('记忆内容不能为空');
     final nextKind = kind;
     final terms = searchTerms.trim();
     return transactions.run((txn) async {
       final current = await repository.byId(memory.id);
-      if (current == null) throw StateError('这条记忆已不存在');
+      if (current == null) throw UserFailure('这条记忆已不存在');
       final kindChanged = nextKind != null && current.kind != nextKind;
       if (!kindChanged &&
           current.content == text &&
@@ -297,7 +291,7 @@ class MemoryService {
     return transactions.run(
       (txn) async {
         final current = await repository.byId(id);
-        if (current == null) throw StateError('这条记忆已不存在');
+        if (current == null) throw UserFailure('这条记忆已不存在');
         await repository.markReviewed(id, transaction: txn);
         return txn.result();
       },

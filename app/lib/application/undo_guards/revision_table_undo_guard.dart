@@ -1,4 +1,4 @@
-import '../../data/revisions/revision_actions.dart';
+import '../../domain/rules/revision_actions.dart';
 import '../../data/revisions/revision_undo.dart';
 
 /// 其余可撤销表：只声明覆盖范围，撤销时只走数据层的通用核对。

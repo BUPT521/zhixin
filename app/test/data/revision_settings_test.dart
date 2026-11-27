@@ -5,11 +5,13 @@ import 'package:zhixin/ai/llm_config.dart';
 import 'package:zhixin/ai/llm_config_store.dart';
 import 'package:zhixin/application/service_runtime.dart';
 import 'package:zhixin/application/settings_service.dart';
+import 'package:zhixin/platform/diagnostics_store.dart';
 import 'package:zhixin/application/time_policy_controller.dart';
 import 'package:zhixin/data/backup/data_package_service.dart';
 import 'package:zhixin/data/backup/data_version_service.dart';
 import 'package:zhixin/data/backup/restore_point_store.dart';
 import 'package:zhixin/data/db/app_database.dart';
+import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/data/db/write_transactions.dart';
 import 'package:zhixin/data/repository/settings_repository.dart';
 import 'package:zhixin/data/revisions/asset_store.dart';
@@ -54,6 +56,7 @@ SettingsService _settingsService(TestRig rig) {
       clock: _fixedNow,
       onChanged: () {},
     ),
+    diagnostics: DiagnosticsStore(rig.filesDir),
     dataVersions: DataVersionService(
       gate: rig.db.gate,
       revisions: rig.revisions,

@@ -3,7 +3,7 @@ import 'package:zhixin/ai/llm_client.dart';
 import 'package:zhixin/application/failure_notice.dart';
 import 'package:zhixin/application/sync_service.dart';
 import 'package:zhixin/application/user_failure.dart';
-import 'package:zhixin/data/cloud/server_client.dart';
+import 'package:zhixin/domain/models/server_models.dart';
 import 'package:zhixin/domain/models/backup_error.dart';
 
 void main() {

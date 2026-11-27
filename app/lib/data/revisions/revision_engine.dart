@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:drift/drift.dart' show Table, TableInfo;
 
 import '../../domain/models/chat_message_payload.dart';
+import '../../domain/rules/revision_retention.dart';
 import '../../domain/rules/time_format.dart';
 import '../../domain/rules/time_policy.dart';
 import '../../domain/rules/uuid_v7.dart';
@@ -22,7 +23,7 @@ import '../db/sql.dart';
 import '../db/raw_executor.dart';
 import 'asset_store.dart';
 import 'revision_digest.dart';
-import 'revision_models.dart';
+import '../../domain/models/revision_models.dart';
 import 'revision_shadow.dart';
 
 part 'revision_capture.dart';

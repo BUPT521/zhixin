@@ -1,7 +1,7 @@
 import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 
-import '../app_database.dart' show zhixinSchemaVersion;
+import '../../../domain/rules/schema_version.dart';
 import 'tables.dart';
 
 part 'app_database.g.dart';
