@@ -7,8 +7,8 @@ import 'package:material_ui/material_ui.dart';
 ///
 /// 动效只用来说明“内容换了”“这一块展开了”“选中项移到了这里”“这一下按到了”，
 /// 不做装饰：除底栏、页签与换周按整幅页宽滑入滑出之外，其余位移不超过 24 像素，
-/// 不弹跳、不循环；缩放只有 [PressScale] 这一处，按下去时放大几个百分点，只改
-/// 绘制、不改版面。系统打开“减少动态效果”时，[ZhixinMotionContext.motionOf]
+/// 不弹跳、不循环；缩放用于控件的按下反馈，只改绘制，不改版面。系统打开
+/// “减少动态效果”时，[ZhixinMotionContext.motionOf]
 /// 把时长归零，界面直接到终态。
 class ZhixinMotion {
   const ZhixinMotion();

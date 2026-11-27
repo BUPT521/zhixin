@@ -1,5 +1,6 @@
 import 'package:cupertino_ui/cupertino_ui.dart'
     show CupertinoPageTransitionsBuilder;
+import 'package:flutter/rendering.dart' show TransformLayer;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:gpt_markdown/gpt_markdown.dart';
@@ -460,7 +461,113 @@ void main() {
     );
   });
 
-  testWidgets('从按钮或列表项开始滚动时不播放缩放，轻点仍能触发操作', (tester) async {
+  test('卡片沿用空心按钮的平面样式和中性按下底色', () {
+    for (final theme in [zhixinForuiTheme, zhixinDarkForuiTheme]) {
+      final button = theme.buttonStyles
+          .resolve({forui.FButtonVariant.outline})
+          .resolve({forui.FButtonSizeVariant.md});
+      final decoration = button.decoration.base as ShapeDecoration;
+      expect(
+        (theme.cardStyle.decoration as ShapeDecoration).shadows,
+        decoration.shadows,
+      );
+      for (final tile in [
+        theme.tileStyles.primary,
+        theme.tileGroupStyle.tileStyles.primary,
+      ]) {
+        expect(
+          (tile.contentDecoration.base as ShapeDecoration).shadows,
+          decoration.shadows,
+        );
+        expect(
+          tile.contentDecoration.resolve({
+            forui.FTappableVariant.pressed,
+          }).color,
+          button.decoration.resolve({forui.FTappableVariant.pressed}).color,
+        );
+      }
+    }
+  });
+
+  testWidgets('按钮和可点卡片按住时缩小，松手或取消后复位', (tester) async {
+    final dispatcher = tester.platformDispatcher;
+    addTearDown(dispatcher.clearAccessibilityFeaturesTestValue);
+    const buttonKey = ValueKey('button');
+    const tileKey = ValueKey('tile');
+    const groupedKey = ValueKey('grouped tile');
+    const disabledKey = ValueKey('disabled');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: forui.FTheme(
+          data: zhixinForuiTheme,
+          child: Center(
+            child: Column(
+              children: [
+                forui.FButton(
+                  key: buttonKey,
+                  onPress: () {},
+                  child: const RepaintBoundary(child: Text('保存')),
+                ),
+                forui.FTile(
+                  key: tileKey,
+                  onPress: () {},
+                  title: const RepaintBoundary(child: Text('检查更新')),
+                ),
+                forui.FTileGroup(
+                  children: [
+                    forui.FTile(
+                      key: groupedKey,
+                      onPress: () {},
+                      title: const RepaintBoundary(child: Text('查看记录')),
+                    ),
+                  ],
+                ),
+                forui.FButton(
+                  key: disabledKey,
+                  onPress: null,
+                  child: const RepaintBoundary(child: Text('不可用')),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    for (final reduceMotion in [false, true]) {
+      dispatcher.accessibilityFeaturesTestValue = FakeAccessibilityFeatures(
+        disableAnimations: reduceMotion,
+      );
+      await tester.pumpAndSettle();
+      for (final key in [buttonKey, tileKey, groupedKey, disabledKey]) {
+        final control = find.byKey(key);
+        final size = tester.getSize(control);
+        final gesture = await tester.startGesture(tester.getCenter(control));
+        await tester.pumpAndSettle();
+        if (reduceMotion || key == disabledKey) {
+          expect(_pressScales(tester), isEmpty, reason: '$key');
+        } else {
+          expect(
+            _pressScales(tester).single,
+            inInclusiveRange(0.97, 0.999),
+            reason: '$key',
+          );
+        }
+        expect(tester.getSize(control), size);
+
+        if (key == buttonKey) {
+          await gesture.up();
+        } else {
+          await gesture.cancel();
+        }
+        await tester.pumpAndSettle();
+        expect(_pressScales(tester), isEmpty, reason: '$key');
+      }
+    }
+  });
+
+  testWidgets('从按钮或列表项快速起滑时不缩放，轻点仍能触发操作', (tester) async {
     var presses = 0;
     var tilePresses = 0;
     await tester.pumpWidget(
@@ -470,10 +577,13 @@ void main() {
           child: ListView(
             children: [
               const SizedBox(height: 160),
-              forui.FButton(onPress: () => presses++, child: const Text('保存')),
+              forui.FButton(
+                onPress: () => presses++,
+                child: const RepaintBoundary(child: Text('保存')),
+              ),
               forui.FTile(
                 onPress: () => tilePresses++,
-                title: const Text('检查更新'),
+                title: const RepaintBoundary(child: Text('检查更新')),
               ),
               const SizedBox(height: 1000),
             ],
@@ -490,7 +600,9 @@ void main() {
     final tile = find.byType(forui.FTile);
     for (final control in [button, tile]) {
       final gesture = await tester.startGesture(tester.getCenter(control));
-      expect(tester.binding.transientCallbackCount, 0);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 35));
+      expect(_pressScales(tester), isEmpty);
       await gesture.moveBy(const Offset(0, -30));
       await gesture.moveBy(const Offset(0, -60));
       await gesture.up();
@@ -888,6 +1000,12 @@ void main() {
     expect((await themeUnder(Brightness.light)).brightness, Brightness.light);
   });
 }
+
+Iterable<double> _pressScales(WidgetTester tester) => tester.layers
+    .whereType<TransformLayer>()
+    .map((layer) => layer.transform?.entry(0, 0))
+    .whereType<double>()
+    .where((scale) => scale < 1);
 
 /// 颜色的 8 位十六进制取值，带透明度。
 String _hex(Color color) =>

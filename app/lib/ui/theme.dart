@@ -466,6 +466,7 @@ forui.FThemeData _foruiTheme(_Palette palette) {
     tileStyles: _tileStyles(colors, style, text),
     tileGroupStyle: base.tileGroupStyle.copyWith(
       dividerColor: forui.FVariants.all(colors.border),
+      tileStyles: .delta([.all(_tilePressFeedback(colors.muted))]),
     ),
     switchStyle: _switchStyle(colors, style),
     accordionStyle: _accordionStyle(colors, style, text),
@@ -498,12 +499,17 @@ forui.FThemeData _foruiTheme(_Palette palette) {
   );
 }
 
-// Forui 在手指落下时就启动缩放，即使随后识别为滚动。持续时间归零后，
-// 按钮与列表项保留按下颜色，缩放只留给页内页签。
-const _noPressScale = forui.FTappableMotion(
-  bounceDownDuration: Duration.zero,
-  bounceUpDuration: Duration.zero,
-  bounceTween: forui.FTappableMotion.noBounceTween,
+// 手指刚落下时先显示底色，前 56 毫秒保持原尺寸，给列表滚动留出识别时间。
+// Forui 只缩放绘制内容，大卡片最长边最多缩小 4 个逻辑像素。
+const _pressFeedback = forui.FTappableStyleDelta.delta(
+  pressedEnterDuration: Duration.zero,
+  pressedExitDuration: Duration(milliseconds: 60),
+  motion: forui.FTappableMotion(
+    bounceDownDuration: Duration(milliseconds: 140),
+    bounceUpDuration: Duration(milliseconds: 110),
+    bounceDownCurve: Interval(0.4, 1, curve: Curves.easeOutCubic),
+    bounceFloor: 4,
+  ),
 );
 
 /// Forui 按钮的默认样式：圆角与其它控件同为 [ZhixinRadius.control]；标签只用
@@ -531,7 +537,7 @@ forui.FButtonStyles _buttonStyles(
   }) {
     final content = button.contentStyle;
     return button.copyWith(
-      tappableStyle: button.tappableStyle.copyWith(motion: _noPressScale),
+      tappableStyle: _pressFeedback(button.tappableStyle),
       contentStyle: content.copyWith(
         textStyle: forui.FVariants.all(
           content.textStyle.base.copyWith(
@@ -758,8 +764,8 @@ forui.FTileStyles _tileStyles(
     vertical: space.md,
   );
 
-  forui.FTileStyle fixed(forui.FTileStyle tile) => tile.copyWith(
-    tappableStyle: tile.tappableStyle.copyWith(motion: _noPressScale),
+  final pressFeedback = _tilePressFeedback(colors.muted);
+  forui.FTileStyle fixed(forui.FTileStyle tile) => pressFeedback(tile).copyWith(
     contentStyle: tile.contentStyle.copyWith(
       titleTextStyle: forui.FVariants.all(
         text.titleSmall.copyWith(color: colors.foreground),
@@ -793,6 +799,14 @@ forui.FTileStyles _tileStyles(
     ),
   );
 }
+
+/// 可点卡片沿用空心按钮的中性按下底色，两个组件都通过平面与描边区分边界。
+forui.FTileStyleDelta _tilePressFeedback(Color background) => .delta(
+  contentDecoration: .delta([
+    .exact({.hovered, .pressed}, .shapeDelta(color: background)),
+  ]),
+  tappableStyle: _pressFeedback,
+);
 
 /// Forui 开关：开启时轨道取主色，关闭时取容器描边那一档，圆钮取页面底色；
 /// 两边的文字沿用 Forui 的标签样式。
