@@ -8,11 +8,8 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
-import '../domain/models/restore_inspection.dart';
-import '../domain/models/result.dart';
-import '../domain/rules/package_budget.dart';
+import '../application/data_version_flows.dart';
 import 'failure_feedback.dart';
-import 'format.dart';
 import 'zhixin_dialog.dart';
 
 /// 恢复确认框：本机版本恢复与数据包恢复共用同一套来源、影响与回退说明。
@@ -23,32 +20,29 @@ import 'zhixin_dialog.dart';
 /// 数据，按钮因此沿用危险样式。
 Future<bool> showRestoreConfirmDialog(
   BuildContext context, {
-  required String title,
-  required List<String> sourceLines,
-  required List<String> impactLines,
-  required String rollbackLine,
+  required RestorePrompt prompt,
 }) async {
   final theme = context.zhixin;
   final confirmed = await confirmZhixin(
     context: context,
-    title: title,
+    title: prompt.title,
     content: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (final line in sourceLines)
+        for (final line in prompt.sourceLines)
           Padding(
             padding: EdgeInsets.only(bottom: theme.space.tight),
             child: Text(line),
           ),
         SizedBox(height: theme.space.xs),
-        for (final line in impactLines)
+        for (final line in prompt.impactLines)
           Padding(
             padding: EdgeInsets.only(bottom: theme.space.xs),
             child: Text(line),
           ),
         SizedBox(height: theme.space.gap),
-        Text(rollbackLine, style: theme.text.bodySmall),
+        Text(prompt.rollbackLine, style: theme.text.bodySmall),
       ],
     ),
     confirmLabel: '恢复',
@@ -57,203 +51,83 @@ Future<bool> showRestoreConfirmDialog(
   return confirmed;
 }
 
-/// 数据包恢复的共用流程：选包、预检、说明影响与回退，再整库替换。
+/// 数据包恢复的界面入口：选包、确认、拒绝后的重选与进度交给页面。
 ///
-/// 恢复前的状态由 [DataVersionService.restoreInspected] 保存为恢复点，恢复成功后
-/// 仍保留。包被拒时用户可以直接在主按钮上重新选择，不必退出这一页重来；预检
-/// 期间与恢复期间的进度交给 [onStatus] 就地显示，只有最终结果由调用方提示。
-/// 预检产物一路带到恢复入口，同一次恢复只解包与校验一次。
+/// 选包之后的预检、当前库摘要、确认说明、整库替换与结果文案都由
+/// [DataVersionFlows.restorePackage] 给出；这里只把文件选择器、两个弹框与
+/// 本机诊断记录接上。恢复前的状态由数据层保存为恢复点，恢复成功后仍保留。
+/// 包被拒时用户可以直接在主按钮上重新选择，不必退出这一页重来；预检期间与
+/// 恢复期间的进度交给 [onStatus] 就地显示，只有最终结果由调用方提示。
 /// 返回结果提示；用户取消或预检不通过时返回 null。
 Future<String?> runPackageRestore(
   BuildContext context, {
   Uint8List? preset,
   String? origin,
   void Function(String message)? onStatus,
-}) async {
-  final scope = AppScope.of(context);
-  final selected = await _selectAndInspect(
-    context,
+}) {
+  final flows = AppScope.of(context).dataVersionFlows();
+  return flows.restorePackage(
     preset: preset,
-    onStatus: onStatus,
-  );
-  if (selected == null || !context.mounted) return null;
-  final (inspection, fileName) = selected;
-
-  final summary = await scope.data.versions.currentRestoreSummary();
-  if (!context.mounted) return null;
-  final confirmed = await showRestoreConfirmDialog(
-    context,
-    title: '从数据包恢复',
-    sourceLines: [
-      if (origin != null)
-        '来源：$origin'
-      else if (fileName != null)
-        '文件：$fileName',
-      ..._packageLines(inspection),
-    ],
-    impactLines: ['当前库会被整个替换，提交历史、命名版本与附件都以数据包为准。', _summaryLine(summary)],
-    rollbackLine:
-        '恢复前会自动把当前状态保存为一份恢复点；恢复完成后，'
-        '可以在数据版本页的“恢复点”里回到恢复前。',
-  );
-  if (!confirmed || !context.mounted) {
-    onStatus?.call('已取消恢复');
-    return null;
-  }
-
-  onStatus?.call('正在恢复…');
-  final Result<String?> restored;
-  try {
-    restored = await scope.data.versions.restoreInspected(inspection);
-  } catch (error, stack) {
-    if (!context.mounted) return '恢复失败，当前数据没有改动。';
-    return describeFailure(
-      context,
-      error,
-      stack,
-      action: '恢复数据包',
-      kind: 'restore_apply',
-      kept: '当前数据保留',
-      next: '可以检查数据包后重试',
-    );
-  }
-  switch (restored) {
-    case Success(:final value):
-      return value == null
-          ? '恢复完成；恢复前的状态已保存为恢复点，可在数据版本页回到恢复前'
-          : '恢复完成；恢复前的状态已保存为恢复点。$value';
-    case Failure(:final reason):
-      if (!context.mounted) return reason.message;
-      return describeFailureReason(
-        context,
-        reason,
-        kind: 'restore_apply',
-        kept: '当前数据保留',
-        next: '可以检查数据包后重试',
-      );
-  }
-}
-
-/// 选包与预检；包被拒时在主按钮上给“重新选择”，用户取消时返回 null。
-///
-/// 恢复点这类已经定好来源的包不能重选，被拒之后只说明原因。返回的是预检产物
-/// 与文件名：恢复入口只接受预检产物，原来的字节在预检之后就丢掉了。
-Future<(RestoreInspection, String?)?> _selectAndInspect(
-  BuildContext context, {
-  required Uint8List? preset,
-  required void Function(String message)? onStatus,
-}) async {
-  final scope = AppScope.of(context);
-  Uint8List? bytes = preset;
-  String? fileName;
-  while (true) {
-    if (bytes == null) {
-      final picked = await FilePicker.pickFile(dialogTitle: '选择数据包');
-      if (picked == null) return null;
-      fileName = picked.name;
-      // 超过上限的包不读进内存：先看文件大小，再决定是否读取。
-      final size = await picked.length();
-      if (size != null && size > dataPackageMaxBytes) {
-        final message = dataPackageTooLargeMessage(size);
-        onStatus?.call(message);
+    origin: origin,
+    host: RestoreHost(
+      isActive: () => context.mounted,
+      pickFile: () async {
         if (!context.mounted) return null;
-        if (await _showRejectedPackage(
+        final picked = await FilePicker.pickFile(dialogTitle: '选择数据包');
+        if (picked == null) return null;
+        return RestorePackageFile(
+          name: picked.name,
+          size: await picked.length(),
+          read: picked.readAsBytes,
+        );
+      },
+      confirm: (prompt) async {
+        if (!context.mounted) return false;
+        return showRestoreConfirmDialog(context, prompt: prompt);
+      },
+      reject: (message, {required allowReselect}) async {
+        if (!context.mounted) return false;
+        return _showRejectedPackage(
           context,
           message,
-          allowReselect: preset == null,
-        )) {
-          fileName = null;
-          continue;
-        }
-        return null;
-      }
-      onStatus?.call('正在读取数据包…');
-      bytes = await picked.readAsBytes();
-    }
-
-    onStatus?.call('正在校验数据包…');
-    final Result<RestoreInspection> inspected;
-    try {
-      inspected = await scope.data.versions.inspectRestorePackage(bytes);
-    } catch (error, stack) {
-      final message = context.mounted
+          allowReselect: allowReselect,
+        );
+      },
+      // 校验、恢复与预检的失败说明仍由页面写进本机诊断记录；页面已经离开时
+      // 不再读应用作用域，直接用流程给的兜底说明。
+      describeUnexpected:
+          (
+            error,
+            stack, {
+            required action,
+            required kind,
+            required kept,
+            required next,
+            required fallback,
+          }) => context.mounted
           ? describeFailure(
               context,
               error,
               stack,
-              action: '校验数据包',
-              kind: 'restore_inspect',
-              kept: '当前数据没有改动',
-              next: '可以换一个数据包再试',
+              action: action,
+              kind: kind,
+              kept: kept,
+              next: next,
             )
-          : '数据包不能恢复，当前数据没有改动。';
-      onStatus?.call(message);
-      if (!context.mounted) return null;
-      if (await _showRejectedPackage(
-        context,
-        message,
-        allowReselect: preset == null,
-      )) {
-        bytes = null;
-        fileName = null;
-        continue;
-      }
-      return null;
-    }
-
-    switch (inspected) {
-      case Success(:final value):
-        return (value, fileName);
-      case Failure(:final reason):
-        final message = context.mounted
-            ? describeFailureReason(
-                context,
-                reason,
-                kind: 'restore_inspect',
-                kept: '当前数据没有改动',
-                next: '可以换一个数据包再试',
-              )
-            : reason.message;
-        onStatus?.call(message);
-        if (!context.mounted) return null;
-        if (await _showRejectedPackage(
-          context,
-          message,
-          allowReselect: preset == null,
-        )) {
-          bytes = null;
-          fileName = null;
-          continue;
-        }
-        return null;
-    }
-  }
-}
-
-List<String> _packageLines(RestoreInspection inspection) {
-  final exported = _exportedAt(inspection.exportedAt);
-  final suffix = exported.isEmpty ? '' : '，导出于 $exported';
-  return switch (inspection.kind) {
-    RestorePackageKind.repository => [
-      '版本库备份：HEAD ${inspection.head ?? 0}，'
-          '${inspection.commitCount} 条提交，${inspection.namedCount} 个命名版本'
-          '$suffix。',
-    ],
-    RestorePackageKind.currentData => [
-      '当前数据包（schema v${inspection.schemaVersion}）'
-          '${inspection.rowCount == 0 ? '' : '，共 ${inspection.rowCount} 条业务记录'}'
-          '$suffix。',
-    ],
-  };
-}
-
-String _summaryLine(RestoreSummary summary) =>
-    '当前库：HEAD ${summary.head}，${summary.commitCount} 条提交，'
-    '${summary.namedCount} 个命名版本。';
-
-String _exportedAt(String value) {
-  final parsed = DateTime.tryParse(value);
-  return parsed == null ? '' : shortTime(parsed.toLocal());
+          : fallback,
+      describeReason: (reason, {required kind, required kept, required next}) =>
+          context.mounted
+          ? describeFailureReason(
+              context,
+              reason,
+              kind: kind,
+              kept: kept,
+              next: next,
+            )
+          : reason.message,
+      onStatus: onStatus,
+    ),
+  );
 }
 
 /// 包不能恢复时就地说明原因；还能重新选包时主按钮直接回到选择。

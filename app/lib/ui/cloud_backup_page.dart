@@ -8,6 +8,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/prefetch_service.dart';
+import '../application/repository_integrity.dart';
 import '../domain/models/server_models.dart';
 import '../domain/rules/package_budget.dart';
 import 'account_dialogs.dart';
