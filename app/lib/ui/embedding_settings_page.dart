@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart' hide Material;
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/prefetch_results.dart';
 import '../application/prefetch_service.dart';
 import '../application/search_index_service.dart';
 import '../domain/models/server_models.dart';
@@ -18,14 +19,6 @@ import 'workspace_widgets.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_header.dart';
 import 'zhixin_select.dart';
-
-/// 一级界面切进来之后预读的语义索引设置首屏；字段与预读任务返回的记录一致。
-typedef _EmbeddingPrewarm = ({
-  EmbeddingConfig? config,
-  List<Material> materials,
-  bool signedIn,
-  IndexStats? stats,
-});
 
 /// 语义索引设置：索引状态、嵌入来源与可发送范围三段。
 ///
@@ -83,7 +76,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
     if (_loaded) return;
     _loaded = true;
     final prewarm = AppScope.of(context).prefetch
-        .take<_EmbeddingPrewarm>(PrefetchKey.embeddingSettings);
+        .take<EmbeddingSettingsPrewarm>(PrefetchKey.embeddingSettings);
     if (prewarm != null) {
       _materials = prewarm.materials;
       _signedIn = prewarm.signedIn;

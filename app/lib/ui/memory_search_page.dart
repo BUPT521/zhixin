@@ -8,6 +8,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/memory_service.dart';
+import '../application/paged_result.dart';
 import '../domain/models/memory.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
@@ -43,10 +44,9 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
   MemoryScopeFilter _scope = const MemoryScopeFilter.all();
   MemoryStatus _status = MemoryStatus.active;
 
-  /// 范围标识到显示名的对应与本次条件的命中总数：服务随每页一起给出，页面
-  /// 只在取回结果时记下，用于条数与范围标签。
+  /// 范围标识到显示名的对应：打开页面时从记忆页的整屏读法取一次，用于筛选
+  /// 选项与来源标签；查找结果不再带回这一份。
   Map<String, String> _scopeLabels = const {};
-  int? _matched;
 
   /// 查找失败的就地说明；重试按当前条件重取第一页。
   String? _notice;
@@ -99,27 +99,15 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
     status: _status,
   );
 
-  /// 按一组条件取一页：把服务返回值换成 [PagedResult]，范围名字与命中总数记在
-  /// 页面；失败说明在这里生成，保留原始调用栈。
+  /// 按一组条件取一页：服务按共用分页结果返回，命中总数随页带回。
   ///
-  /// 结果晚到且条件已经换过时不写回范围名字与条数：新的第一页已经显示，旧的
-  /// 命中总数不能盖在它上面。
+  /// 失败说明在这里生成，保留原始调用栈。
   SearchPage<Memory> _pageFetcher(MemorySearchQuery query) {
     return (offset) async {
       final loadingMore = _matches.loadingMore;
       try {
-        final results = await AppScope.of(context).memory.edit
+        return await AppScope.of(context).memory.edit
             .search(query, offset: offset, pageSize: kSearchPageSize);
-        if (query == _queryCondition) {
-          _scopeLabels = results.scopeLabels;
-          _matched = results.matched;
-        }
-        return PagedResult<Memory>(
-          items: results.memories,
-          hasMore: results.hasMore,
-          nextOffset: results.nextOffset,
-          total: results.matched,
-        );
       } catch (error, stack) {
         if (mounted && query == _queryCondition) {
           _notice = describeFailure(
@@ -388,7 +376,7 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
           Padding(
             padding: EdgeInsets.only(bottom: theme.space.xs),
             child: Text(
-              '共 ${_matched ?? page.total ?? page.length} 条命中',
+              '共 ${page.total ?? page.length} 条命中',
               style: theme.text.bodySmall.copyWith(
                 color: theme.colors.onSurfaceVariant,
               ),

@@ -5,6 +5,8 @@ import 'package:material_ui/material_ui.dart' hide Material;
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/paged_result.dart';
+import '../application/prefetch_results.dart';
 import '../application/prefetch_service.dart';
 import '../application/search_service.dart';
 import '../application/search_index_service.dart';
@@ -126,10 +128,9 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     try {
       final scope = AppScope.of(context);
       // 进入“记录”时已经在后台读过范围选项，直接用这一份。
-      final prewarm = scope.prefetch
-          .peek<({List<LearningGoal> goals, List<Material> materials})>(
-            PrefetchKey.recordsSearchOptions,
-          );
+      final prewarm = scope.prefetch.peek<RecordsSearchOptionsPrewarm>(
+        PrefetchKey.recordsSearchOptions,
+      );
       final goals = prewarm?.goals ?? await scope.study.plan.activeGoals();
       final materials =
           prewarm?.materials ?? await scope.library.material.list();
@@ -180,22 +181,17 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     );
   }
 
-  /// 取一页结果：把服务返回的 `SearchResults` 转成共用的分页结果。
+  /// 取一页结果：服务直接返回共用的分页结果。
   ///
   /// 失败时记下调用栈再抛出，页面上的说明由 [describeFailure] 生成。
   Future<PagedResult<SearchEntry>> _fetchPage(String query, int offset) async {
     try {
-      final results = await AppScope.of(context).library.search.searchPage(
+      return await AppScope.of(context).library.search.searchPage(
         query,
         scope: _scope,
         offset: offset,
         pageSize: _searchState.pageSize,
         semanticHits: _semanticHits,
-      );
-      return PagedResult(
-        items: results.entries,
-        hasMore: results.hasMore,
-        nextOffset: results.nextOffset,
       );
     } catch (error, stack) {
       _failureStack = stack;

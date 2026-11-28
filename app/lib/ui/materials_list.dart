@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
 import '../app_scope.dart';
 import '../application/docx_import.dart';
 import '../application/material_search.dart';
+import '../application/paged_result.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/text.dart';
 import 'docx_review_dialog.dart';
@@ -206,18 +207,13 @@ class MaterialListState extends State<MaterialList> {
     );
   }
 
-  /// 按一个查询取一页：把服务返回值换成 [PagedResult]，失败说明在这里生成。
+  /// 按一个查询取一页：服务直接返回共用的分页结果，失败说明在这里生成。
   SearchPage<MaterialMatch> _pageFetcher(String query) {
     return (offset) async {
       final loadingMore = _matches.loadingMore;
       try {
-        final results = await AppScope.of(context).library.materialSearch
+        return await AppScope.of(context).library.materialSearch
             .searchPage(query, offset: offset, pageSize: kSearchPageSize);
-        return PagedResult<MaterialMatch>(
-          items: results.matches,
-          hasMore: results.hasMore,
-          nextOffset: results.nextOffset,
-        );
       } catch (error, stack) {
         if (mounted && query == _appliedQuery) {
           _searchNotice = describeFailure(

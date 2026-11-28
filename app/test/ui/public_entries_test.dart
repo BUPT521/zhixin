@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
+import 'package:zhixin/application/paged_result.dart';
 import 'package:zhixin/ui/format.dart';
 import 'package:zhixin/ui/search_state.dart';
 import 'package:zhixin/ui/theme.dart';

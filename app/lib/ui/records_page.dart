@@ -10,6 +10,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/learning_service.dart';
+import '../application/paged_result.dart';
 import '../domain/models/assessment.dart';
 import '../domain/models/conversation.dart';
 import '../domain/models/question.dart';
@@ -24,7 +25,6 @@ import 'live_view.dart';
 import 'materials_list.dart';
 import 'navigation.dart';
 import 'question_capture_button.dart';
-import 'search_state.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_chip.dart';
 import 'zhixin_dialog.dart';

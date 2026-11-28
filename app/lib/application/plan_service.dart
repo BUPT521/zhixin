@@ -4,6 +4,7 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/study.dart';
 import '../domain/models/write_result.dart';
 import '../../domain/rules/uuid_v7.dart';
+import 'paged_result.dart';
 import 'plan_search.dart';
 import 'screen_tables.dart';
 import 'service_runtime.dart';
@@ -71,12 +72,12 @@ class PlanService {
       tasks.doneItems(limit: limit, offset: offset);
 
   /// 按标题、说明、目标、状态和截止日期查找事项。
-  Future<PlanSearchPageResult> searchPage(
+  Future<PagedResult<PlanSearchHit>> searchPage(
     PlanSearchQuery query, {
     int offset = 0,
-    int pageSize = planSearchPageSize,
+    int pageSize = kSearchPageSize,
   }) async {
-    if (query.isEmpty) return PlanSearchPageResult(query: query);
+    if (query.isEmpty) return const PagedResult<PlanSearchHit>();
     final day = query.day;
     final range = day == null ? null : runtime.policy.naturalDayRange(day);
     final items = await tasks.searchItems(
@@ -94,7 +95,7 @@ class PlanService {
         ))
           PlanSearchHit.item(item),
     ];
-    return pagePlanSearchHits(query, hits, offset: offset, pageSize: pageSize);
+    return pagePlanSearchHits(hits, offset: offset, pageSize: pageSize);
   }
 
   /// 按编号读一项事项。
