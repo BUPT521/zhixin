@@ -19,6 +19,7 @@ import '../domain/rules/time_format.dart';
 import '../platform/app_info.dart';
 import 'failure_feedback.dart';
 import 'theme.dart';
+import 'zhixin_switch.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 
@@ -221,7 +222,7 @@ class _FeedbackPageState extends State<FeedbackPage> {
                     description: const Text('可以不填；填写时只用于回复这条反馈。'),
                   ),
                   SizedBox(height: theme.space.gap),
-                  forui.FSwitch(
+                  ZhixinSwitch(
                     label: const Text('附带本机诊断摘要'),
                     description: const Text(
                       '只提交下面预览的几行：启动次数与最近几条错误的来源、时间与摘要；'

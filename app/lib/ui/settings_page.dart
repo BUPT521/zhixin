@@ -3,6 +3,7 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
+import 'zhixin_switch.dart';
 
 import '../ai/llm_client.dart';
 import '../ai/llm_config.dart';
@@ -574,7 +575,7 @@ class _SettingsPageState extends State<SettingsPage> {
               description: const Text('按模型公布的上限填写，留空使用 65536。'),
             ),
             SizedBox(height: context.zhixin.space.gap),
-            forui.FSwitch(
+            ZhixinSwitch(
               label: const Text('允许上传题目图片'),
               description: const Text('请求提示、讲解或读图时发送当前图片。'),
               value: _form.allowImages,
@@ -666,7 +667,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   },
                 ),
                 SizedBox(height: theme.space.gap),
-                forui.FSwitch(
+                ZhixinSwitch(
                   label: const Text('拍照使用系统相机'),
                   description: const Text(
                     '关闭时用应用内预览，按下快门直接进入框选；打开后画质交给相机应用，'
@@ -790,7 +791,7 @@ class _SettingsPageState extends State<SettingsPage> {
         forui.FCard(
           child: Padding(
             padding: EdgeInsets.all(theme.space.lg),
-            child: forui.FSwitch(
+            child: ZhixinSwitch(
               label: const Text('开发者模式'),
               description: const Text('调整服务地址、模型配置与 API Key。'),
               value: _developerMode ?? false,
@@ -833,7 +834,7 @@ class _SettingsPageState extends State<SettingsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                forui.FSwitch(
+                ZhixinSwitch(
                   label: const Text('发送崩溃报告'),
                   description: const Text(
                     '错误类型、分类与代码位置；不含学习内容。关闭之后立即停止上报，'
@@ -858,7 +859,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   },
                 ),
                 const CardDivider(),
-                forui.FSwitch(
+                ZhixinSwitch(
                   label: const Text('匿名使用统计'),
                   description: const Text(
                     '每天最多一次安装标识、应用版本与平台，不含学习内容，也不与账号关联；'

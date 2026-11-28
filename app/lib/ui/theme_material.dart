@@ -113,6 +113,30 @@ ThemeData _materialTheme(_Tokens tokens) {
         borderRadius: BorderRadius.all(_featureRadius),
       ),
     ),
+    // 开关是 Material 组件，轨道、圆钮与禁用态在这里配一次：关闭时轨道取
+    // 容器描边色、圆钮取卡片底色，开启时轨道取主色、圆钮取压在主色上的文字
+    // 色，深浅两套都分得出来；禁用态按 Material 的不透明度档位压暗。
+    switchTheme: SwitchThemeData(
+      trackColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return states.contains(WidgetState.selected)
+              ? palette.brand.withValues(alpha: 0.38)
+              : palette.ink.withValues(alpha: 0.12);
+        }
+        return states.contains(WidgetState.selected)
+            ? palette.brand
+            : palette.border;
+      }),
+      thumbColor: WidgetStateProperty.resolveWith((states) {
+        if (states.contains(WidgetState.disabled)) {
+          return palette.ink.withValues(alpha: 0.38);
+        }
+        return states.contains(WidgetState.selected)
+            ? palette.onAccent
+            : palette.card;
+      }),
+      trackOutlineColor: const WidgetStatePropertyAll(Colors.transparent),
+    ),
     // 底部面板改用 Material 之后，底色、上圆角与拖动条从这里取；页面打开
     // 面板时只写 showDragHandle 等行为，不再各配一遍样式。
     bottomSheetTheme: BottomSheetThemeData(

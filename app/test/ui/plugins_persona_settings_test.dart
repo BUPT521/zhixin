@@ -16,6 +16,7 @@ import 'package:zhixin/ui/settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
+import 'package:zhixin/ui/zhixin_switch.dart';
 
 import '../support/app_scope_teardown.dart';
 
@@ -215,7 +216,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(EmbeddingSettingsPage),
-        matching: find.byType(forui.FSwitch),
+        matching: find.byType(ZhixinSwitch),
       ),
       findsOneWidget,
     );
@@ -232,7 +233,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byType(PluginsPage),
-        matching: find.byType(forui.FSwitch),
+        matching: find.byType(ZhixinSwitch),
       ),
       findsOneWidget,
     );
@@ -241,7 +242,7 @@ void main() {
       find
           .descendant(
             of: find.byType(PluginsPage),
-            matching: find.byType(forui.FSwitch),
+            matching: find.byType(ZhixinSwitch),
           )
           .first,
     );

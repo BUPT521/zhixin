@@ -260,16 +260,23 @@ void main() {
   });
 
   test('开关关闭时的轨道取描边色，压在卡片上能看出边界', () {
-    for (final (theme, label) in [
-      (zhixinForuiTheme, '浅色'),
-      (zhixinDarkForuiTheme, '深色'),
+    for (final (theme, forui, label) in [
+      (zhixinTheme, zhixinForuiTheme, '浅色'),
+      (zhixinDarkTheme, zhixinDarkForuiTheme, '深色'),
     ]) {
-      final off = theme.switchStyle.trackColor.resolve({});
-      expect(off, theme.colors.border, reason: '$label 的关闭轨道取描边色');
+      final colors = forui.colors;
+      final tracks = theme.switchTheme.trackColor!;
+      final off = tracks.resolve({});
+      expect(off, colors.border, reason: '$label 的关闭轨道取描边色');
       expect(
-        _contrast(off, theme.colors.card),
+        _contrast(off!, colors.card),
         greaterThanOrEqualTo(1.2),
         reason: '$label 的关闭轨道压在卡片上要能看出边界',
+      );
+      expect(
+        tracks.resolve({WidgetState.selected}),
+        colors.primary,
+        reason: '$label 的开启轨道取主色',
       );
     }
   });

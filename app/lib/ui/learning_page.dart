@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
+import 'zhixin_switch.dart';
 
 import '../ai/llm_client.dart';
 import '../app_scope.dart';
@@ -1002,12 +1003,13 @@ class _LearningPageState extends State<LearningPage> {
                         ),
                         SizedBox(height: theme.space.gap),
                       ],
-                      forui.FSwitch(
+                      ZhixinSwitch(
                         label: const Text('间隔后重做'),
                         description: const Text('系统会单独记录间隔后的独立表现。'),
                         value: _delayed,
-                        enabled: !_busy,
-                        onChange: (value) => setState(() => _delayed = value),
+                        onChange: _busy
+                            ? null
+                            : (value) => setState(() => _delayed = value),
                       ),
                       forui.FTextField(
                         control: .managed(controller: _feedbackDraft),

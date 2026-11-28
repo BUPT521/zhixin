@@ -115,7 +115,6 @@ forui.FThemeData _foruiTheme(_Tokens tokens) {
       dividerColor: forui.FVariants.all(colors.border),
       tileStyles: .delta([.all(_tilePressFeedback(colors.muted))]),
     ),
-    switchStyle: _switchStyle(colors, style),
     accordionStyle: _accordionStyle(colors, style, text),
     bottomNavigationBarStyle: _navigationBarStyle(
       colors,
@@ -454,26 +453,6 @@ forui.FTileStyleDelta _tilePressFeedback(Color background) => .delta(
   ]),
   tappableStyle: _pressFeedback,
 );
-
-/// Forui 开关：开启时轨道取主色，关闭时取容器描边那一档，圆钮取页面底色；
-/// 两边的文字沿用 Forui 的标签样式。
-///
-/// 关闭态的轨道不取页面底色：浅色下页面与卡片都是纯白，轨道会与卡片并成
-/// 一片，只看得到一个悬空的圆钮；改用描边色之后深浅两套外观都能看出轨道。
-forui.FSwitchStyle _switchStyle(forui.FColors colors, forui.FStyle style) {
-  final base = forui.FSwitchStyle.inherit(colors: colors, style: style);
-  return base.copyWith(
-    trackColor: forui.FVariants(
-      colors.border,
-      variants: {
-        [forui.FSwitchVariant.selected]: colors.primary,
-        [forui.FSwitchVariant.disabled]: colors.disable(colors.border),
-        [forui.FSwitchVariant.selected.and(forui.FSwitchVariant.disabled)]:
-            colors.disable(colors.primary),
-      },
-    ),
-  );
-}
 
 /// 底栏：不靠字重与胶囊区分选中，只改颜色：选中为主色，其余为次要文字色。
 /// 容器描边由 Forui 的 border 给出，与卡片、列表项同一档。

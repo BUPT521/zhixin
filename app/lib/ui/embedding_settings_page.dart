@@ -5,6 +5,7 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart' hide Material;
 
 import 'theme.dart';
+import 'zhixin_switch.dart';
 
 import '../app_scope.dart';
 import '../application/prefetch_results.dart';
@@ -507,7 +508,7 @@ class _EmbeddingSettingsPageState extends State<EmbeddingSettingsPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                forui.FSwitch(
+                ZhixinSwitch(
                   label: const Text('启用语义索引'),
                   description: const Text('关闭时不读取向量库，也不发送任何原文；改动在保存后生效。'),
                   value: _enabled,

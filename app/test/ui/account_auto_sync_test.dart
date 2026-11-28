@@ -17,6 +17,7 @@ import 'package:zhixin/ui/quota_purchase_panel.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
+import 'package:zhixin/ui/zhixin_switch.dart';
 
 import '../support/app_scope_teardown.dart';
 import '../support/fake_server.dart';
@@ -159,9 +160,9 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
         await Future<void>.delayed(const Duration(milliseconds: 20));
       });
-      final switches = find.byType(forui.FSwitch);
+      final switches = find.byType(ZhixinSwitch);
       if (switches.evaluate().isEmpty) continue;
-      if (tester.widget<forui.FSwitch>(switches).value == value) return;
+      if (tester.widget<ZhixinSwitch>(switches).value == value) return;
     }
     fail('等待自动同步开关变成 $value 超时');
   }
@@ -183,7 +184,7 @@ void main() {
     expect(find.textContaining(email), findsOneWidget);
     expect(find.byType(QuotaPurchasePanel), findsOneWidget);
     expect(
-      tester.widget<forui.FSwitch>(find.byType(forui.FSwitch)).value,
+      tester.widget<ZhixinSwitch>(find.byType(ZhixinSwitch)).value,
       isTrue,
     );
 

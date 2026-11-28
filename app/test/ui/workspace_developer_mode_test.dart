@@ -9,6 +9,7 @@ import 'package:zhixin/data/cloud/server_client.dart';
 import 'package:zhixin/domain/rules/schema_version.dart';
 import 'package:zhixin/ui/model_api_keys_page.dart';
 import 'package:zhixin/ui/workspace_widgets.dart';
+import 'package:zhixin/ui/zhixin_switch.dart';
 
 import '../support/fake_server.dart';
 import 'workspace_support.dart';
@@ -50,7 +51,7 @@ void main() {
     final originalAddress = await tester.runAsync(account.serverBaseUrl);
     await openMineEntry(tester, '设置');
 
-    final mode = find.widgetWithText(forui.FSwitch, '开发者模式');
+    final mode = find.widgetWithText(ZhixinSwitch, '开发者模式');
     final address = find.widgetWithText(forui.FTile, '知新服务地址');
     final keys = find.widgetWithText(forui.FTile, '知新 API Key');
     final model = find.widgetWithText(forui.FTextField, '模型名');
@@ -59,13 +60,13 @@ void main() {
       160,
       scrollable: settingsScrollable(),
     );
-    expect(tester.widget<forui.FSwitch>(mode).value, isFalse);
+    expect(tester.widget<ZhixinSwitch>(mode).value, isFalse);
     expect(address, findsNothing);
     expect(keys, findsNothing);
     expect(model, findsNothing);
 
-    tester.widget<forui.FSwitch>(mode).onChange!(true);
-    await _waitUntil(tester, () => tester.widget<forui.FSwitch>(mode).value);
+    tester.widget<ZhixinSwitch>(mode).onChange!(true);
+    await _waitUntil(tester, () => tester.widget<ZhixinSwitch>(mode).value);
     await settle(tester);
     await tester.scrollUntilVisible(
       keys,
@@ -114,8 +115,8 @@ void main() {
       160,
       scrollable: settingsScrollable(),
     );
-    tester.widget<forui.FSwitch>(mode).onChange!(false);
-    await _waitUntil(tester, () => !tester.widget<forui.FSwitch>(mode).value);
+    tester.widget<ZhixinSwitch>(mode).onChange!(false);
+    await _waitUntil(tester, () => !tester.widget<ZhixinSwitch>(mode).value);
     await settle(tester);
     expect(address, findsNothing);
     expect(keys, findsNothing);

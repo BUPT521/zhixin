@@ -12,6 +12,7 @@ import 'failure_feedback.dart';
 import 'navigation.dart';
 import 'onboarding_controller.dart';
 import 'theme.dart';
+import 'zhixin_switch.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_segmented.dart';
 
@@ -311,7 +312,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
                   onChange: (value) => _controller.termsChecked = value,
                 ),
                 const CardDivider(),
-                forui.FSwitch(
+                ZhixinSwitch(
                   label: const Text('匿名使用统计'),
                   description: const Text(
                     '采集范围、用途与保存期限见上面《隐私政策》第二部分；'

@@ -8,6 +8,7 @@ import 'copy.dart';
 import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
 import 'theme.dart';
+import 'zhixin_switch.dart';
 import 'workspace_widgets.dart';
 import 'zhixin_header.dart';
 
@@ -181,7 +182,7 @@ class _PluginCard extends StatelessWidget {
                 Expanded(
                   child: Text(manifest.name, style: theme.text.titleMedium),
                 ),
-                forui.FSwitch(
+                ZhixinSwitch(
                   value: enabled,
                   onChange: busy ? null : onChanged,
                   semanticsLabel: enabled

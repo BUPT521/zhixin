@@ -15,6 +15,7 @@ import 'package:zhixin/ui/embedding_settings_page.dart';
 import 'package:zhixin/ui/theme.dart';
 import 'package:zhixin/ui/theme_accent_controller.dart';
 import 'package:zhixin/ui/theme_mode_controller.dart';
+import 'package:zhixin/ui/zhixin_switch.dart';
 
 import '../support/app_scope_teardown.dart';
 import '../support/fake_server.dart';
@@ -177,7 +178,7 @@ void main() {
 
     await tester.tap(
       find.descendant(
-        of: find.byType(forui.FSwitch),
+        of: find.byType(ZhixinSwitch),
         matching: find.text('启用语义索引'),
       ),
     );
@@ -199,7 +200,7 @@ void main() {
 
     await tester.tap(
       find.descendant(
-        of: find.byType(forui.FSwitch),
+        of: find.byType(ZhixinSwitch),
         matching: find.text('启用语义索引'),
       ),
     );

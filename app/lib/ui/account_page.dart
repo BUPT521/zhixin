@@ -5,6 +5,7 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
+import 'zhixin_switch.dart';
 import 'zhixin_dialog.dart';
 import '../platform/app_paths.dart' show LocalSpace;
 
@@ -804,7 +805,7 @@ class _AccountPageState extends State<AccountPage> {
                 ),
               ),
               SizedBox(height: theme.space.sm),
-              forui.FSwitch(
+              ZhixinSwitch(
                 label: const Text('自动同步'),
                 description: const Text('写入之后在后台推送；关闭后只在上面的“立即同步”里执行。'),
                 value: snapshot.autoSync,
