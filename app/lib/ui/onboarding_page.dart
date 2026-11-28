@@ -42,6 +42,9 @@ class _OnboardingPageState extends State<OnboardingPage> {
   /// 这一页装上之后是否已经读过一次登录态；重建之后新的 State 会再读一次。
   bool _loginStateChecked = false;
 
+  /// 这一趟横拖累计的位移，向右为正；松手之后归零。
+  double _dragDx = 0;
+
   OnboardingController get _controller => widget.controller;
 
   @override
@@ -175,6 +178,77 @@ class _OnboardingPageState extends State<OnboardingPage> {
     _controller.back();
   }
 
+  /// 这一步能不能往前翻：第一步要先勾选同意。
+  bool get _canAdvance =>
+      !_busy &&
+      switch (_controller.stage) {
+        OnboardingStage.terms => _controller.termsChecked,
+        OnboardingStage.login => true,
+        OnboardingStage.appearance => true,
+      };
+
+  /// 底部按钮与左划共用的前进一步；第一步按下同意，第二步先在本机用，
+  /// 最后一步完成。三步的动作仍与各自的按钮文案一致，不另做一套。
+  Future<void> _advance() async {
+    if (!_canAdvance) return;
+    switch (_controller.stage) {
+      case OnboardingStage.terms:
+        await _accept();
+      case OnboardingStage.login:
+        await _run(_controller.skipLogin);
+      case OnboardingStage.appearance:
+        await _finish();
+    }
+  }
+
+  /// 底部“上一步”与右划：第一页没有上一步，交给系统返回键退出应用。
+  void _back() {
+    if (_busy || _controller.stage == OnboardingStage.terms) return;
+    _controller.back();
+  }
+
+  /// 顶部进度点能不能点：往回随时可以，往前要先处理须知；选过“不同意”的
+  /// 设备没有登录这一步，往前与往回都不出现。
+  bool _canGoTo(int index) {
+    if (_busy) return false;
+    final current = _controller.stage.index;
+    if (index == current) return false;
+    // 选过“不同意”的设备没有登录这一步，往回也不出现；要登录先去第一步同意。
+    if (index == OnboardingStage.login.index &&
+        !_controller.record.consentCurrent) {
+      return false;
+    }
+    if (index < current) return true;
+    final settled = _controller.record.consentCurrent || _controller.declined;
+    if (!settled) return false;
+    return true;
+  }
+
+  Future<void> _goTo(int index) async {
+    if (!_canGoTo(index)) return;
+    final target = OnboardingStage.values[index];
+    if (target == _controller.stage) return;
+    await _run(() => _controller.goTo(target));
+  }
+
+  void _startSwipe(DragStartDetails details) => _dragDx = 0;
+
+  void _updateSwipe(DragUpdateDetails details) => _dragDx += details.delta.dx;
+
+  /// 左划看下一步、右划回上一步：划过四分之一屏宽或同方向划得够快就切换。
+  /// 第一步没勾选时左划不生效，与“同意并继续”的禁用状态一致。
+  void _endSwipe(DragEndDetails details) {
+    final width = MediaQuery.sizeOf(context).width;
+    final velocity = details.primaryVelocity ?? 0;
+    final dx = _dragDx;
+    _dragDx = 0;
+    if (dx < -width * 0.25 || velocity < -300) {
+      unawaited(_advance());
+      return;
+    }
+    if (dx > width * 0.25 || velocity > 300) _back();
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -190,10 +264,28 @@ class _OnboardingPageState extends State<OnboardingPage> {
               builder: (context, _) => Column(
                 children: [
                   Padding(
-                    padding: const EdgeInsets.only(top: 16),
+                    padding: const EdgeInsets.only(top: 8),
                     child: _progress(context),
                   ),
-                  Expanded(child: _step(context)),
+                  Expanded(
+                    // 左右划动与底部按钮走同一套推进与返回；上下仍交给页面的
+                    // 滚动区。内容换页时只让新的一页淡入，旧内容不留在树里，
+                    // 登录表单的输入控制器不会同时挂在两份表单上。
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragStart: _startSwipe,
+                      onHorizontalDragUpdate: _updateSwipe,
+                      onHorizontalDragEnd: _endSwipe,
+                      child: FadeIn(
+                        trigger: _controller.stage,
+                        child: KeyedSubtree(
+                          key: ValueKey(_controller.stage),
+                          child: _step(context),
+                        ),
+                      ),
+                    ),
+                  ),
+                  _navigation(context),
                 ],
               ),
             ),
@@ -203,32 +295,135 @@ class _OnboardingPageState extends State<OnboardingPage> {
     );
   }
 
-  /// 顶部三段进度点；只补第一步时只有一段。
+  /// 顶部三段进度点；只补第一步时只有一段。点过的点可以直接回去，往前只到
+  /// 已经处理完须知的那一步，没勾选时点了也不动。
   Widget _progress(BuildContext context) {
     final count = _controller.progressCount;
     final current = _controller.progressIndex.clamp(0, count - 1);
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        for (var i = 0; i < count; i++)
+          _progressDot(context, index: i, current: current),
+      ],
+    );
+  }
+
+  Widget _progressDot(
+    BuildContext context, {
+    required int index,
+    required int current,
+  }) {
     final theme = context.zhixin;
+    final selected = index == current;
+    final reachable = _canGoTo(index);
+    // 点本身只有 8 高，外面留 36 的方框当可点区域，读屏与手指都够得到。
     return Semantics(
-      label: '第 ${current + 1} 步，共 $count 步',
+      key: ValueKey('onboarding-step-$index'),
+      button: !selected && reachable,
+      enabled: !selected && reachable,
+      selected: selected,
+      label: selected ? '第 ${index + 1} 步，当前' : '第 ${index + 1} 步',
       excludeSemantics: true,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          for (var i = 0; i < count; i++)
-            AnimatedContainer(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: reachable ? () => _goTo(index) : null,
+        child: SizedBox(
+          width: 36,
+          height: 36,
+          child: Center(
+            child: AnimatedContainer(
               duration: context.motionOf(theme.motion.fast),
               curve: theme.motion.move,
-              width: i == current ? 20 : 8,
+              width: selected ? 20 : 8,
               height: 8,
-              margin: const EdgeInsets.symmetric(horizontal: 4),
               decoration: BoxDecoration(
-                color: i <= current
+                color: index <= current
                     ? theme.colors.primary
                     : theme.colors.outlineVariant,
                 borderRadius: BorderRadius.circular(4),
               ),
             ),
-        ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 底部固定的前后页操作：左边上一步，右边这一步的主操作；需要另一条出路
+  /// 时（不同意、跳过）放在主操作上面一行。主操作沿用各步原有的文案，
+  /// “上一步”只补一个入口，不改变每步实际发生的事。
+  Widget _navigation(BuildContext context) {
+    final theme = context.zhixin;
+    final stage = _controller.stage;
+    final secondary = switch (stage) {
+      OnboardingStage.terms => forui.FButton(
+        variant: forui.FButtonVariant.ghost,
+        mainAxisSize: MainAxisSize.min,
+        onPress: _busy ? null : _decline,
+        child: const Text('不同意，仅在本机使用'),
+      ),
+      OnboardingStage.appearance => forui.FButton(
+        variant: forui.FButtonVariant.ghost,
+        mainAxisSize: MainAxisSize.min,
+        onPress: _busy ? null : _finish,
+        child: const Text('跳过'),
+      ),
+      OnboardingStage.login => null,
+    };
+    final forward = switch (stage) {
+      OnboardingStage.terms => forui.FButton(
+        mainAxisSize: MainAxisSize.min,
+        onPress: _canAdvance ? _accept : null,
+        child: Text(_busy ? '正在保存…' : '同意并继续'),
+      ),
+      OnboardingStage.login => forui.FButton(
+        variant: forui.FButtonVariant.outline,
+        mainAxisSize: MainAxisSize.min,
+        onPress: _busy ? null : () => _run(_controller.skipLogin),
+        child: const Text('先在本机用'),
+      ),
+      OnboardingStage.appearance => forui.FButton(
+        mainAxisSize: MainAxisSize.min,
+        onPress: _busy ? null : _finish,
+        child: Text(_busy ? '正在保存…' : '完成'),
+      ),
+    };
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: theme.colors.outlineVariant)),
+      ),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          theme.space.page,
+          theme.space.sm,
+          theme.space.page,
+          theme.space.sm,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (secondary case final secondary?) ...[
+              Center(child: secondary),
+              SizedBox(height: theme.space.xs),
+            ],
+            Row(
+              children: [
+                if (stage != OnboardingStage.terms)
+                  forui.FButton(
+                    variant: forui.FButtonVariant.ghost,
+                    mainAxisSize: MainAxisSize.min,
+                    onPress: _busy ? null : _back,
+                    prefix: const Icon(FLucideIcons.chevronLeft),
+                    child: const Text('上一步'),
+                  ),
+                const Spacer(),
+                forward,
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -241,13 +436,13 @@ class _OnboardingPageState extends State<OnboardingPage> {
     };
   }
 
-  /// 一页的标题、说明与内容，底部说明与操作都留在滚动区里，键盘弹出时也够得到。
+  /// 一页的标题、说明与内容；底部的前后页操作固定在滚动区下面，键盘弹出时
+  /// 由页面骨架让出高度，主操作仍然够得到。
   Widget _page(
     BuildContext context, {
     required String title,
     required String description,
     required List<Widget> children,
-    required List<Widget> actions,
   }) {
     final theme = context.zhixin;
     return ListView(
@@ -267,8 +462,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
           SizedBox(height: theme.space.md),
           InlineNotice(message: error),
         ],
-        SizedBox(height: theme.space.section),
-        ...actions,
       ],
     );
   }
@@ -326,20 +519,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
           ),
         ),
       ],
-      actions: [
-        forui.FButton(
-          mainAxisSize: MainAxisSize.max,
-          onPress: _busy || !_controller.termsChecked ? null : _accept,
-          child: Text(_busy ? '正在保存…' : '同意并继续'),
-        ),
-        SizedBox(height: theme.space.sm),
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.max,
-          onPress: _busy ? null : _decline,
-          child: const Text('不同意，仅在本机使用'),
-        ),
-      ],
     );
   }
 
@@ -373,14 +552,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
           style: theme.text.bodySmall.copyWith(
             color: theme.colors.onSurfaceVariant,
           ),
-        ),
-      ],
-      actions: [
-        forui.FButton(
-          variant: forui.FButtonVariant.outline,
-          mainAxisSize: MainAxisSize.max,
-          onPress: _busy ? null : _controller.skipLogin,
-          child: const Text('先在本机用'),
         ),
       ],
     );
@@ -419,20 +590,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
               ],
             ),
           ),
-        ),
-      ],
-      actions: [
-        forui.FButton(
-          mainAxisSize: MainAxisSize.max,
-          onPress: _busy ? null : _finish,
-          child: Text(_busy ? '正在保存…' : '完成'),
-        ),
-        SizedBox(height: theme.space.sm),
-        forui.FButton(
-          variant: forui.FButtonVariant.ghost,
-          mainAxisSize: MainAxisSize.max,
-          onPress: _busy ? null : _finish,
-          child: const Text('跳过'),
         ),
       ],
     );

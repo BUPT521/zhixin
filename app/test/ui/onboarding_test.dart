@@ -273,6 +273,78 @@ void main() {
     expect(find.text('登录或注册'), findsOneWidget);
   });
 
+  testWidgets('底部上一步回到须知，主操作仍然一步一页', (tester) async {
+    await openApp(tester);
+    const termsTitle = '开始使用前，先看这两份说明';
+    expect(find.text(termsTitle), findsOneWidget);
+    expect(
+      find.widgetWithText(forui.FButton, '上一步'),
+      findsNothing,
+      reason: '第一步没有上一步',
+    );
+
+    await agreeTerms(tester);
+    expect(find.widgetWithText(forui.FButton, '上一步'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(forui.FButton, '上一步'));
+    await settle(tester);
+    expect(find.text(termsTitle), findsOneWidget, reason: '上一步回到须知');
+    // 回来时保留勾选，可以直接再往后走。
+    await tester.tap(find.widgetWithText(forui.FButton, '同意并继续'));
+    await pumpUntil(tester, find.text('登录或注册'));
+    expect(find.text('登录或注册'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(forui.FButton, '先在本机用'));
+    await pumpUntil(tester, find.text('选择外观'));
+    expect(find.text('选择外观'), findsOneWidget);
+  });
+
+  testWidgets('左右划动翻页，第一步没勾选时往前划不动', (tester) async {
+    await openApp(tester);
+    const termsTitle = '开始使用前，先看这两份说明';
+
+    // 没勾选时左划不切到下一步。
+    await tester.drag(find.byType(OnboardingPage), const Offset(-300, 0));
+    await settle(tester);
+    expect(find.text(termsTitle), findsOneWidget);
+
+    await agreeTerms(tester);
+    await tester.drag(find.byType(OnboardingPage), const Offset(-300, 0));
+    await pumpUntil(tester, find.text('选择外观'));
+    expect(find.text('选择外观'), findsOneWidget, reason: '左划进入下一步');
+
+    await tester.drag(find.byType(OnboardingPage), const Offset(300, 0));
+    await pumpUntil(tester, find.text('登录或注册'));
+    expect(find.text('登录或注册'), findsOneWidget, reason: '右划回到上一步');
+  });
+
+  testWidgets('点步骤点可以回看，也可以跳过登录直接到外观', (tester) async {
+    await openApp(tester);
+    const termsTitle = '开始使用前，先看这两份说明';
+
+    // 还没处理须知时点第三步不动。
+    await tester.tap(find.byKey(const ValueKey('onboarding-step-2')));
+    await settle(tester);
+    expect(find.text(termsTitle), findsOneWidget);
+
+    await agreeTerms(tester);
+    await tester.tap(find.byKey(const ValueKey('onboarding-step-2')));
+    await pumpUntil(tester, find.text('选择外观'));
+    await tester.runAsync(() async {
+      expect(
+        (await OnboardingStore(directory.path).read()).stage,
+        OnboardingStage.appearance,
+        reason: '点步骤点往前跳也先写盘',
+      );
+    });
+
+    await tester.tap(find.byKey(const ValueKey('onboarding-step-1')));
+    await pumpUntil(tester, find.text('登录或注册'));
+    await tester.tap(find.byKey(const ValueKey('onboarding-step-0')));
+    await settle(tester);
+    expect(find.text(termsTitle), findsOneWidget, reason: '回看第一步');
+  });
+
   testWidgets('不同意进入本机模式，不调用上报与更新检查', (tester) async {
     await openApp(tester);
     await tester.tap(find.text('不同意，仅在本机使用'));
@@ -399,6 +471,8 @@ void main() {
     // 先到外观选一个主题色，再返回登录，验证换空间之后这一步与外观都还在。
     await tester.tap(find.widgetWithText(forui.FButton, '先在本机用'));
     await pumpUntil(tester, find.text('选择外观'));
+    // 新页是淡入的，语义树等动画走完才完整；按读屏名称点色块前先等一帧。
+    await settle(tester);
     await tester.tap(find.bySemanticsLabel('苔绿主题色'));
     await settle(tester);
     // 换主题色要先写完文件再改值，负载高时一次 settle 可能还没走到重建。

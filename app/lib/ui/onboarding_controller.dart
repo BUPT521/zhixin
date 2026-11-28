@@ -181,6 +181,22 @@ class OnboardingController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// 点顶部进度点直接切到某一步。
+  ///
+  /// 往后翻与按钮推进一样，先把步骤写进设备文件再改界面；往前翻只改当前停留
+  /// 的位置，不把记下的步骤往回写。回到第一步时与 [back] 一样保留勾选，用户
+  /// 已经同意过，回来通常是要改主意或看正文。
+  Future<void> goTo(OnboardingStage stage) async {
+    if (stage == _stage) return;
+    if (stage.index > _stage.index) {
+      await _enter(stage);
+      return;
+    }
+    _stage = stage;
+    _termsChecked = _termsChecked || _record.agreed;
+    notifyListeners();
+  }
+
   /// 走完引导：写完成标记，之后启动直接进入首页。
   Future<void> finish() async {
     await _write(_record.copyWith(completed: true));
