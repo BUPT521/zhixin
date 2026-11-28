@@ -283,7 +283,16 @@ class _SettingsPageState extends State<SettingsPage> {
     _notices.report(area, message, failed: failed);
   }
 
-  Widget? _resultFor(SettingsArea area) => _notices.widgetFor(area);
+  /// 一段操作的结果：与上面那张卡片之间留一档，失败时才有的描边说明不会贴住
+  /// 触发操作的控件；成功的一行小字同样与卡片分开。
+  Widget? _resultFor(SettingsArea area) {
+    final result = _notices.widgetFor(area);
+    if (result == null) return null;
+    return Padding(
+      padding: EdgeInsets.only(top: context.zhixin.space.sm),
+      child: result,
+    );
+  }
 
   /// 保存模型配置：只存模型名、上下文上限与图片开关，先确认已经登录。
   Future<void> _saveConfig() async {

@@ -83,7 +83,11 @@ class _ServerAddressDialogState extends State<_ServerAddressDialog> {
             description: const Text('请填写知新实例的 HTTPS 地址。切换实例后需要重新登录。'),
             onSubmit: (_) => _save(),
           ),
-          if (_error case final error?) InlineNotice(message: error),
+          if (_error case final error?)
+            Padding(
+              padding: EdgeInsets.only(top: context.zhixin.space.sm),
+              child: InlineNotice(message: error),
+            ),
         ],
       ),
       actions: [

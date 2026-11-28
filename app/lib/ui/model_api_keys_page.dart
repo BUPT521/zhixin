@@ -198,10 +198,15 @@ class _ModelApiKeysPageState extends State<ModelApiKeysPage> {
             ),
             SizedBox(height: theme.space.gap),
             if (_busy) const Center(child: forui.FCircularProgress(size: .sm)),
-            if (_error case final error?) InlineNotice(message: error),
+            if (_error case final error?)
+              Padding(
+                padding: EdgeInsets.only(top: theme.space.sm),
+                child: InlineNotice(message: error),
+              ),
             if (keys?.isEmpty ?? false) const Text('还没有 API Key'),
             if (keys != null)
-              for (final key in keys)
+              for (final (index, key) in keys.indexed) ...[
+                if (index > 0) SizedBox(height: theme.space.sm),
                 forui.FTile(
                   title: Text(key.name),
                   subtitle: Text(
@@ -221,6 +226,7 @@ class _ModelApiKeysPageState extends State<ModelApiKeysPage> {
                           child: const Text('撤销'),
                         ),
                 ),
+              ],
             if (_serverBaseUrl.isNotEmpty) ...[
               const SectionHeading(
                 title: '调用地址',
@@ -329,7 +335,11 @@ class _IssueKeyDialogState extends State<_IssueKeyDialog> {
           obscureText: true,
           onSubmit: (_) => _submit(),
         ),
-        if (_error case final error?) InlineNotice(message: error),
+        if (_error case final error?)
+          Padding(
+            padding: EdgeInsets.only(top: context.zhixin.space.sm),
+            child: InlineNotice(message: error),
+          ),
       ],
     ),
     actions: [
