@@ -62,29 +62,32 @@ void main() {
   test('常驻的语义与程序排在情景之前，三种用途拿到同一组候选', () async {
     final db = await openTestDb();
     addTearDown(db.close);
-    final repo = MemoryRepository(db);
     final now = DateTime(2026, 11, 12, 10);
+    // 写入时刻固定且彼此可区分：常驻层按更新时间倒序，语义那条比程序更晚。
+    final episodicAt = DateTime(2026, 11, 12, 9);
+    final proceduralAt = DateTime(2026, 11, 12, 9, 10);
+    final semanticAt = DateTime(2026, 11, 12, 9, 20);
     // 先写情景，再写两条全局长期：常驻（语义或程序、全局、无有效期）排在前面。
     await _create(
-      repo,
+      MemoryRepository(db, clock: _clockAt(episodicAt)),
       id: 'm-episodic',
       kind: MemoryKind.episodic,
       content: '放缩方向不确定',
     );
     await _create(
-      repo,
-      id: 'm-semantic',
-      kind: MemoryKind.semantic,
-      content: '讲解时先给一个例子',
-    );
-    await _create(
-      repo,
+      MemoryRepository(db, clock: _clockAt(proceduralAt)),
       id: 'm-procedural',
       kind: MemoryKind.procedural,
       content: '这周晚上只有半小时',
     );
+    await _create(
+      MemoryRepository(db, clock: _clockAt(semanticAt)),
+      id: 'm-semantic',
+      kind: MemoryKind.semantic,
+      content: '讲解时先给一个例子',
+    );
 
-    final recall = MemoryRecallService(repo);
+    final recall = MemoryRecallService(MemoryRepository(db));
     final result = await recall.recall(
       now: now,
       purpose: MemoryRecallPurpose.chat,
