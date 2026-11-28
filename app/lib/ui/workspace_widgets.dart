@@ -219,29 +219,89 @@ class SectionLink extends StatelessWidget {
   }
 }
 
+/// 品牌标记：应用图标上的那株幼苗，颜色与应用图标、启动页一致。
+///
+/// 图形取自 `android/.../ic_launcher_foreground.xml` 与启动页的
+/// `ic_splash_sprout.xml`（108 见方的视口）：叶片与茎用品牌蓝的深浅两档，土块取
+/// 同一颜色的三成半透明。标记固定为品牌蓝，不随主题色切换，与手机上的应用图标
+/// 对得上。
 class ZhixinMark extends StatelessWidget {
   const ZhixinMark({super.key, this.size = 36});
 
+  /// 幼苗的高度；宽度按图形比例约为它的 0.72。
   final double size;
 
   @override
   Widget build(BuildContext context) {
-    final theme = context.zhixin;
-    return Container(
+    final brightness = forui.FTheme.of(context).colors.brightness;
+    final ink = ZhixinAccent.blue.primaryFor(brightness);
+    return SizedBox(
       width: size,
       height: size,
-      decoration: BoxDecoration(
-        color: theme.colors.primary,
-        borderRadius: theme.radius.control,
-      ),
-      alignment: Alignment.center,
-      child: Icon(
-        FLucideIcons.bookOpen,
-        size: size * 0.58,
-        color: theme.colors.onPrimary,
+      child: CustomPaint(
+        painter: _SproutPainter(ink: ink, soil: ink.withValues(alpha: 0.35)),
       ),
     );
   }
+}
+
+/// 应用图标里的幼苗：两片叶、茎与土块，路径与启动图标的矢量文件一致。
+class _SproutPainter extends CustomPainter {
+  const _SproutPainter({required this.ink, required this.soil});
+
+  final Color ink;
+  final Color soil;
+
+  /// 幼苗在 108 视口里的包围盒；缩放时以它的中心对齐标记中心。
+  static const Rect _bounds = Rect.fromLTRB(33.75, 26, 74.25, 82);
+
+  static final Path _leftLeaf = Path()
+    ..moveTo(53.75, 45)
+    ..cubicTo(43.75, 45, 36.75, 39, 35.75, 30)
+    ..cubicTo(45.75, 30, 52.75, 36, 53.75, 45)
+    ..close();
+
+  static final Path _rightLeaf = Path()
+    ..moveTo(53.75, 44)
+    ..cubicTo(64.75, 44, 72.75, 37, 74.25, 26)
+    ..cubicTo(62.75, 26, 54.75, 33, 53.75, 44)
+    ..close();
+
+  static final Path _stem = Path()
+    ..addRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTRB(51.75, 43, 55.75, 66),
+        const Radius.circular(2),
+      ),
+    );
+
+  static final Path _soil = Path()
+    ..addRRect(
+      RRect.fromRectAndRadius(
+        const Rect.fromLTRB(33.75, 63, 73.75, 82),
+        const Radius.circular(4.5),
+      ),
+    );
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final scale = size.height / _bounds.height;
+    canvas.save();
+    canvas.translate(size.width / 2, size.height / 2);
+    canvas.scale(scale);
+    canvas.translate(-_bounds.center.dx, -_bounds.center.dy);
+    final paint = Paint()..color = ink;
+    canvas.drawPath(_leftLeaf, paint);
+    canvas.drawPath(_rightLeaf, paint);
+    canvas.drawPath(_stem, paint);
+    paint.color = soil;
+    canvas.drawPath(_soil, paint);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_SproutPainter oldDelegate) =>
+      oldDelegate.ink != ink || oldDelegate.soil != soil;
 }
 
 /// 状态标签的语气：主色表示进行中或可继续，留意色表示草稿与优先，
