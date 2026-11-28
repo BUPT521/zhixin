@@ -1322,7 +1322,11 @@ class _DataVersionPageState extends State<DataVersionPage>
             subtitle: const Text('用版本库备份替换当前数据；恢复前自动保存恢复点。'),
             onPress: _busy ? null : _restoreRepository,
           ),
-          if (_restoreStatus case final status?) ResultNotice(message: status),
+          if (_restoreStatus case final status?)
+            Padding(
+              padding: EdgeInsets.only(top: theme.space.sm),
+              child: ResultNotice(message: status),
+            ),
           // 只有被其他设备覆盖过、还没处理时才占位置；平时这一节不出现。
           if (_conflicts.isNotEmpty) ...[
             const SectionHeading(
@@ -1375,7 +1379,6 @@ class _DataVersionPageState extends State<DataVersionPage>
               ),
             ],
           ),
-          SizedBox(height: theme.space.sm),
           if (history.refs.isNotEmpty) ...[
             const SectionHeading(
               title: '命名版本',
@@ -1668,29 +1671,32 @@ class _DataVersionPageState extends State<DataVersionPage>
   }
 
   Widget _pointTile(ZhixinTheme theme, RestorePoint point) {
-    return forui.FTile(
-      prefix: const Icon(FLucideIcons.rotateCcw),
-      title: Text(
-        '${_timeText(point.createdAt)} · HEAD ${point.head ?? '未知'}',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Text(
-        '${point.commitCount} 条提交 · ${point.namedCount} 个命名 · '
-        '${formatBytes(point.size)}'
-        '${point.reason.isEmpty ? '' : ' · ${point.reason}'}',
-      ),
-      suffix: moreMenu(
-        items: [
-          ZhixinMenuItem(
-            label: '恢复到这里',
-            onSelected: () => _restorePoint(point),
-          ),
-          ZhixinMenuItem(
-            label: '删除这份恢复点',
-            onSelected: () => _deletePoint(point),
-          ),
-        ],
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.tight),
+      child: forui.FTile(
+        prefix: const Icon(FLucideIcons.rotateCcw),
+        title: Text(
+          '${_timeText(point.createdAt)} · HEAD ${point.head ?? '未知'}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '${point.commitCount} 条提交 · ${point.namedCount} 个命名 · '
+          '${formatBytes(point.size)}'
+          '${point.reason.isEmpty ? '' : ' · ${point.reason}'}',
+        ),
+        suffix: moreMenu(
+          items: [
+            ZhixinMenuItem(
+              label: '恢复到这里',
+              onSelected: () => _restorePoint(point),
+            ),
+            ZhixinMenuItem(
+              label: '删除这份恢复点',
+              onSelected: () => _deletePoint(point),
+            ),
+          ],
+        ),
       ),
     );
   }
