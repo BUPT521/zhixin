@@ -1,4 +1,5 @@
 import 'package:forui/forui.dart' as forui;
+import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
@@ -131,39 +132,61 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
           control: .managed(controller: widget.identifier),
           keyboardType: TextInputType.emailAddress,
           label: const Text('邮箱'),
+          hint: 'name@example.com',
+          prefixBuilder: (context, style, variants) =>
+              forui.FTextField.prefixIconBuilder(
+                context,
+                style,
+                variants,
+                const Icon(FLucideIcons.mail),
+              ),
           enabled: !_busy,
         ),
-        SizedBox(height: theme.space.gap),
+        SizedBox(height: theme.space.md),
         forui.FTextField(
           control: .managed(controller: _password),
           obscureText: true,
           label: const Text('密码（至少 8 位）'),
+          prefixBuilder: (context, style, variants) =>
+              forui.FTextField.prefixIconBuilder(
+                context,
+                style,
+                variants,
+                const Icon(FLucideIcons.lock),
+              ),
           enabled: !_busy,
           onSubmit: (_) => _submit(register: false),
         ),
+        if (widget.onForgotPassword case final onForgotPassword?) ...[
+          // 找回密码贴着密码框，右对齐，和下面的登录、注册分开一行，三个动作
+          // 不再挤在同一行里。
+          Align(
+            alignment: Alignment.centerRight,
+            child: forui.FButton(
+              variant: forui.FButtonVariant.ghost,
+              mainAxisSize: MainAxisSize.min,
+              onPress: _busy ? null : onForgotPassword,
+              child: const Text('忘记密码'),
+            ),
+          ),
+        ],
         SizedBox(height: theme.space.md),
-        Wrap(
-          spacing: theme.space.sm,
-          runSpacing: theme.space.sm,
+        Row(
           children: [
-            forui.FButton(
-              mainAxisSize: MainAxisSize.min,
-              onPress: _busy ? null : () => _submit(register: false),
-              child: const Text('登录'),
-            ),
-            forui.FButton(
-              variant: forui.FButtonVariant.outline,
-              mainAxisSize: MainAxisSize.min,
-              onPress: _busy ? null : () => _submit(register: true),
-              child: const Text('注册'),
-            ),
-            if (widget.onForgotPassword case final onForgotPassword?)
-              forui.FButton(
-                variant: forui.FButtonVariant.ghost,
-                mainAxisSize: MainAxisSize.min,
-                onPress: _busy ? null : onForgotPassword,
-                child: const Text('忘记密码'),
+            Expanded(
+              child: forui.FButton(
+                onPress: _busy ? null : () => _submit(register: false),
+                child: const Text('登录'),
               ),
+            ),
+            SizedBox(width: theme.space.sm),
+            Expanded(
+              child: forui.FButton(
+                variant: forui.FButtonVariant.outline,
+                onPress: _busy ? null : () => _submit(register: true),
+                child: const Text('注册'),
+              ),
+            ),
           ],
         ),
         if (_error case final error?) ...[

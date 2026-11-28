@@ -449,12 +449,14 @@ class _OnboardingPageState extends State<OnboardingPage> {
     required String title,
     required String description,
     required List<Widget> children,
+    Widget? leading,
   }) {
     final theme = context.zhixin;
     final error = stage == _controller.stage ? _error : null;
     return ListView(
       padding: theme.space.pageInsets(top: theme.space.section, bottom: 48),
       children: [
+        if (leading != null) ...[leading, SizedBox(height: theme.space.lg)],
         Text(title, style: theme.text.titleLarge),
         SizedBox(height: theme.space.sm),
         Text(
@@ -535,10 +537,12 @@ class _OnboardingPageState extends State<OnboardingPage> {
     return _page(
       context,
       stage: OnboardingStage.login,
+      leading: const Align(
+        alignment: Alignment.centerLeft,
+        child: ZhixinMark(size: 44),
+      ),
       title: '登录或注册',
-      description:
-          '登录之后可以使用知新服务的模型额度、云端备份与多设备同步；'
-          '也可以先在本机用，之后在“我的”里登录。',
+      description: '登录之后可以使用知新服务的模型额度、云端备份与多设备同步。',
       children: [
         forui.FCard(
           child: Padding(
@@ -555,12 +559,30 @@ class _OnboardingPageState extends State<OnboardingPage> {
           ),
         ),
         SizedBox(height: theme.space.md),
-        Text(
-          '不登录时不能用模型提示与讲解，也不能云同步；记录、材料、查找、导出与'
-          '恢复照常可用。',
-          style: theme.text.bodySmall.copyWith(
-            color: theme.colors.onSurfaceVariant,
-          ),
+        // 登录的好处写在标题下面，这里只交代不登录还能做什么，两段不重复。
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              // 图标比一行说明矮 2，下移 1 与首行文字视觉居中。
+              padding: const EdgeInsets.only(top: 1),
+              child: Icon(
+                FLucideIcons.info,
+                size: 16,
+                color: theme.colors.onSurfaceVariant,
+              ),
+            ),
+            SizedBox(width: theme.space.sm),
+            Expanded(
+              child: Text(
+                '不登录也能用：记录、材料、查找、导出与恢复照常可用；'
+                '模型提示与讲解、云同步需要登录。',
+                style: theme.text.bodySmall.copyWith(
+                  color: theme.colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
