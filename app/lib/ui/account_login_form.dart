@@ -2,6 +2,7 @@ import 'package:forui/forui.dart' as forui;
 import 'package:material_ui/material_ui.dart';
 
 import '../app_scope.dart';
+import '../application/account_login_flow.dart';
 import '../application/account_service.dart';
 import 'failure_feedback.dart';
 import 'theme.dart';
@@ -56,12 +57,13 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
     if (_busy) return;
     final identifier = widget.identifier.text.trim();
     final password = _password.text;
-    if (identifier.isEmpty || password.isEmpty) {
-      setState(() => _error = '填写邮箱与密码后再继续');
-      return;
-    }
-    if (password.length < 8) {
-      setState(() => _error = '密码至少 8 位');
+    // 输入不合规时不进入进行中状态；提示文字由应用层给，表单不再自己拼。
+    final problem = AccountLoginFlow.inputProblem(
+      identifier: identifier,
+      password: password,
+    );
+    if (problem != null) {
+      setState(() => _error = problem);
       return;
     }
     setState(() {
@@ -71,18 +73,36 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
     final scope = AppScope.of(context);
     try {
       await scope.ready;
-      final account = scope.accountServices.account;
-      final result = register
-          ? await account.register(identifier: identifier, password: password)
-          : await account.login(identifier: identifier, password: password);
-      // 登录会换空间：换完之后整棵界面子树连同这一页一起重建，收尾交给应用根部
-      // 与调用方原来所在的页面，这里不再读已经卸载的界面。同步调度由换空间之后
-      // 新建的应用根在装配时安排（`AppScope` 启动时按网络开关调度一次）。
+      final result = await AccountLoginFlow(
+        account: scope.accountServices.account,
+      ).submit(identifier: identifier, password: password, register: register);
       if (!mounted) return;
-      _password.clear();
-      await widget.onSignedIn?.call(result, register: register);
+      switch (result) {
+        case AccountSignedIn(:final snapshot):
+          // 登录会换空间：换完之后整棵界面子树连同这一页一起重建，收尾交给
+          // 应用根部与调用方原来所在的页面，这里不再读已经卸载的界面。同步调度
+          // 由换空间之后新建的应用根在装配时安排（`AppScope` 启动时按网络开关
+          // 调度一次）。
+          _password.clear();
+          await widget.onSignedIn?.call(snapshot, register: register);
+        case AccountInputRejected(:final message):
+          setState(() => _error = message);
+        case AccountLoginFailed(:final error, :final stack):
+          setState(() {
+            _error = describeFailure(
+              context,
+              error,
+              stack,
+              action: register ? '注册' : '登录',
+              kind: 'account_login',
+              kept: '本机记录没有改动',
+              next: '可以检查邮箱、密码与服务地址后重试',
+            );
+          });
+      }
     } on FormatException catch (error) {
-      if (mounted) setState(() => _error = error.message);
+      if (!mounted) return;
+      setState(() => _error = error.message);
     } catch (error, stack) {
       if (!mounted) return;
       setState(() {
