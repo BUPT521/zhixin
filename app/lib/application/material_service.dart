@@ -52,8 +52,21 @@ class MaterialService {
   Future<({int? first, int? last})> pageBounds(String materialId) =>
       materials.pageBounds(materialId);
 
-  Future<List<MaterialPage>> pages(String materialId) =>
-      materials.pages(materialId);
+  /// 测试入口注入的一次性读取失败：下一次 [pages] 抛出它并立即复位。
+  ///
+  /// 生产路径不设置它，[pages] 与原来一样直接读仓储；测试用它模拟仓储读取
+  /// 失败，验证调用方把异常换成提示而不是留给框架。只有应用根的测试入口
+  /// 设置它，页面与生产装配都不读这个字段。
+  Object? nextPagesFailure;
+
+  Future<List<MaterialPage>> pages(String materialId) async {
+    final failure = nextPagesFailure;
+    if (failure != null) {
+      nextPagesFailure = null;
+      throw failure;
+    }
+    return materials.pages(materialId);
+  }
 
   /// 材料里某一页；查看来源原文与更正后的回显都只读这一页。
   Future<MaterialPage?> page(String materialId, int pageNo) =>

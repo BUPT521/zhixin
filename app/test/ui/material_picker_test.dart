@@ -170,4 +170,46 @@ void main() {
     expect(selection!.label, '《概率论讲义》第 1 页');
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('选好材料之后读取页码失败会给出提示，选择结果为 null', (tester) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const ZhixinApp());
+      scope = tester.state<AppScopeState>(find.byType(AppScope));
+      await scope!.ready;
+    });
+    await settle(tester);
+
+    await tester.runAsync(() async {
+      final id = await scope!.testing.materials.create(title: '概率论讲义');
+      await scope!.testing.materials.addPage(
+        materialId: id,
+        pageNo: 1,
+        content: '条件概率的定义与乘法公式。',
+      );
+    });
+
+    final context = tester.element(find.byType(HomeShell));
+    MaterialSelection? selection;
+    await tester.runAsync(() async {
+      unawaited(showMaterialPicker(context).then((value) => selection = value));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pumpAndSettle();
+    await pumpUntil(tester, find.text('这次依据哪份材料'));
+    expect(find.text('概率论讲义'), findsOneWidget);
+
+    // 选好材料之后再读页码：注入一次失败，提示要出现，异常不留给框架。
+    scope!.testing.failNextMaterialPagesRead();
+    await tester.tap(find.text('概率论讲义'));
+    await pumpUntil(tester, find.textContaining('读取这份材料的页码没有完成'));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 200)),
+    );
+    expect(selection, isNull);
+    expect(tester.takeException(), isNull);
+  });
 }

@@ -401,6 +401,16 @@ void main() {
     await pumpUntil(tester, find.text('选择外观'));
     await tester.tap(find.bySemanticsLabel('苔绿主题色'));
     await settle(tester);
+    // 换主题色要先写完文件再改值，负载高时一次 settle 可能还没走到重建。
+    await pumpUntilCondition(
+      tester,
+      () =>
+          Theme.of(tester.element(find.byType(OnboardingPage)))
+              .colorScheme
+              .primary ==
+          ZhixinAccent.moss.light,
+      reason: '点选的苔绿主题色没有生效',
+    );
     expect(
       Theme.of(tester.element(find.byType(OnboardingPage))).colorScheme.primary,
       ZhixinAccent.moss.light,
@@ -423,6 +433,17 @@ void main() {
 
     expect(scope!.spaceId, isNot(AppSpaces.local), reason: '第一次登录换成账号空间');
     expect(find.byType(HomeShell), findsNothing, reason: '引导还没走完');
+    // 新应用根装的控制器从换过来的目录里读外观，文件读完才换值；等到颜色
+    // 真正生效再断言，避免负载高时在读完文件之前下结论。
+    await pumpUntilCondition(
+      tester,
+      () =>
+          Theme.of(tester.element(find.byType(OnboardingPage)))
+              .colorScheme
+              .primary ==
+          ZhixinAccent.moss.light,
+      reason: '换空间之后此前选的外观没有生效',
+    );
     expect(
       Theme.of(tester.element(find.byType(OnboardingPage))).colorScheme.primary,
       ZhixinAccent.moss.light,
