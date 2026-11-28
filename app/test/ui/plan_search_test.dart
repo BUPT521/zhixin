@@ -86,13 +86,13 @@ void main() {
     await settle(tester);
   }
 
-  /// 切到安排栏再点标题栏的查找图标。
+  /// 切到安排栏，再点页签上方的那条搜索入口。
   Future<void> openPlanSearch(WidgetTester tester) async {
     await tester.tap(find.text('安排').last);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     await settle(tester);
-    await tester.tap(find.bySemanticsLabel('查找安排'));
+    await tester.tap(find.byKey(const ValueKey('plan-search-entry')));
     await pumpUntil(tester, find.byType(PlanSearchPage));
     await tester.pump(const Duration(milliseconds: 400));
   }

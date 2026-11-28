@@ -17,6 +17,50 @@ import 'workspace_support.dart';
 void main() {
   registerWorkspaceTests();
 
+  testWidgets('记录与安排的搜索入口都在页签上方，创建动作在节标题右侧', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.text('记录').last);
+    await settle(tester);
+
+    final recordsSearch = find.byKey(const ValueKey('records-search-entry'));
+    expect(recordsSearch, findsOneWidget);
+    expect(
+      tester.getBottomLeft(recordsSearch).dy,
+      lessThan(tester.getTopLeft(find.byType(ZhixinSegmented<RecordsTab>)).dy),
+    );
+    expect(find.widgetWithText(SectionLink, '贴一道题'), findsOneWidget);
+
+    await tester.tap(find.text('安排').last);
+    await settle(tester);
+
+    final planSearch = find.byKey(const ValueKey('plan-search-entry'));
+    expect(planSearch, findsOneWidget);
+    expect(
+      tester.getBottomLeft(planSearch).dy,
+      lessThan(tester.getTopLeft(find.byType(ZhixinSegmented<int>)).dy),
+    );
+    expect(find.widgetWithText(SectionLink, '新建'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('材料从节标题导入，菜单里选粘贴原文打开导入框', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.text('记录').last);
+    await settle(tester);
+    await tester.tap(
+      find.widgetWithText(ZhixinSegmented<RecordsTab>, '材料').hitTestable(),
+    );
+    await settle(tester);
+
+    await tester.tap(find.widgetWithText(SectionLink, '导入材料'));
+    await settle(tester);
+    expect(find.text('粘贴原文'), findsOneWidget);
+    await tester.tap(find.text('粘贴原文'));
+    await settle(tester);
+    expect(find.text('材料名称'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('首页入口直达材料与系统学习，切换后保留未发送的问题', (tester) async {
     await openApp(tester);
     await preview(tester, 'now-empty');
@@ -75,7 +119,7 @@ void main() {
         of: materials,
         matching: find.byType(ListSkeleton),
       );
-      final importButton = find.widgetWithText(forui.FButton, '导入材料');
+      final importButton = find.widgetWithText(SectionLink, '导入材料');
       await tester.tap(tab.hitTestable());
       await tester.runAsync(() async {
         await tester.pump();
@@ -85,7 +129,7 @@ void main() {
       // 材料页签在底栏预读时已经建好并读完，第一次打开不再摆骨架，按钮可用。
       expect(skeleton, findsNothing);
       expect(find.text(title), findsOneWidget);
-      expect(tester.widget<forui.FButton>(importButton).onPress, isNotNull);
+      expect(tester.widget<SectionLink>(importButton).onPressed, isNotNull);
       final headingPosition = tester.getTopLeft(importButton);
       final transition = TabTransition.maybeOf(tester.element(materials))!;
       expect(
@@ -106,7 +150,7 @@ void main() {
       expect(skeleton, findsNothing);
       expect(transition.status, AnimationStatus.completed);
       expect(find.text(title), findsOneWidget);
-      expect(tester.widget<forui.FButton>(importButton).onPress, isNotNull);
+      expect(tester.widget<SectionLink>(importButton).onPressed, isNotNull);
       if (reduceMotion) {
         expect(tester.getTopLeft(importButton), headingPosition);
       }

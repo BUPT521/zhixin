@@ -11,6 +11,7 @@ import '../application/material_search.dart';
 import '../application/paged_result.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/text.dart';
+import 'copy.dart';
 import 'docx_review_dialog.dart';
 import 'failure_feedback.dart';
 import 'goal_picker.dart';
@@ -85,16 +86,9 @@ Future<void> addMaterialPage(BuildContext context, Material material) async {
 
 /// 记录页的材料分组：按材料查看页码，导入新的一份或补充一页。
 class MaterialList extends StatefulWidget {
-  const MaterialList({
-    super.key,
-    this.onImportedFromHeader,
-    this.onQueryChanged,
-  });
+  const MaterialList({super.key, this.onQueryChanged});
 
-  /// 标题栏的导入入口在开始之前调用一次，记录页据此先切到材料页签。
-  final VoidCallback? onImportedFromHeader;
-
-  /// 查找的词变了时调用；记录页据此收起或放回页签与筛选条。
+  /// 查找的词变了时调用；记录页据此重建搜索框，清除按钮跟着出现或收起。
   final VoidCallback? onQueryChanged;
 
   @override
@@ -110,9 +104,6 @@ class MaterialListState extends State<MaterialList> {
   bool _started = false;
   bool _importingWord = false;
   bool _importingPaste = false;
-
-  /// 标题栏导入开始之前的回调，见 [MaterialList.onImportedFromHeader]。
-  VoidCallback? get _importedFromHeader => widget.onImportedFromHeader;
 
   /// 读取失败时就地说明；有内容时仍显示上一次读到的列表。
   String? _notice;
@@ -155,12 +146,6 @@ class MaterialListState extends State<MaterialList> {
       _stream = _createStream();
     });
   }
-
-  /// 收起源自材料的查找：清空查询词回到材料列表，记录页据此把页签放回来。
-  ///
-  /// 记录页在材料正在查找时收起页签与筛选条，换成另一个页签、随时想回到材料
-  /// 列表时都走这里；查找框的清除按钮与“清除查询”只清词，不换页签。
-  void exitSearch() => _clearSearch();
 
   void _reportReadFailure(Object error, StackTrace stack) {
     if (!mounted) return;
@@ -291,16 +276,6 @@ class MaterialListState extends State<MaterialList> {
     );
   }
 
-  /// 搜索框里已经应用的查询词；记录页用它在切换页签之后重新写回搜索框。
-  String get appliedQuery => _appliedQuery;
-
-  /// 是否正在查找：有查询词或还在取结果时记录页收起页签，结束查找再放回。
-  bool get isSearching =>
-      _searchField.text.trim().isNotEmpty || _matches.phase != SearchPhase.idle;
-
-  /// 搜索框的焦点：记录页在材料页签上点搜索入口时把键盘切到这里。
-  FocusNode get searchFocus => _searchFocus;
-
   /// 打开导入对话框之前读一次目标列表；归属选项只在打开对话框时用得到。
   Future<List<({String id, String title, bool active})>?> _loadGoals() async {
     try {
@@ -325,14 +300,9 @@ class MaterialListState extends State<MaterialList> {
     }
   }
 
-  /// 从记录页标题栏发起的导入：先切到材料页签，再按材料页自己的流程导入。
-  ///
-  /// 标题栏上的入口与列表、空态里的入口走同一套流程，导入成功之后打开新的一份。
-  Future<void> importFromHeader({required bool word}) async {
-    _importedFromHeader?.call();
-    // 等这一帧把材料列表建出来，读取目标之类的调用才拿得到页面上下文。
-    await Future<void>.delayed(Duration.zero);
-    if (!mounted) return;
+  /// 从节标题发起导入：按材料页自己的流程选择粘贴原文或 Word 文件，导入成功
+  /// 之后打开新的一份。
+  Future<void> _importFromHeading({required bool word}) async {
     if (word) {
       await _importWord();
     } else {
@@ -341,12 +311,7 @@ class MaterialListState extends State<MaterialList> {
   }
 
   Future<void> _import() async {
-    setState(() => _importingPaste = true);
-    try {
-      await _importPaste(AppScope.of(context));
-    } finally {
-      if (mounted) setState(() => _importingPaste = false);
-    }
+    await _importPaste(AppScope.of(context));
   }
 
   Future<void> _importPaste(AppScopeState scope) async {
@@ -357,6 +322,8 @@ class MaterialListState extends State<MaterialList> {
       builder: (_) => _ImportMaterialDialog(goals: goals),
     );
     if (drafts == null || drafts.isEmpty || !mounted) return;
+    // 进度只在真正写入时出现；对话框还开着时页面停在原样，不在后面转圈。
+    setState(() => _importingPaste = true);
     try {
       final first = drafts.first;
       final id = await scope.library.material.importMaterial(
@@ -382,6 +349,8 @@ class MaterialListState extends State<MaterialList> {
         next: '可以检查内容后重试',
       );
       showToast(context, message);
+    } finally {
+      if (mounted) setState(() => _importingPaste = false);
     }
   }
 
@@ -389,7 +358,6 @@ class MaterialListState extends State<MaterialList> {
     final scope = AppScope.of(context);
     final service = scope.library.material;
     final expectedEpoch = service.dataEpoch;
-    setState(() => _importingWord = true);
     try {
       final file = await FilePicker.pickFile(
         dialogTitle: '选择 Word 文件',
@@ -410,6 +378,8 @@ class MaterialListState extends State<MaterialList> {
         goals: goals,
       );
       if (selection == null || !mounted) return;
+      // 选完文件、确认片段之后才写入，进度只覆盖写入这一段。
+      setState(() => _importingWord = true);
       final id = await service.importDocx(
         document: document,
         title: selection.title,
@@ -442,6 +412,80 @@ class MaterialListState extends State<MaterialList> {
     await openMaterial(context, id);
   }
 
+  /// 材料页签的节标题：右侧的“导入材料”与安排页的“新建”同一种写法，导入入口
+  /// 只放在这一处，空态里不再放按钮。
+  Widget _heading(ZhixinTheme theme, {required bool canImport}) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+      child: SectionHeading(
+        first: true,
+        title: recordsTabMaterials,
+        subtitle: '按页保存原文，可以查找、引用与建立系统学习',
+        action: ZhixinMenu(
+          semanticsLabel: '导入材料',
+          items: [
+            ZhixinMenuItem(
+              label: '粘贴原文',
+              onSelected: () => _importFromHeading(word: false),
+            ),
+            ZhixinMenuItem(
+              label: '从 Word 导入',
+              onSelected: () => _importFromHeading(word: true),
+            ),
+          ],
+          triggerBuilder: (context, controller) => SectionLink(
+            label: '导入材料',
+            icon: FLucideIcons.upload,
+            onPressed: canImport ? controller.toggle : null,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 一条材料：左侧类型图标，标题下用标签写清类型、出处与页数，与学习记录、
+  /// 事项的列表行同一套写法；行尾的菜单放低频的“添加一页”。
+  Widget _materialTile(ZhixinTheme theme, Material material) {
+    return Padding(
+      padding: EdgeInsets.only(top: theme.space.tight),
+      child: forui.FTile(
+        prefix: const LeadingIcon(FLucideIcons.bookOpen, tone: TagTone.muted),
+        title: Text(
+          material.title,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(height: theme.space.xs),
+            TagRow(
+              children: [
+                StatusTag(material.kindLabel),
+                if (material.sourceRef case final source?)
+                  StatusTag(source, icon: FLucideIcons.bookmark),
+                StatusTag(
+                  '${material.pageCount} ${material.isDocx ? '个片段' : '页'}',
+                ),
+              ],
+            ),
+          ],
+        ),
+        suffix: material.isDocx
+            ? null
+            : moreMenu(
+                items: [
+                  ZhixinMenuItem(
+                    label: '添加一页',
+                    onSelected: () => addMaterialPage(context, material),
+                  ),
+                ],
+              ),
+        onPress: () => openMaterial(context, material.id),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = context.zhixin;
@@ -456,6 +500,7 @@ class MaterialListState extends State<MaterialList> {
             _appliedQuery.isNotEmpty || _matches.phase != SearchPhase.idle;
         return Column(
           children: [
+            _heading(theme, canImport: canImport),
             if (_importingWord || _importingPaste) const forui.FProgress(),
             if (_matches.isLoading) const forui.FProgress(),
             if (_notice != null)
@@ -479,53 +524,24 @@ class MaterialListState extends State<MaterialList> {
                   : loading
                   ? SingleChildScrollView(
                       child: ListSkeleton(
-                        rowHeight: 73,
-                        padding: theme.space.pageInsets(),
+                        rows: 3,
+                        padding: theme.space.pageInsets(top: theme.space.xs),
                       ),
                     )
                   : list.isEmpty
                   ? SingleChildScrollView(
-                      child: EmptyState(
+                      padding: theme.space.pageInsets(top: theme.space.xs),
+                      child: EmptyCard(
                         icon: FLucideIcons.bookOpenText,
                         title: '还没有材料',
                         description: '粘贴原文或选择 .docx 文件，之后可以搜索材料、引用原文或建立学习计划。',
-                        action: MaterialImportButton(
-                          enabled: canImport,
-                          onPaste: _import,
-                          onWord: _importWord,
-                        ),
                       ),
                     )
-                  : ListView.separated(
-                      padding: theme.space.pageInsets(),
+                  : ListView.builder(
+                      padding: theme.space.pageInsets(top: theme.space.xs),
                       itemCount: list.length,
-                      separatorBuilder: (_, _) =>
-                          SizedBox(height: theme.space.gap),
-                      itemBuilder: (context, index) {
-                        final material = list[index];
-                        return forui.FTile(
-                          title: Text(material.title),
-                          subtitle: Text(
-                            '${material.kindLabel}'
-                            '${material.sourceRef == null ? '' : ' · ${material.sourceRef}'}'
-                            ' · ${material.pageCount} ${material.isDocx ? '个片段' : '页'}',
-                          ),
-                          suffix: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (!material.isDocx)
-                                ZhixinIconButton(
-                                  tooltip: '添加一页',
-                                  onPressed: () =>
-                                      addMaterialPage(context, material),
-                                  icon: FLucideIcons.filePlus,
-                                ),
-                              const Icon(FLucideIcons.chevronRight),
-                            ],
-                          ),
-                          onPress: () => openMaterial(context, material.id),
-                        );
-                      },
+                      itemBuilder: (context, index) =>
+                          _materialTile(theme, list[index]),
                     ),
             ),
           ],
@@ -539,12 +555,16 @@ class MaterialListState extends State<MaterialList> {
     final page = _matches.page;
     if (page == null) {
       return SingleChildScrollView(
-        child: ListSkeleton(rowHeight: 73, padding: theme.space.pageInsets()),
+        child: ListSkeleton(
+          rows: 3,
+          padding: theme.space.pageInsets(top: theme.space.xs),
+        ),
       );
     }
     if (page.isEmpty) {
       return SingleChildScrollView(
-        child: EmptyState(
+        padding: theme.space.pageInsets(top: theme.space.xs),
+        child: EmptyCard(
           icon: FLucideIcons.searchX,
           title: '没有找到「$_appliedQuery」',
           description: '可以换一个标题、来源、页标签或正文片段再试。',
@@ -559,7 +579,7 @@ class MaterialListState extends State<MaterialList> {
     }
     final showEnd = !page.hasMore && page.length >= kSearchPageSize;
     return ListView(
-      padding: theme.space.pageInsets(),
+      padding: theme.space.pageInsets(top: theme.space.xs),
       children: [
         for (final match in page.items) _searchResultTile(theme, match),
         if (page.hasMore)
@@ -577,7 +597,8 @@ class MaterialListState extends State<MaterialList> {
     );
   }
 
-  /// 一条查找命中；页内命中打开详情时直接落到那一页。
+  /// 一条查找命中；页内命中打开详情时直接落到那一页。标签与普通材料行同一套，
+  /// 命中原因排在最前。
   Widget _searchResultTile(ZhixinTheme theme, MaterialMatch match) {
     final material = match.material;
     final snippet = match.snippet;
@@ -596,32 +617,24 @@ class MaterialListState extends State<MaterialList> {
             TagRow(
               children: [
                 StatusTag(match.reason, tone: TagTone.accent),
-                if (material.sourceRef != null)
-                  StatusTag(material.sourceRef!, tone: TagTone.muted),
+                StatusTag(material.kindLabel),
+                if (material.sourceRef case final source?)
+                  StatusTag(source, icon: FLucideIcons.bookmark),
+                StatusTag(
+                  '${material.pageCount} ${material.isDocx ? '个片段' : '页'}',
+                ),
               ],
             ),
             SizedBox(height: theme.space.xs),
             if (snippet != null && snippet.isNotEmpty)
-              Padding(
-                padding: EdgeInsets.only(bottom: theme.space.xs),
-                child: Text(
-                  snippet,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.text.bodySmall.copyWith(
-                    color: theme.colors.onSurface,
-                  ),
+              Text(
+                snippet,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: theme.text.bodySmall.copyWith(
+                  color: theme.colors.onSurface,
                 ),
               ),
-            Text(
-              '${material.kindLabel} · ${material.pageCount} '
-              '${material.isDocx ? '个片段' : '页'}',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.text.bodySmall.copyWith(
-                color: theme.colors.onSurfaceVariant,
-              ),
-            ),
           ],
         ),
         suffix: const Icon(FLucideIcons.chevronRight),
@@ -631,56 +644,6 @@ class MaterialListState extends State<MaterialList> {
           pageFrom: match.pageNo,
           pageTo: match.pageNo,
           stepTitle: match.pageNo == null ? null : '查找命中的原文',
-        ),
-      ),
-    );
-  }
-}
-
-/// 材料的导入入口：一个按钮，菜单里选粘贴原文还是导入 Word 文件。
-///
-/// 记录页把它放在标题栏右侧，与“贴一道题”同一种写法：次要按钮、`sm` 尺寸、
-/// 图标在前；空库时这个入口在空态里也出现一次。
-class MaterialImportButton extends StatelessWidget {
-  const MaterialImportButton({
-    required this.enabled,
-    required this.onPaste,
-    required this.onWord,
-    this.label = '导入材料',
-    this.visible = true,
-    super.key,
-  });
-
-  final bool enabled;
-  final VoidCallback onPaste;
-  final VoidCallback onWord;
-
-  /// 按钮上的文字。
-  final String label;
-
-  /// 是否画出来；占位量宽时传 false，只按这句文字占一个位置。
-  final bool visible;
-
-  @override
-  Widget build(BuildContext context) {
-    return Visibility(
-      visible: visible,
-      maintainState: true,
-      maintainAnimation: true,
-      maintainSize: false,
-      child: ZhixinMenu(
-        semanticsLabel: '导入材料',
-        items: [
-          ZhixinMenuItem(label: '粘贴原文', onSelected: onPaste),
-          ZhixinMenuItem(label: '从 Word 导入', onSelected: onWord),
-        ],
-        triggerBuilder: (context, controller) => forui.FButton(
-          variant: forui.FButtonVariant.secondary,
-          size: forui.FButtonSizeVariant.sm,
-          mainAxisSize: MainAxisSize.min,
-          onPress: enabled && visible ? controller.toggle : null,
-          prefix: const Icon(FLucideIcons.upload),
-          child: Text(label),
         ),
       ),
     );

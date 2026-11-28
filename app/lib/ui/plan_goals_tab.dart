@@ -50,12 +50,10 @@ class PlanGoalsTab extends StatelessWidget {
         ),
       ),
       if (week.goals.isEmpty)
-        const forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.flag,
-            title: '按需要建立目标',
-            description: '持续学习的相关事项可以归入目标，独立问题单独保留。',
-          ),
+        const EmptyCard(
+          icon: FLucideIcons.flag,
+          title: '按需要建立目标',
+          description: '持续学习的相关事项可以归入目标，独立问题单独保留。',
         ),
     ];
     return [

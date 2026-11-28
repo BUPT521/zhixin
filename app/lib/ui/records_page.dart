@@ -121,7 +121,9 @@ class _RecordsPageState extends State<RecordsPage>
   Map<String, List<Assessment>> _olderAssessments = const {};
   bool _hasMore = false;
   bool _loadingMore = false;
-  bool _importingMaterials = false;
+
+  /// 第一页读取失败时就地说明；已经读出的内容保持不动。
+  String? _notice;
 
   bool get _active => widget.activeTab.value == widget.tabIndex;
 
@@ -210,6 +212,7 @@ class _RecordsPageState extends State<RecordsPage>
   /// 重新订阅第一页：筛选变了与右上角的刷新按钮都走这里。
   void _reload() {
     setState(() {
+      _notice = null;
       _older = const PagedResult<ConversationRecord>();
       _olderQuestions = const {};
       _olderAssessments = const {};
@@ -219,9 +222,10 @@ class _RecordsPageState extends State<RecordsPage>
     });
   }
 
-  /// 第一页回来了：换掉屏幕上的一屏。
+  /// 第一页回来了：换掉屏幕上的一屏，上一次的失败说明随之收起。
   void _onRecords(RecordsView view) {
     _view = view;
+    _notice = null;
     if (_older.isEmpty) _hasMore = view.records.length == _pageSize;
   }
 
@@ -234,9 +238,9 @@ class _RecordsPageState extends State<RecordsPage>
       action: '读取学习记录',
       kind: 'records_read',
       kept: '当前筛选和已经读出的内容保持不变',
-      next: '可以点右上角刷新再试',
+      next: '可以点重试再读一次',
     );
-    showToast(context, message);
+    setState(() => _notice = message);
   }
 
   /// 切到这一栏时接着订阅；常驻页签的内容不重读。
@@ -314,37 +318,20 @@ class _RecordsPageState extends State<RecordsPage>
     await open(questionId);
   }
 
-  Future<void> _openSearch() async {
-    // 材料页签上的同一个搜索框就地查找；学习记录进记录查找页。
-    if (_tab == RecordsTab.materials && _materialsKey.currentState != null) {
-      _materialsKey.currentState!.searchFocus.requestFocus();
-      return;
-    }
-    await openRecordsSearch(
+  /// 记录页顶上的搜索入口：学习记录进记录查找页，材料页签上换成同一位置的
+  /// 就地查找框，由材料列表自己提供。
+  Future<void> _openSearch() {
+    return openRecordsSearch(
       context,
       onOpenLearning: _openLearning,
       onOpenDiscussion: _openDiscussion,
     );
   }
 
-  /// 材料页签上是否正在查找；查找时收起页签，把整块让给结果，结束查找再放回。
-  bool get _materialsSearching =>
-      _materialsKey.currentState?.isSearching ?? false;
-
-  /// 材料查找的词变了：记录页跟着重建，页签随查找状态出现或收起。
+  /// 材料查找的词变了：记录页跟着重建，搜索框的清除按钮跟着出现或收起。
   void _onMaterialQueryChanged() {
     if (!mounted) return;
     setState(() {});
-  }
-
-  /// 标题栏上的导入入口：交给材料页自己的流程，导入成功之后打开新的一份。
-  Future<void> _importMaterials({required bool word}) async {
-    setState(() => _importingMaterials = true);
-    try {
-      await _materialsKey.currentState?.importFromHeader(word: word);
-    } finally {
-      if (mounted) setState(() => _importingMaterials = false);
-    }
   }
 
   /// 继续读下一页；筛选条件与排序键不变，不会重复或漏掉记录。
@@ -404,9 +391,9 @@ class _RecordsPageState extends State<RecordsPage>
     return TabScaffold(
       header: ZhixinHeader(
         nested: false,
-        // 材料页签上标题换成材料：这一栏的动作（导入材料、查找）都属于材料，
-        // 与学习记录的动作分开，一个标题下只放一件事。
-        title: Text(learning ? tabRecords : recordsTabMaterials),
+        // 标题固定为“记录”：两个页签共用同一条标题栏，材料的导入入口放在材料
+        // 列表的节标题上，不再随页签换标题。
+        title: const Text(tabRecords),
         actions: [
           ZhixinHeaderAction(
             icon: FLucideIcons.network,
@@ -424,115 +411,63 @@ class _RecordsPageState extends State<RecordsPage>
               }
             },
           ),
-          // 查找入口两种页签都有，搜索框同一条：学习记录进记录查找页，材料在
-          // 下面就地查找，提示文字跟着当前页签。
-          ZhixinHeaderAction(
-            icon: FLucideIcons.search,
-            tooltip: '查找',
-            onPressed: _openSearch,
-          ),
-          // 录入题目与导入材料是同一种写法：标题栏里的次要文字按钮，图标在前。
-          if (learning)
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: QuestionCaptureButton(
-                onOpenLearning: _openLearning,
-                onOpenDiscussion: _openDiscussion,
-              ),
-            )
-          else
-            Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: MaterialImportButton(
-                enabled: !_importingMaterials,
-                onPaste: () => _importMaterials(word: false),
-                onWord: () => _importMaterials(word: true),
-              ),
-            ),
         ],
       ),
-      child: PageWidth(
-        child: Column(
+      child: TabbedPageFrame(
+        // 两个页签共用一条搜索入口：学习记录点开记录查找页，材料页签换成同一
+        // 位置的就地查找框，由材料列表自己给出。
+        searchField: learning || _materialsKey.currentState == null
+            ? forui.FTextField(
+                key: const ValueKey('records-search-entry'),
+                control: .managed(controller: _searchHint),
+                readOnly: true,
+                onTap: _openSearch,
+                prefixBuilder: (context, style, variants) =>
+                    forui.FTextField.prefixIconBuilder(
+                      context,
+                      style,
+                      variants,
+                      const Icon(FLucideIcons.search, size: 16),
+                    ),
+                hint: '搜索讨论、题目或材料原文',
+              )
+            : KeyedSubtree(
+                key: const ValueKey('records-search-entry'),
+                child: _materialsKey.currentState!.searchField(),
+              ),
+        tabBar: ZhixinSegmented<RecordsTab>(
+          segments: const [
+            ZhixinSegment(
+              value: RecordsTab.learning,
+              label: recordsTabLearning,
+              icon: FLucideIcons.history,
+            ),
+            ZhixinSegment(
+              value: RecordsTab.materials,
+              label: recordsTabMaterials,
+              icon: FLucideIcons.bookOpen,
+            ),
+          ],
+          selected: _tab,
+          onChanged: (tab) => setState(() {
+            _tab = tab;
+            _visited.add(tab);
+          }),
+        ),
+        // 两个页签常驻，切换只换显示：材料列表的滚动位置与已经读到的
+        // 数据都留住，切回来不再整棵重建、不再重读。首次进入某页签时
+        // 才把它建出来。换页签时新页签从切换方向滑入。
+        child: TabSlideStack(
+          index: learning ? 0 : 1,
           children: [
-            Padding(
-              padding: EdgeInsets.fromLTRB(
-                theme.space.page,
-                theme.space.xs,
-                theme.space.page,
-                theme.space.md,
-              ),
-              // 搜索框两种页签共用一条，点开之后交给当前页签自己的查找。
-              child: learning || _materialsKey.currentState == null
-                  ? forui.FTextField(
-                      key: const ValueKey('records-search-entry'),
-                      control: .managed(controller: _searchHint),
-                      readOnly: true,
-                      onTap: _openSearch,
-                      prefixBuilder: (context, style, variants) =>
-                          forui.FTextField.prefixIconBuilder(
-                            context,
-                            style,
-                            variants,
-                            const Icon(FLucideIcons.search, size: 16),
-                          ),
-                      hint: '搜索讨论、题目或材料原文',
-                    )
-                  // 材料页签换成同一位置的查找框，就在这一条里输入，结果在下面。
-                  : KeyedSubtree(
-                      key: const ValueKey('records-search-entry'),
-                      child: _materialsKey.currentState!.searchField(),
-                    ),
-            ),
-            if (learning || !_materialsSearching) ...[
-              Padding(
-                padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-                child: ZhixinSegmented<RecordsTab>(
-                  segments: const [
-                    ZhixinSegment(
-                      value: RecordsTab.learning,
-                      label: recordsTabLearning,
-                      icon: FLucideIcons.history,
-                    ),
-                    ZhixinSegment(
-                      value: RecordsTab.materials,
-                      label: recordsTabMaterials,
-                      icon: FLucideIcons.bookOpen,
-                    ),
-                  ],
-                  selected: _tab,
-                  onChanged: (tab) {
-                    // 从材料查找里切到学习记录时先结束查找，两个页签的搜索框
-                    // 才不会带着同一个查询词各查一次。
-                    if (tab == RecordsTab.learning) {
-                      _materialsKey.currentState?.exitSearch();
-                    }
-                    setState(() {
-                      _tab = tab;
-                      _visited.add(tab);
-                    });
-                  },
-                ),
-              ),
-              SizedBox(height: theme.space.sm),
-            ],
-            Expanded(
-              // 两个页签常驻，切换只换显示：材料列表的滚动位置与已经读到的
-              // 数据都留住，切回来不再整棵重建、不再重读。首次进入某页签时
-              // 才把它建出来。换页签时新页签从切换方向滑入。
-              child: TabSlideStack(
-                index: learning ? 0 : 1,
-                children: [
-                  _learningRecords(theme),
-                  if (_visited.contains(RecordsTab.materials))
-                    MaterialList(
-                      key: _materialsKey,
-                      onQueryChanged: _onMaterialQueryChanged,
-                    )
-                  else
-                    const SizedBox.shrink(),
-                ],
-              ),
-            ),
+            _learningRecords(theme),
+            if (_visited.contains(RecordsTab.materials))
+              MaterialList(
+                key: _materialsKey,
+                onQueryChanged: _onMaterialQueryChanged,
+              )
+            else
+              const SizedBox.shrink(),
           ],
         ),
       ),
@@ -644,70 +579,113 @@ class _RecordsPageState extends State<RecordsPage>
     );
   }
 
+  /// 学习记录页签：节标题右侧是录入入口，下面是筛选条与按日期分组的记录。
   Widget _learningRecords(ZhixinTheme theme) {
-    return LiveView<RecordsView>(
-      stream: _stream,
-      onData: _onRecords,
-      onError: _onRecordsError,
-      builder: (context, view, loading) {
-        final records = _records;
-        // 筛选条不依赖读取结果，首读时就位，读完只在下面换内容，页面不往下跳。
-        return Column(
-          children: [
-            _filterBar(theme),
-            Expanded(
-              child: loading
-                  // 首读用与记录卡片同高的静态骨架，读完原位替换。
-                  ? ListSkeleton(
-                      rows: 3,
-                      padding: EdgeInsets.fromLTRB(
-                        theme.space.page,
-                        theme.space.sm,
-                        theme.space.page,
-                        0,
-                      ),
-                    )
-                  : FadeIn(
-                      trigger: (_goalFilter, _unassignedOnly, _answerFilter),
-                      playOnInit: false,
-                      child: records.isEmpty
-                          ? SingleChildScrollView(
-                              child: EmptyState(
-                                icon: _filtered
-                                    ? FLucideIcons.filterX
-                                    : FLucideIcons.messageCircle,
-                                title: _filtered ? '没有符合筛选的记录' : emptyRecords,
-                                description: _filtered
-                                    ? '可以调整筛选条件，查看其他记录。'
-                                    : '讨论和题目的作答都会保存在这里。',
-                                action: _filtered
-                                    ? forui.FButton(
-                                        variant: forui.FButtonVariant.outline,
-                                        mainAxisSize: MainAxisSize.min,
-                                        onPress: () {
-                                          setState(() {
-                                            _goalFilter = null;
-                                            _unassignedOnly = false;
-                                            _answerFilter = null;
-                                          });
-                                          _reload();
-                                        },
-                                        child: const Text('清除筛选'),
-                                      )
-                                    : forui.FButton(
-                                        variant: forui.FButtonVariant.secondary,
-                                        mainAxisSize: MainAxisSize.min,
-                                        onPress: widget.onStartQuestion,
-                                        child: const Text('提出问题'),
-                                      ),
-                              ),
-                            )
-                          : _recordList(theme, records),
-                    ),
+    return Column(
+      children: [
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+          child: SectionHeading(
+            first: true,
+            title: recordsTabLearning,
+            subtitle: '按日期排列，最近的记录在前',
+            action: SectionLink(
+              label: '贴一道题',
+              icon: FLucideIcons.imagePlus,
+              onPressed: () => captureQuestion(
+                context,
+                onOpenLearning: _openLearning,
+                onOpenDiscussion: _openDiscussion,
+              ),
             ),
-          ],
-        );
-      },
+          ),
+        ),
+        Expanded(
+          child: LiveView<RecordsView>(
+            stream: _stream,
+            onData: _onRecords,
+            onError: _onRecordsError,
+            builder: (context, view, loading) {
+              final records = _records;
+              // 筛选条不依赖读取结果，首读时就位，读完只在下面换内容，页面不往下跳。
+              return Column(
+                children: [
+                  if (_notice != null)
+                    Padding(
+                      padding: EdgeInsets.only(
+                        left: theme.space.page,
+                        right: theme.space.page,
+                      ),
+                      child: InlineNotice(message: _notice!, onRetry: _reload),
+                    ),
+                  _filterBar(theme),
+                  Expanded(
+                    child: loading
+                        // 首读用与记录卡片同高的静态骨架，读完原位替换。
+                        ? SingleChildScrollView(
+                            child: ListSkeleton(
+                              rows: 3,
+                              padding: theme.space.pageInsets(
+                                top: theme.space.xs,
+                              ),
+                            ),
+                          )
+                        : FadeIn(
+                            trigger: (
+                              _goalFilter,
+                              _unassignedOnly,
+                              _answerFilter,
+                            ),
+                            playOnInit: false,
+                            child: records.isEmpty
+                                ? SingleChildScrollView(
+                                    padding: theme.space.pageInsets(
+                                      top: theme.space.xs,
+                                    ),
+                                    child: EmptyCard(
+                                      icon: _filtered
+                                          ? FLucideIcons.filterX
+                                          : FLucideIcons.messageCircle,
+                                      title: _filtered
+                                          ? '没有符合筛选的记录'
+                                          : emptyRecords,
+                                      description: _filtered
+                                          ? '可以调整筛选条件，查看其他记录。'
+                                          : '讨论和题目的作答都会保存在这里。',
+                                      action: _filtered
+                                          ? forui.FButton(
+                                              variant:
+                                                  forui.FButtonVariant.outline,
+                                              mainAxisSize: MainAxisSize.min,
+                                              onPress: () {
+                                                setState(() {
+                                                  _goalFilter = null;
+                                                  _unassignedOnly = false;
+                                                  _answerFilter = null;
+                                                });
+                                                _reload();
+                                              },
+                                              child: const Text('清除筛选'),
+                                            )
+                                          : forui.FButton(
+                                              variant: forui
+                                                  .FButtonVariant
+                                                  .secondary,
+                                              mainAxisSize: MainAxisSize.min,
+                                              onPress: widget.onStartQuestion,
+                                              child: const Text('提出问题'),
+                                            ),
+                                    ),
+                                  )
+                                : _recordList(theme, records),
+                          ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

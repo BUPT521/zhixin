@@ -265,20 +265,16 @@ class _PlanItemsTabState extends State<PlanItemsTab> {
         ),
       ),
       if (week.items.isEmpty && week.doneItemCount == 0)
-        const forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.listChecks,
-            title: emptyPlanItems,
-            description: '接受讨论中的下一步建议，或直接新建一项。',
-          ),
+        const EmptyCard(
+          icon: FLucideIcons.listChecks,
+          title: emptyPlanItems,
+          description: '接受讨论中的下一步建议，或直接新建一项。',
         ),
       if (week.items.isEmpty && week.doneItemCount > 0)
-        forui.FCard(
-          child: EmptyState(
-            icon: FLucideIcons.circleCheck,
-            title: emptyPlanItemsNoneOpen,
-            description: '已完成的 ${week.doneItemCount} 项可以展开查看。',
-          ),
+        EmptyCard(
+          icon: FLucideIcons.circleCheck,
+          title: emptyPlanItemsNoneOpen,
+          description: '已完成的 ${week.doneItemCount} 项可以展开查看。',
         ),
     ];
     return [

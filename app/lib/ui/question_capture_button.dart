@@ -13,84 +13,63 @@ import 'voice_input_button.dart';
 import 'zhixin_dialog.dart';
 import 'zhixin_toast.dart';
 
-/// 从记录页录入题目原文与出处。
+/// 录入一道题：填写题目文字与出处，保存之后打开学习页或讨论页。
 ///
-/// 入口放在记录页标题栏的右侧，与安排页的“这周能做什么”同一种写法：次要
-/// 按钮、`sm` 尺寸、图标在前。
-class QuestionCaptureButton extends StatelessWidget {
-  const QuestionCaptureButton({
-    super.key,
-    required this.onOpenLearning,
-    required this.onOpenDiscussion,
-  });
-
-  final Future<void> Function(String questionId) onOpenLearning;
-  final Future<void> Function(String conversationId) onOpenDiscussion;
-
-  @override
-  Widget build(BuildContext context) => forui.FButton(
-    variant: forui.FButtonVariant.secondary,
-    size: forui.FButtonSizeVariant.sm,
-    mainAxisSize: MainAxisSize.min,
-    onPress: () => _capture(context),
-    prefix: const Icon(FLucideIcons.imagePlus),
-    child: const Text('贴一道题'),
+/// 记录页节标题上的“贴一道题”调用它，题目表单与写入只有这一份流程。
+Future<void> captureQuestion(
+  BuildContext context, {
+  required Future<void> Function(String questionId) onOpenLearning,
+  required Future<void> Function(String conversationId) onOpenDiscussion,
+}) async {
+  final scope = AppScope.of(context);
+  final draft = await showZhixinDialog<_CaptureDraft>(
+    context: context,
+    builder: (_) => const _CaptureSheet(),
   );
+  if (draft == null || !context.mounted) return;
 
-  Future<void> _capture(BuildContext context) async {
-    final scope = AppScope.of(context);
-    final draft = await showZhixinDialog<_CaptureDraft>(
-      context: context,
-      builder: (_) => const _CaptureSheet(),
-    );
-    if (draft == null || !context.mounted) return;
+  final paths = await persistCaptureImages(draft.photos, scope.paths.imagesDir);
+  // 图片已经复制进应用目录，缓存里的那张不用再留。
+  await deleteTemporaryCaptures(draft.photos);
+  // 图片没存进去时，帖子本身仍可以只靠题目文字保存；回执要等文字写入
+  // 成功之后再给，不能先一步说已经保存。
+  final imagesFailed = draft.photos.isNotEmpty && paths.isEmpty;
+  if (imagesFailed && draft.stem.isEmpty) {
+    if (!context.mounted) return;
+    showToast(context, '图片没有存进去，先保存题目文字');
+    return;
+  }
 
-    final paths = await persistCaptureImages(
-      draft.photos,
-      scope.paths.imagesDir,
-    );
-    // 图片已经复制进应用目录，缓存里的那张不用再留。
-    await deleteTemporaryCaptures(draft.photos);
-    // 图片没存进去时，帖子本身仍可以只靠题目文字保存；回执要等文字写入
-    // 成功之后再给，不能先一步说已经保存。
-    final imagesFailed = draft.photos.isNotEmpty && paths.isEmpty;
-    if (imagesFailed && draft.stem.isEmpty) {
+  try {
+    if (draft.stem.isEmpty) {
+      // 没有文字时先开一条讨论：图片就是原文，可以直接在讨论里开始作答。
+      final result = await scope.chat.discussion.reply(imagePaths: paths);
       if (!context.mounted) return;
-      showToast(context, '图片没有存进去，先保存题目文字');
+      await onOpenDiscussion(result.userMessage.conversationId);
       return;
     }
-
-    try {
-      if (draft.stem.isEmpty) {
-        // 没有文字时先开一条讨论：图片就是原文，可以直接在讨论里开始作答。
-        final result = await scope.chat.discussion.reply(imagePaths: paths);
-        if (!context.mounted) return;
-        await onOpenDiscussion(result.userMessage.conversationId);
-        return;
-      }
-      final id = await scope.chat.learning.capture(
-        stem: draft.stem,
-        sourceRef: draft.sourceRef,
-        contextText: draft.contextText,
-        imagePaths: paths,
-      );
-      if (!context.mounted) return;
-      if (imagesFailed) showToast(context, '图片没有存进去，题目文字已经保存');
-      await onOpenLearning(id);
-    } catch (error, stack) {
-      await discardCapturedImages(scope, paths);
-      if (!context.mounted) return;
-      final message = describeFailure(
-        context,
-        error,
-        stack,
-        action: '保存这道题',
-        kind: 'question_capture',
-        kept: '还没有写入题目',
-        next: '可以再试一次',
-      );
-      showToast(context, message);
-    }
+    final id = await scope.chat.learning.capture(
+      stem: draft.stem,
+      sourceRef: draft.sourceRef,
+      contextText: draft.contextText,
+      imagePaths: paths,
+    );
+    if (!context.mounted) return;
+    if (imagesFailed) showToast(context, '图片没有存进去，题目文字已经保存');
+    await onOpenLearning(id);
+  } catch (error, stack) {
+    await discardCapturedImages(scope, paths);
+    if (!context.mounted) return;
+    final message = describeFailure(
+      context,
+      error,
+      stack,
+      action: '保存这道题',
+      kind: 'question_capture',
+      kept: '还没有写入题目',
+      next: '可以再试一次',
+    );
+    showToast(context, message);
   }
 }
 

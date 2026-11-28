@@ -39,6 +39,55 @@ class DetailScaffold extends StatelessWidget {
   );
 }
 
+/// 记录与安排共用的页框：上面一条搜索入口，下面一行为分段页签，再下面放当前
+/// 页签的内容。
+///
+/// 两页的边距与页签位置因此只写一份：换页签时搜索框与页签不移动，内容只在下面
+/// 换；二级入口没有共用的搜索时传空，页签直接接在标题栏下面。
+class TabbedPageFrame extends StatelessWidget {
+  const TabbedPageFrame({
+    super.key,
+    this.searchField,
+    required this.tabBar,
+    required this.child,
+  });
+
+  /// 搜索入口；为空表示这一页没有共用的搜索，不留出这一行。
+  final Widget? searchField;
+
+  /// 分段页签，由页面给出。
+  final Widget tabBar;
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = context.zhixin;
+    return PageWidth(
+      child: Column(
+        children: [
+          if (searchField != null)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                theme.space.page,
+                theme.space.xs,
+                theme.space.page,
+                theme.space.md,
+              ),
+              child: searchField,
+            ),
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+            child: tabBar,
+          ),
+          SizedBox(height: theme.space.sm),
+          Expanded(child: child),
+        ],
+      ),
+    );
+  }
+}
+
 /// 三栏页面（现在、记录、安排）的骨架。
 ///
 /// 三栏外面还有一层带底栏的 [forui.FScaffold]，键盘弹出时它已经按键盘高度把
@@ -413,6 +462,39 @@ class EmptyState extends StatelessWidget {
       ),
     );
   }
+}
+
+/// 列表为空时的一张说明卡：列表里的一行换成 [EmptyState]，外面套上与列表项
+/// 同一种圆角和描边的卡片。
+///
+/// 外面再包一层撑满宽度的盒子，放在可滚动的列表里时不会按文字的固有宽度缩窄；
+/// 记录、材料、事项与目标四类列表的空态因此同宽、同位置。
+class EmptyCard extends StatelessWidget {
+  const EmptyCard({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.description,
+    this.action,
+  });
+
+  final IconData icon;
+  final String title;
+  final String description;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: double.infinity,
+    child: forui.FCard(
+      child: EmptyState(
+        icon: icon,
+        title: title,
+        description: description,
+        action: action,
+      ),
+    ),
+  );
 }
 
 /// 某一段读取失败时就地说明保留状态与重试入口，不把整页换成一个错误。

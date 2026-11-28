@@ -39,7 +39,9 @@ void main() {
       find.widgetWithText(ZhixinSegmented<RecordsTab>, '材料').hitTestable(),
     );
     await settle(tester);
-    await tester.tap(find.byIcon(FLucideIcons.filePlus));
+    await tester.tap(find.byIcon(FLucideIcons.ellipsis));
+    await settle(tester);
+    await tester.tap(find.text('添加一页'));
     await settle(tester);
 
     final fields = find.descendant(

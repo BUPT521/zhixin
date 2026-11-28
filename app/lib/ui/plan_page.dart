@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:forui/forui.dart' as forui;
 import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 
@@ -72,6 +73,9 @@ class _PlanPageState extends State<PlanPage> {
   Stream<PlanOverview>? _stream;
   String? _error;
 
+  /// 搜索入口只做跳转，输入框自己的文字始终为空。
+  final TextEditingController _searchHint = TextEditingController();
+
   /// 详情入口补读事项失败时的说明；为空表示没有失败。
   String? _openFailure;
   bool _openedInitial = false;
@@ -141,6 +145,7 @@ class _PlanPageState extends State<PlanPage> {
     widget.activeTab?.removeListener(_onActiveChanged);
     widget.preload?.removeListener(_onActiveChanged);
     widget.request?.removeListener(_onRequestChanged);
+    _searchHint.dispose();
     super.dispose();
   }
 
@@ -254,133 +259,128 @@ class _PlanPageState extends State<PlanPage> {
         nested: widget.initialItemId != null,
         showBack: widget.initialItemId != null,
         title: const Text(tabPlan),
-        actions: [
-          ZhixinHeaderAction(
-            icon: FLucideIcons.search,
-            tooltip: '查找安排',
-            onPressed: () => openPlanSearch(context),
-          ),
-        ],
       ),
-      child: _stream == null
-          ? const SizedBox.shrink()
-          : LiveView<PlanOverview>(
-              stream: _stream,
-              onData: _onOverview,
-              onError: _onReadError,
-              builder: (context, overview, loading) {
-                // 只用订阅传进来的这一份数据，不再读页面上的影子字段。
-                if (overview != null) {
-                  return _loadedOverview(theme, overview);
-                }
-                if (_error == null && loading) return _loadingOverview(theme);
-                return _errorNotice(theme);
-              },
-            ),
+      child: TabbedPageFrame(
+        // 搜索入口与记录页放在同一处：点开安排查找页，不再在标题栏放一个图标。
+        // 详情入口从一条具体的事项推进来，不摆共用的搜索入口。
+        searchField: widget.initialItemId == null ? _searchEntry() : null,
+        tabBar: _tabBar(),
+        child: _stream == null
+            ? _loadingOverview(theme)
+            : LiveView<PlanOverview>(
+                stream: _stream,
+                onData: _onOverview,
+                onError: _onReadError,
+                builder: (context, overview, loading) {
+                  // 只用订阅传进来的这一份数据，不再读页面上的影子字段。
+                  if (overview != null) {
+                    return _loadedOverview(theme, overview);
+                  }
+                  if (_error == null && loading) return _loadingOverview(theme);
+                  return _errorNotice(theme);
+                },
+              ),
+      ),
     );
   }
 
+  /// 搜索入口：只读的一条，点开安排查找页，输入与筛选都在那一页完成。
+  Widget _searchEntry() => forui.FTextField(
+    key: const ValueKey('plan-search-entry'),
+    control: .managed(controller: _searchHint),
+    readOnly: true,
+    onTap: () => openPlanSearch(context),
+    prefixBuilder: (context, style, variants) =>
+        forui.FTextField.prefixIconBuilder(
+          context,
+          style,
+          variants,
+          const Icon(FLucideIcons.search, size: 16),
+        ),
+    hint: '搜索事项、目标与计划',
+  );
+
   /// 首读中的页面：页签先就位，读完只在下面换内容，页面不往下跳。骨架的左右
-  /// 边距与读完之后一样，由下面的列表给出。
-  Widget _loadingOverview(ZhixinTheme theme) => PageWidth(
-    child: Column(
-      children: [
-        Padding(
-          padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-          child: _tabBar(theme),
-        ),
-        Expanded(
-          child: ListSkeleton(
-            rows: 3,
-            padding: EdgeInsets.fromLTRB(
-              theme.space.page,
-              theme.space.sm,
-              theme.space.page,
-              0,
-            ),
-          ),
-        ),
-      ],
+  /// 边距与读完之后一样。
+  Widget _loadingOverview(ZhixinTheme theme) => SingleChildScrollView(
+    child: ListSkeleton(
+      rows: 3,
+      padding: theme.space.pageInsets(top: theme.space.xs),
     ),
   );
 
   /// 首读失败时的一个出口：说明与重试留在同一处。
-  Widget _errorNotice(ZhixinTheme theme) => Padding(
-    padding: EdgeInsets.symmetric(
-      horizontal: theme.space.page,
-      vertical: theme.space.xl,
-    ),
-    child: Center(
-      child: InlineNotice(
-        message: _error ?? '安排读取失败，请刷新本机数据后重试。',
-        onRetry: _reload,
-      ),
-    ),
+  Widget _errorNotice(ZhixinTheme theme) => ListView(
+    padding: theme.space.pageInsets(top: theme.space.sm),
+    children: [
+      InlineNotice(message: _error ?? '安排读取失败，请刷新本机数据后重试。', onRetry: _reload),
+    ],
   );
 
   Widget _loadedOverview(ZhixinTheme theme, PlanOverview overview) {
     final actions = _actions(overview);
     return FadeIn(
-      child: PageWidth(
-        child: Column(
-          children: [
+      child: Column(
+        children: [
+          if (_openFailure case final message?)
             Padding(
-              padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-              child: _tabBar(theme),
+              padding: EdgeInsets.fromLTRB(
+                theme.space.page,
+                theme.space.xs,
+                theme.space.page,
+                0,
+              ),
+              child: InlineNotice(
+                message: message,
+                onRetry: () => _retryOpenInitial(overview),
+              ),
             ),
-            if (_openFailure case final message?)
-              Padding(
-                padding: theme.space.pageInsets(bottom: theme.space.sm),
-                child: InlineNotice(
-                  message: message,
-                  onRetry: () => _retryOpenInitial(overview),
+          if (_error != null)
+            Padding(
+              padding: EdgeInsets.fromLTRB(
+                theme.space.page,
+                theme.space.xs,
+                theme.space.page,
+                0,
+              ),
+              child: InlineNotice(message: _error!, onRetry: _reload),
+            ),
+          Expanded(
+            child: TabSlideStack(
+              index: _tab,
+              children: [
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                  key: const ValueKey('plan-tab-layer-0'),
+                  child: PlanItemsTab(
+                    week: overview,
+                    actions: actions,
+                    visible: _active && _tab == 0,
+                  ),
                 ),
-              ),
-            if (_error != null)
-              Padding(
-                padding: theme.space.pageInsets(bottom: theme.space.sm),
-                child: InlineNotice(message: _error!, onRetry: _reload),
-              ),
-            Expanded(
-              child: TabSlideStack(
-                index: _tab,
-                children: [
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-                    key: const ValueKey('plan-tab-layer-0'),
-                    child: PlanItemsTab(
-                      week: overview,
-                      actions: actions,
-                      visible: _active && _tab == 0,
-                    ),
-                  ),
-                  Padding(
-                    padding: EdgeInsets.symmetric(horizontal: theme.space.page),
-                    key: const ValueKey('plan-tab-layer-1'),
-                    child: PlanGoalsTab(week: overview, actions: actions),
-                  ),
-                ],
-              ),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: theme.space.page),
+                  key: const ValueKey('plan-tab-layer-1'),
+                  child: PlanGoalsTab(week: overview, actions: actions),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _tabBar(ZhixinTheme theme) => Padding(
-    padding: EdgeInsets.only(top: theme.space.xs, bottom: theme.space.sm),
-    child: ZhixinSegmented<int>(
-      segments: const [
-        ZhixinSegment(
-          value: 0,
-          label: planTabItems,
-          icon: FLucideIcons.listChecks,
-        ),
-        ZhixinSegment(value: 1, label: planTabGoals, icon: FLucideIcons.flag),
-      ],
-      selected: _tab,
-      onChanged: (tab) => setState(() => _tab = tab),
-    ),
+  Widget _tabBar() => ZhixinSegmented<int>(
+    segments: const [
+      ZhixinSegment(
+        value: 0,
+        label: planTabItems,
+        icon: FLucideIcons.listChecks,
+      ),
+      ZhixinSegment(value: 1, label: planTabGoals, icon: FLucideIcons.flag),
+    ],
+    selected: _tab,
+    onChanged: (tab) => setState(() => _tab = tab),
   );
 }
