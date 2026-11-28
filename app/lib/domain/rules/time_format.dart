@@ -3,6 +3,8 @@
 /// 页面、仓库和备份只从这里取日期字符串，避免各处自己补零。
 library;
 
+import '../models/time_values.dart';
+
 /// `YYYY-MM-DD`，按设备本地时区。
 String formatDate(DateTime day) {
   final local = day.toLocal();
@@ -35,6 +37,21 @@ String waitText(int seconds) {
   if (seconds > 60) return '${(seconds / 60).ceil()} 分钟';
   return '$seconds 秒';
 }
+
+/// 界面上的短时间：今天显示时刻，其余显示日期。
+String shortTime(DateTime time, {DateTime? now}) {
+  final current = now ?? DateTime.now();
+  final sameDay =
+      time.year == current.year &&
+      time.month == current.month &&
+      time.day == current.day;
+  final clock = ClockTime(time.hour, time.minute).format();
+  if (sameDay) return clock;
+  return '${time.month}月${time.day}日 $clock';
+}
+
+/// 文件名里的紧凑日期：`YYYYMMDD`，与界面日期分开，不带分隔符。
+String compactDate(DateTime time) => formatDate(time).replaceAll('-', '');
 
 /// 解析可空时刻：缺失或空串返回 null，非空坏值仍抛错。
 DateTime? optionalDateTime(String? value) {

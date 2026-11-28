@@ -10,7 +10,9 @@ import 'app_composition.dart';
 import 'app_services.dart';
 import 'app_space_coordinator.dart';
 import 'application/brought_sources.dart';
+import 'application/data_version_flows.dart';
 import 'application/prefetch_service.dart';
+import 'application/repository_integrity.dart';
 import 'application/service_runtime.dart';
 import 'application/update_check_service.dart';
 import 'data/cloud/server_client.dart' show ServerClient;
@@ -25,8 +27,10 @@ import 'data/repository/memory_repository.dart';
 import 'data/repository/study_plan_repository.dart';
 import 'data/repository/study_repository.dart';
 import 'data/repository/task_repository.dart';
+import 'data/revisions/revision_service.dart';
 import 'domain/rules/time_policy.dart';
 import 'platform/app_paths.dart';
+import 'platform/data_package_export.dart';
 import 'platform/first_frame.dart';
 import 'startup_failure_page.dart';
 import 'ui/theme_accent_controller.dart';
@@ -173,6 +177,21 @@ class AppScopeState extends State<AppScope> with WidgetsBindingObserver {
   SettingsServices get settings => _composition.services.settings;
 
   DataServices get data => _composition.services.data;
+
+  /// 数据版本页与两处整库恢复的业务顺序；测试可以换掉版本服务。
+  ///
+  /// 导出文件经平台通道保存，完整性检查与撤销服务都从这里取当前装配；
+  /// 页面只拿它读数据、弹确认框与显示结果。
+  DataVersionFlows dataVersionFlows({RevisionService? revisions}) =>
+      DataVersionFlows(
+        versions: data.versions,
+        revisions: revisions ?? data.revisions,
+        undo: data.undo,
+        settings: settings.edit,
+        clock: clock,
+        integrityCheck: checkRepositoryIntegrity,
+        savePackage: saveDataPackage,
+      );
 
   AccountServices get accountServices => _composition.services.account;
 

@@ -11,6 +11,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/data_version_flows.dart';
 import '../application/prefetch_service.dart';
 import '../application/sync_service.dart';
 import '../data/backup/data_version_service.dart';
@@ -21,7 +22,6 @@ import '../data/revisions/revision_service.dart'
 import '../domain/models/result.dart';
 import '../domain/rules/package_budget.dart';
 import '../domain/rules/revision_retention.dart';
-import '../platform/data_package_export.dart';
 import 'copy.dart';
 import 'data_version_watcher.dart';
 import 'failure_feedback.dart';
@@ -62,7 +62,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     with DataVersionWatcher<DataVersionPage> {
   /// 页面业务流程：导出、备份、导入、命名、比较、恢复、裁剪、清理与完整性检查
   /// 的先后顺序与结果文案；State 只调它，不直接持有版本服务。
-  late _DataVersionFlows _flows;
+  late DataVersionFlows _flows;
 
   /// 一屏订阅：历史、撤销判断、存储占用与恢复点随写入更新（ADR-0014）。
   Stream<DataVersionOverview>? _stream;
@@ -113,8 +113,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     super.didChangeDependencies();
     // 页面一进入就订阅整屏读取，写入之后的重新读取由数据层完成。
     final scope = AppScope.of(context);
-    _flows = _DataVersionFlows(
-      scope: scope,
+    _flows = scope.dataVersionFlows(
       revisions: widget.revisions ?? scope.data.revisions,
     );
     watchDataVersion(scope.dataVersion);
@@ -605,18 +604,7 @@ class _DataVersionPageState extends State<DataVersionPage>
       if (!mounted) return;
       final confirmed = await showRestoreConfirmDialog(
         context,
-        title: '恢复到本机版本',
-        sourceLines: [
-          '来源：${_timeText(commit.createdAt)} 的提交 #${commit.id}'
-              '（${commit.action}）。',
-        ],
-        impactLines: [
-          '把这个版本的内容写回当前数据：新增 ${preview.diff.insertCount} 处、'
-              '修改 ${preview.diff.updateCount} 处、删除 ${preview.diff.deleteCount} 处。',
-          '恢复只改有差异的行；目标版本太早、提交明细已经被清理时，整库替换。',
-          '恢复会追加一条提交，提交历史保留。',
-        ],
-        rollbackLine: '恢复前的版本留在提交历史里，恢复后可以在这一页回到恢复前。',
+        prompt: _flows.versionRestorePrompt(commit: commit, preview: preview),
       );
       if (!confirmed || !mounted) return;
       final restored = await _flows.restoreVersion(
@@ -661,7 +649,7 @@ class _DataVersionPageState extends State<DataVersionPage>
     }
     setState(() => _busy = true);
     try {
-      final result = await _flows.undo(commit.id);
+      final result = await _flows.undoCommit(commit.id);
       if (result.applied && mounted) _showAppendedCommit();
       _report(result.message);
     } catch (error, stack) {
@@ -1925,98 +1913,4 @@ class _DataVersionPageState extends State<DataVersionPage>
     };
     return labels?[value];
   }
-}
-
-/// 数据版本页的业务顺序：导出、备份、导入、命名、比较、恢复、裁剪、清理、
-/// 恢复点与完整性检查。
-///
-/// 页面只保留确认框与渲染：先做什么、失败时保留什么、结果文案与影响说明都在
-/// 这里。`application` 目录不属于批 3 的独占范围，所以它先作为页面私有的普通类
-/// 存在，State 不再直接持有版本服务；等应用层接收这些流程时整体上移，页面不需要
-/// 再改。整库恢复的选包、预检与确认仍然需要页面上下文，留在 [DataVersionPage] 里。
-class _DataVersionFlows {
-  _DataVersionFlows({required this.scope, required this.revisions});
-
-  final AppScopeState scope;
-  final RevisionService revisions;
-
-  DataVersionService get _versions => scope.data.versions;
-
-  /// 导出文件名带上当天日期；两类数据包各一个前缀。
-  String get currentDataFileName =>
-      'zhixin-current-${compactDate(scope.timePolicy.now)}.zip';
-  String get repositoryFileName =>
-      'zhixin-repository-${compactDate(scope.timePolicy.now)}.zip';
-
-  Stream<DataVersionOverview> watchOverview() => _versions.watchOverview();
-
-  Future<List<RevisionConflict>> conflicts() => revisions.conflicts();
-
-  Future<RevisionCommit?> keepLocal(int conflictId) =>
-      revisions.keepLocal(conflictId);
-
-  Future<bool> dismissConflict(int conflictId) =>
-      revisions.dismissConflict(conflictId);
-
-  Future<RevisionDetails?> details(int commitId) => revisions.details(commitId);
-
-  Future<RevisionDiff> compare(int from, int to) => revisions.compare(from, to);
-
-  Future<RevisionRestorePreview> previewRestore(int target) =>
-      revisions.previewRestore(target);
-
-  Future<({RevisionCommit commit, String? cacheWarning})> restoreVersion(
-    int target, {
-    required int expectedHead,
-  }) => revisions.restore(target, expectedHead: expectedHead);
-
-  Future<RevisionUndoResult> undo(int commitId) =>
-      scope.data.undo.undoCommit(commitId);
-
-  Future<RevisionRef> name(
-    int commitId, {
-    required String label,
-    String? note,
-  }) => revisions.name(commitId, label: label, note: note);
-
-  Future<void> deleteName(String label) => revisions.deleteName(label);
-
-  Future<List<String>> historyBlockers({required bool clearing}) =>
-      revisions.historyBlockers(clearing: clearing);
-
-  Future<RevisionRetentionResult> prune({required int retentionDays}) =>
-      revisions.prune(retentionDays: retentionDays);
-
-  Future<void> clearHistory() => revisions.clearHistory();
-
-  Future<RepositoryIntegrityResult> checkIntegrity() =>
-      checkRepositoryIntegrity(revisions);
-
-  Future<String?> exportCurrent() => saveDataPackage(
-    fileName: currentDataFileName,
-    writePackage: _versions.exportCurrentData,
-  );
-
-  Future<String?> backupRepository() => saveDataPackage(
-    fileName: repositoryFileName,
-    writePackage: _versions.backupRepository,
-  );
-
-  Future<int> currentHead() => _versions.currentHead();
-
-  Future<Result<String?>> importCurrent(
-    Uint8List bytes, {
-    required int expectedHead,
-  }) => _versions.importCurrentData(bytes, expectedHead: expectedHead);
-
-  Future<int> retentionDays() => scope.settings.edit.revisionRetentionDays();
-
-  Future<void> saveRetentionDays(int days) =>
-      scope.settings.edit.saveRevisionRetentionDays(days);
-
-  Future<Uint8List> readRestorePoint(RestorePoint point) =>
-      _versions.readRestorePoint(point);
-
-  Future<void> deleteRestorePoint(RestorePoint point) =>
-      _versions.deleteRestorePoint(point);
 }
