@@ -563,11 +563,15 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  /// 本机空间一节：每个空间一张卡片，行与行之间留一档间隔，与其他页面竖直
+  /// 排列的条目一致；只有一张卡时不加间隔。
   List<Widget> _localSpaces(BuildContext context) {
+    final theme = context.zhixin;
     final scope = AppScope.of(context);
     return [
       const SectionHeading(title: '本机空间'),
-      for (final space in _spaces)
+      for (final (index, space) in _spaces.indexed) ...[
+        if (index > 0) SizedBox(height: theme.space.sm),
         forui.FTile(
           title: Text(
             space.id == scope.spaceId ? '${space.label}（当前）' : space.label,
@@ -576,6 +580,7 @@ class _AccountPageState extends State<AccountPage> {
           suffix: const Icon(FLucideIcons.trash2),
           onPress: _state.busy ? null : () => _deleteLocalSpace(space),
         ),
+      ],
     ];
   }
 
