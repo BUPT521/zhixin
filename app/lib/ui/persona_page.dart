@@ -161,15 +161,15 @@ class _PersonaPageState extends State<PersonaPage>
             enabled: !disabled,
             onSelected: () => _select(null),
           ),
-          SizedBox(height: theme.space.sm),
+          // 间隔放在每张卡之前：没有可选项时不多留一档，末张之后也不再留一段。
           for (final persona in personas) ...[
+            SizedBox(height: theme.space.sm),
             _PersonaCard(
               persona: persona,
               active: active?.id == persona.id,
               enabled: !disabled,
               onSelected: () => _select(persona),
             ),
-            SizedBox(height: theme.space.sm),
           ],
           SizedBox(height: theme.space.md),
           Text(

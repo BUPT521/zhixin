@@ -189,14 +189,12 @@ class _FeedbackPageState extends State<FeedbackPage> {
       child: ListView(
         padding: theme.space.pageInsets(top: theme.space.lg),
         children: [
-          if (_receipt != null) ...[
-            _receiptCard(theme, _receipt!),
-            SizedBox(height: theme.space.md),
-          ],
-          const SectionHeading(
+          if (_receipt != null) _receiptCard(theme, _receipt!),
+          SectionHeading(
             title: '问题与建议',
             subtitle: '写清遇到的情况与期望的结果；不要求登录，也不绑定账号。',
-            first: true,
+            // 回执卡出现时标题不再算页面第一节，上方留白跟着换成节间的一档。
+            first: _receipt == null,
           ),
           forui.FCard(
             child: Padding(

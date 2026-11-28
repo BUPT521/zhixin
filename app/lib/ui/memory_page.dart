@@ -208,8 +208,11 @@ class _MemoryPageState extends State<MemoryPage> {
 
     if (inactive.isNotEmpty) {
       children.add(
+        // 只有全部记忆都失效时这一段才成为页面第一块内容，那时不再加节前留白。
         Padding(
-          padding: EdgeInsets.only(top: theme.space.sectionTop),
+          padding: EdgeInsets.only(
+            top: children.isEmpty ? 0 : theme.space.sectionTop,
+          ),
           child: Text(
             '已删除的记忆可在数据版本里查看。',
             style: theme.text.bodySmall.copyWith(

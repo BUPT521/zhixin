@@ -79,7 +79,8 @@ Future<GoalChoice?> showGoalChoice(
             onPress: () => Navigator.of(context).pop(GoalChoice.unassigned),
           ),
           for (var index = 0; index < goals.length; index++) ...[
-            if (index > 0) SizedBox(height: theme.space.sm),
+            // 上面固定有一张“不归属任何目标”，每个目标都在它或前一个目标之后。
+            SizedBox(height: theme.space.sm),
             forui.FTile(
               prefix: Icon(
                 initialGoalId == goals[index].id
