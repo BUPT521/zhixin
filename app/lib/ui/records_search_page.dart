@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart' hide Material;
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/paged_result.dart';
 import '../application/prefetch_service.dart';
 import '../application/search_service.dart';
 import '../application/search_index_service.dart';

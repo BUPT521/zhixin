@@ -7,6 +7,7 @@ import 'package:material_ui/material_ui.dart';
 import 'theme.dart';
 
 import '../app_scope.dart';
+import '../application/paged_result.dart';
 import '../application/plan_search.dart';
 import '../application/prefetch_service.dart';
 import '../domain/models/study.dart';

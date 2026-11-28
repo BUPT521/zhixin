@@ -8,6 +8,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/material_search.dart';
+import '../application/paged_result.dart';
 import '../domain/models/material.dart';
 import 'failure_feedback.dart';
 import 'search_state.dart';

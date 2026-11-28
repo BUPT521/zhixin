@@ -1,79 +1,11 @@
 import 'package:flutter/foundation.dart';
 
+import '../application/paged_result.dart';
 import '../application/request_gate.dart';
 import 'format.dart';
 
-/// 查找一页的条数：记录、安排、记忆与材料查找都取这一档，各页与服务层不再
-/// 自己写一个 20。
-///
-/// 应用层现有的四个页大小常量（`SearchService.defaultPageSize`、
-/// `MaterialSearchService.pageSize`、`planSearchPageSize` 与
-/// `MemoryService.searchPageSize`）取值都等于它，批次 8 与批次 9 改页面时
-/// 一并换成这一份。
-const int kSearchPageSize = 20;
-
 /// 取一页结果：参数是这一页的起点，页大小由调用方的服务决定。
 typedef SearchPage<T> = Future<PagedResult<T>> Function(int offset);
-
-/// 一页查找结果：条目、后面还有没有与下一页起点。
-///
-/// 应用层的 `SearchResults`、`MaterialSearchResults`、`PlanSearchPageResult`
-/// 与 `MemorySearchResults` 形状相同而各写一份；这一份只保留分页需要的字段，
-/// 查询条件留在页面或服务自己的类型里。批次 8 与批次 9 把四份结果类换成它，
-/// 追加与去重的规则也只由 [append] 提供。
-class PagedResult<T> {
-  const PagedResult({
-    this.items = const [],
-    this.hasMore = false,
-    this.nextOffset = 0,
-    this.total,
-  });
-
-  /// 这一页的条目。
-  final List<T> items;
-
-  /// 后面还有没有命中。
-  final bool hasMore;
-
-  /// 下一页从第几条开始。
-  final int nextOffset;
-
-  /// 本次条件命中的总数；服务不知道时为空。
-  final int? total;
-
-  bool get isEmpty => items.isEmpty;
-
-  int get length => items.length;
-
-  /// 接上下一页：给出 [key] 时按它去重，已经出现过的条目不重复追加；
-  /// 不给 [key] 时直接接上，由调用方保证两页不重叠。
-  PagedResult<T> append(PagedResult<T> next, {Object? Function(T item)? key}) {
-    if (key == null) {
-      return PagedResult<T>(
-        items: [...items, ...next.items],
-        hasMore: next.hasMore,
-        nextOffset: next.nextOffset,
-        total: next.total ?? total,
-      );
-    }
-    final seen = <Object?>{};
-    return PagedResult<T>(
-      items: [
-        for (final item in [...items, ...next.items])
-          if (seen.add(key(item))) item,
-      ],
-      hasMore: next.hasMore,
-      nextOffset: next.nextOffset,
-      total: next.total ?? total,
-    );
-  }
-
-  /// [PagedResult] 不可变；[append] 返回新的一份，正在读的旧页不受影响。
-  @override
-  String toString() =>
-      'PagedResult(items: ${items.length}, hasMore: $hasMore, '
-      'nextOffset: $nextOffset, total: $total)';
-}
 
 /// 查找结果的状态：还没有条件、正在读、已经读到与读取失败。
 enum SearchPhase { idle, loading, ready, failed }

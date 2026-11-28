@@ -8,6 +8,7 @@ import 'package:material_ui/material_ui.dart' hide Material, MaterialPage;
 import '../app_scope.dart';
 import '../application/docx_import.dart';
 import '../application/material_search.dart';
+import '../application/paged_result.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/text.dart';
 import 'docx_review_dialog.dart';

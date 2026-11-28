@@ -8,6 +8,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/memory_service.dart';
+import '../application/paged_result.dart';
 import '../domain/models/memory.dart';
 import 'copy.dart';
 import 'failure_feedback.dart';
