@@ -328,8 +328,12 @@ class _MaterialPickerState extends State<MaterialPicker> {
     );
   }
 
-  /// 查找结果的几行：没有查询、没有命中与有命中各一种状态。
+  /// 查找结果的几行：读取失败时不留占位，说明已经在上方；没有查询、没有命中
+  /// 与有命中各一种状态。
   List<Widget> _searchRows(ZhixinTheme theme) {
+    // 首查失败会清空这一页；这里若仍按“正在查找”占位，失败说明下面会一直挂着
+    // 一句永远不会消失的读取中。
+    if (_matches.isFailed) return const [];
     final page = _matches.page;
     if (page == null) {
       return [

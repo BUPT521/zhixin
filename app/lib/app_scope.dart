@@ -437,4 +437,12 @@ final class AppScopeTesting {
   void failNextMaterialPagesRead() {
     _state.library.material.nextPagesFailure = StateError('测试注入：材料页码读取失败');
   }
+
+  /// 让下一次材料查找失败一次：材料选择器据此核对首查失败的显示。
+  ///
+  /// 只设置一次，查找发生时复位；生产代码不调用这个入口。
+  @visibleForTesting
+  void failNextMaterialSearch() {
+    _state.library.materialSearch.nextSearchFailure = StateError('测试注入：材料查找失败');
+  }
 }

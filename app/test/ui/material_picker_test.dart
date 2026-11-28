@@ -171,6 +171,48 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('材料查找失败之后只留说明，不再挂着“正在查找…”', (tester) async {
+    tester.view.physicalSize = const Size(390, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.runAsync(() async {
+      await tester.pumpWidget(const ZhixinApp());
+      scope = tester.state<AppScopeState>(find.byType(AppScope));
+      await scope!.ready;
+    });
+    await settle(tester);
+
+    await tester.runAsync(() async {
+      final id = await scope!.testing.materials.create(title: '概率论讲义');
+      await scope!.testing.materials.addPage(
+        materialId: id,
+        pageNo: 1,
+        content: '条件概率的定义与乘法公式。',
+      );
+    });
+
+    final context = tester.element(find.byType(HomeShell));
+    await tester.runAsync(() async {
+      unawaited(showMaterialPicker(context));
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+    });
+    await tester.pumpAndSettle();
+    await pumpUntil(tester, find.text('这次依据哪份材料'));
+
+    final pickerField = find.descendant(
+      of: find.byKey(const ValueKey('material-picker-search')),
+      matching: find.byType(EditableText),
+    );
+    // 首查失败：说明上方已经写明原因，结果区不再留一句永远不结束的读取中。
+    scope!.testing.failNextMaterialSearch();
+    await tester.enterText(pickerField, '概率');
+    await tester.pump(const Duration(milliseconds: 300));
+    await pumpUntil(tester, find.textContaining('查找材料没有完成'));
+    expect(find.text('正在查找…'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('选好材料之后读取页码失败会给出提示，选择结果为 null', (tester) async {
     tester.view.physicalSize = const Size(390, 1400);
     tester.view.devicePixelRatio = 1;

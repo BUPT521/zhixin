@@ -47,6 +47,12 @@ class MaterialSearchService {
 
   final MaterialRepository materials;
 
+  /// 测试入口注入的一次性查找失败：下一次 [searchPage] 抛出它并立即复位。
+  ///
+  /// 与材料页码读取的同名入口一样，只有应用根的测试入口设置它，生产路径不读
+  /// 这个字段；材料选择器据此验证首查失败时不留“正在查找”的占位。
+  Object? nextSearchFailure;
+
   /// 取第 [offset] 条起的一页命中；[PagedResult.hasMore] 表示后面还有。
   Future<PagedResult<MaterialMatch>> searchPage(
     String query, {
@@ -56,6 +62,11 @@ class MaterialSearchService {
     final text = query.trim();
     if (text.isEmpty || pageSize <= 0) {
       return const PagedResult<MaterialMatch>();
+    }
+    final failure = nextSearchFailure;
+    if (failure != null) {
+      nextSearchFailure = null;
+      throw failure;
     }
     // 多取一条用来判断后面还有没有，不必再查一次总数。
     final rows = await materials.search(
