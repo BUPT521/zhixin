@@ -410,4 +410,12 @@ final class AppScopeTesting {
   AssessmentRepository get assessments => _state._composition.assessments;
   MaterialRepository get materials => _state._composition.materials;
   StudyPlanRepository get studyPlans => _state._composition.studyPlans;
+
+  /// 让下一次读取材料页码失败一次：材料选择器据此给出提示并结束选择。
+  ///
+  /// 只设置一次，读取发生时复位；生产代码不调用这个入口。
+  @visibleForTesting
+  void failNextMaterialPagesRead() {
+    _state.library.material.nextPagesFailure = StateError('测试注入：材料页码读取失败');
+  }
 }
