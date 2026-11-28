@@ -26,8 +26,8 @@ import '../support/fake_server.dart';
 import '../support/sync_rig.dart';
 import '../support/telemetry.dart';
 
-/// 首次启动引导的两步流程：登录页作首屏、同意对话框、本机模式、外观、
-/// 老用户与版本升级。
+/// 首次启动引导的两步流程：登录页作首屏、进入时的同意对话框、本机模式、
+/// 外观、老用户与版本升级。
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -202,7 +202,7 @@ void main() {
     );
   }
 
-  /// 填好登录表单；同意对话框在点登录之后才出现。
+  /// 填好登录表单。
   Future<void> enterCredentials(
     WidgetTester tester, {
     required String email,
@@ -214,13 +214,39 @@ void main() {
     await tester.pump();
   }
 
-  /// 等同意对话框出现，勾选之后点“同意并继续”。
-  Future<void> agreeInDialog(WidgetTester tester) async {
-    await pumpUntil(tester, find.text('我已阅读并同意《用户须知》与《隐私政策》'));
-    await tester.tap(find.text('我已阅读并同意《用户须知》与《隐私政策》'));
+  /// 等进入应用时弹出的同意对话框出现，勾选之后点“同意并继续”。
+  Future<void> agreeInConsent(WidgetTester tester) async {
+    await pumpUntil(tester, find.text('本人已阅读并同意《用户须知》与《隐私政策》'));
+    await tester.tap(find.text('本人已阅读并同意《用户须知》与《隐私政策》'));
     await tester.pump();
     await tester.tap(find.widgetWithText(forui.FButton, '同意并继续'));
     await settle(tester);
+  }
+
+  /// 关掉进入应用时弹出的同意对话框：不写状态，回到登录页。
+  Future<void> dismissConsent(WidgetTester tester) async {
+    await pumpUntil(tester, find.text('用户须知与隐私政策'));
+    await tester.binding.handlePopRoute();
+    await settle(tester);
+    expect(find.text('用户须知与隐私政策'), findsNothing, reason: '对话框已经关掉');
+  }
+
+  /// 等匿名统计的首次说明状态写完；同意之后它跟文件写入一起完成。
+  Future<void> waitForTelemetry(
+    WidgetTester tester, {
+    required bool enabled,
+  }) async {
+    var seen = false;
+    for (var round = 0; round < 200 && !seen; round++) {
+      await tester.runAsync(() async {
+        seen = await TelemetryStore(filesDir: directory.path).noticeSeen();
+      });
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    expect(seen, isTrue, reason: '同意之后没有写下匿名统计的说明状态');
+    await tester.runAsync(() async {
+      expect(await TelemetryStore(filesDir: directory.path).enabled(), enabled);
+    });
   }
 
   /// 在假服务端先建好一个账号，用例用“登录”而不是“注册”走登录页。
@@ -236,7 +262,7 @@ void main() {
     );
   }
 
-  testWidgets('登录页是首屏，未同意时点登录先弹同意对话框', (tester) async {
+  testWidgets('进入应用就在登录页上弹同意对话框', (tester) async {
     await openApp(tester);
     expect(find.text('登录或注册'), findsOneWidget);
     expect(find.byKey(const ValueKey('onboarding-step-0')), findsOneWidget);
@@ -246,16 +272,8 @@ void main() {
       findsNothing,
       reason: '同意不占一步，进度点只有两段',
     );
-    expect(find.text('先在本机用'), findsOneWidget);
-    expect(
-      find.widgetWithText(forui.FButton, '上一步'),
-      findsNothing,
-      reason: '登录页是第一步，没有上一步',
-    );
 
-    await enterCredentials(tester, email: 'first@example.com');
-    await tester.tap(find.widgetWithText(forui.FButton, '登录'));
-    await pumpUntil(tester, find.text('开始使用前，先看这两份说明'));
+    await pumpUntil(tester, find.text('用户须知与隐私政策'));
     expect(server.loginRequests, 0, reason: '同意之前不发登录请求');
     expect(
       tester
@@ -265,7 +283,7 @@ void main() {
       reason: '没有勾选就不同意',
     );
 
-    await tester.tap(find.text('我已阅读并同意《用户须知》与《隐私政策》'));
+    await tester.tap(find.text('本人已阅读并同意《用户须知》与《隐私政策》'));
     await tester.pump();
     expect(
       tester
@@ -277,9 +295,20 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
   });
 
+  testWidgets('关掉对话框之后点登录会再问一次', (tester) async {
+    await openApp(tester);
+    await dismissConsent(tester);
+
+    await enterCredentials(tester, email: 'first@example.com');
+    await tester.tap(find.widgetWithText(forui.FButton, '登录'));
+    await pumpUntil(tester, find.text('用户须知与隐私政策'));
+    expect(server.loginRequests, 0, reason: '同意之前不发登录请求');
+    await tester.pump(const Duration(milliseconds: 300));
+  });
+
   testWidgets('先在本机用直接到外观，返回回到登录页', (tester) async {
     await openApp(tester);
-    expect(find.text('登录或注册'), findsOneWidget);
+    await dismissConsent(tester);
 
     await tester.tap(find.widgetWithText(forui.FButton, '先在本机用'));
     await pumpUntil(tester, find.text('选择外观'));
@@ -288,9 +317,6 @@ void main() {
       expect(record.stage, OnboardingStage.appearance);
       expect(record.agreed, isFalse, reason: '先在本机用记的是回答过，不是同意');
       expect(record.termsVersion, kTermsVersion);
-      final telemetry = TelemetryStore(filesDir: directory.path);
-      expect(await telemetry.noticeSeen(), isTrue);
-      expect(await telemetry.enabled(), isFalse);
     });
 
     await tester.binding.handlePopRoute();
@@ -300,6 +326,7 @@ void main() {
 
   testWidgets('底部上一步回到登录页，主操作仍然一步一页', (tester) async {
     await openApp(tester);
+    await dismissConsent(tester);
     expect(find.text('登录或注册'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(forui.FButton, '先在本机用'));
@@ -317,6 +344,7 @@ void main() {
 
   testWidgets('左右划动与底栏同一套整页滑动', (tester) async {
     await openApp(tester);
+    await dismissConsent(tester);
 
     /// 在步骤内容的上缘开始一次横拖：那里只有标题或标记，不和表单抢手势。
     Future<TestGesture> startSwipe({double x = 60}) async {
@@ -361,6 +389,7 @@ void main() {
 
   testWidgets('点步骤点可以直接到外观，也可以点回来', (tester) async {
     await openApp(tester);
+    await dismissConsent(tester);
 
     await tester.tap(find.byKey(const ValueKey('onboarding-step-1')));
     await pumpUntil(tester, find.text('选择外观'));
@@ -377,9 +406,11 @@ void main() {
     expect(find.text('登录或注册'), findsOneWidget, reason: '点回来');
   });
 
-  testWidgets('先在本机用进入本机模式，不调用上报与更新检查', (tester) async {
+  testWidgets('选仅在本机使用进入本机模式，不调用上报与更新检查', (tester) async {
     await openApp(tester);
-    await tester.tap(find.widgetWithText(forui.FButton, '先在本机用'));
+    await pumpUntil(tester, find.text('用户须知与隐私政策'));
+
+    await tester.tap(find.widgetWithText(forui.FButton, '仅在本机使用'));
     await pumpUntil(tester, find.text('选择外观'));
 
     await tester.tap(find.widgetWithText(forui.FButton, '完成'));
@@ -400,15 +431,12 @@ void main() {
 
   testWidgets('同意对话框里关掉匿名统计，同意的值写进首次说明状态', (tester) async {
     await openApp(tester);
-    await enterCredentials(tester, email: 'forgot@example.com');
-    // 找回密码同样要先同意，用它可以打开对话框而不提交登录。
-    await tester.tap(find.widgetWithText(forui.FButton, '忘记密码'));
-    await pumpUntil(tester, find.text('我已阅读并同意《用户须知》与《隐私政策》'));
+    await pumpUntil(tester, find.text('用户须知与隐私政策'));
 
     // 关掉匿名使用统计，再看这个值有没有随同意一起写下去。
     await tester.tap(find.text('匿名使用统计'));
     await tester.pump();
-    await tester.tap(find.text('我已阅读并同意《用户须知》与《隐私政策》'));
+    await tester.tap(find.text('本人已阅读并同意《用户须知》与《隐私政策》'));
     await tester.pump();
     expect(
       tester
@@ -418,30 +446,21 @@ void main() {
       reason: '勾选之后才能同意',
     );
     await tester.tap(find.widgetWithText(forui.FButton, '同意并继续'));
-    // 同意之后接着打开找回密码；这一页出现时同意与说明状态都已经写完。
-    await pumpUntil(tester, find.text('发送验证码'));
-    expect(
-      find.text('我已阅读并同意《用户须知》与《隐私政策》'),
-      findsNothing,
-      reason: '同意之后对话框关闭',
-    );
+    await settle(tester);
+    expect(find.text('用户须知与隐私政策'), findsNothing, reason: '同意之后对话框关闭');
 
-    await tester.runAsync(() async {
-      final telemetry = TelemetryStore(filesDir: directory.path);
-      expect(await telemetry.noticeSeen(), isTrue);
-      expect(await telemetry.enabled(), isFalse);
-    });
+    await waitForTelemetry(tester, enabled: false);
     expect(server.actives, isEmpty, reason: '引导里同意时不发这次上报');
-    expect(server.loginRequests, 0, reason: '取消的登录没有提交');
+    expect(server.loginRequests, 0, reason: '同意不等于登录');
   });
 
   testWidgets('老用户在首页补同意，同意之后恢复联网', (tester) async {
     await openApp(tester, existingUser: true);
     await pumpUntil(tester, find.byType(HomeShell));
     expect(find.byType(OnboardingPage), findsNothing, reason: '老用户不走登录与外观');
-    await pumpUntil(tester, find.text('开始使用前，先看这两份说明'));
+    await pumpUntil(tester, find.text('用户须知与隐私政策'));
 
-    await tester.tap(find.text('我已阅读并同意《用户须知》与《隐私政策》'));
+    await tester.tap(find.text('本人已阅读并同意《用户须知》与《隐私政策》'));
     await tester.pump();
     await tester.tap(find.widgetWithText(forui.FButton, '同意并继续'));
     await settle(tester);
@@ -469,10 +488,10 @@ void main() {
       ),
     );
     await pumpUntil(tester, find.byType(HomeShell));
-    await pumpUntil(tester, find.text('用户须知有更新'));
+    await pumpUntil(tester, find.text('用户须知与隐私政策已更新'));
     expect(find.byType(OnboardingPage), findsNothing);
 
-    await tester.tap(find.text('我已阅读并同意《用户须知》与《隐私政策》'));
+    await tester.tap(find.text('本人已阅读并同意《用户须知》与《隐私政策》'));
     await tester.pump();
     await tester.tap(find.widgetWithText(forui.FButton, '同意并继续'));
     await settle(tester);
@@ -514,6 +533,7 @@ void main() {
       themeAccent: themeAccent,
       themeMode: themeMode,
     );
+    await agreeInConsent(tester);
 
     // 先到外观选一个主题色，再返回登录，验证换空间之后这一步与外观都还在。
     await tester.tap(find.widgetWithText(forui.FButton, '先在本机用'));
@@ -538,9 +558,8 @@ void main() {
     expect(find.text('登录或注册'), findsOneWidget);
 
     await enterCredentials(tester, email: 'onboarding@example.com');
-    // 先在本机用之后没有同意，登录时补一次对话框。
+    // 已经同意过，登录时不再弹对话框。
     await tester.tap(find.widgetWithText(forui.FButton, '注册'));
-    await agreeInDialog(tester);
     await pumpUntil(tester, find.text('选择外观'));
 
     // 换空间之后的新应用根还在开库，收尾前等它就绪，tearDown 才能关干净。
@@ -575,10 +594,10 @@ void main() {
     const email = 'login-onboarding@example.com';
     await tester.runAsync(() => seedAccountOnServer(email));
     await openApp(tester, spaces: spaces);
+    await agreeInConsent(tester);
 
     await enterCredentials(tester, email: email);
     await tester.tap(find.widgetWithText(forui.FButton, '登录'));
-    await agreeInDialog(tester);
     await pumpUntil(tester, find.text('选择外观'));
 
     // 换空间之后的新应用根还在开库，收尾前等它就绪，tearDown 才能关干净。
@@ -600,12 +619,12 @@ void main() {
     });
   });
 
-  testWidgets('忘记密码先取得同意，再直接打开重设表单', (tester) async {
+  testWidgets('忘记密码不再二次询问，直接打开重设表单', (tester) async {
     await openApp(tester);
+    await agreeInConsent(tester);
 
     await enterCredentials(tester, email: 'forgot@example.com');
     await tester.tap(find.widgetWithText(forui.FButton, '忘记密码'));
-    await agreeInDialog(tester);
     await pumpUntil(tester, find.text('发送验证码'));
     // 页面过渡走完，下面那一层（引导登录页）才从界面上退下去。
     await settle(tester);

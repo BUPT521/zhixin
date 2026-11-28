@@ -183,21 +183,46 @@ void main() {
     expect(signedOut.stage, OnboardingStage.login);
   });
 
-  test('先在本机用之后重开仍在外观，选择不同意时没有登录这一步', () async {
+  test('先在本机用只跳过登录，没有同意过才记下只在本机', () async {
     final store = OnboardingStore(directory.path);
-    final skipped = OnboardingController(
+    // 已经同意的用户点“先在本机用”只是这次不登录，同意状态不能撤掉。
+    final consented = OnboardingController(
       store: store,
       entry: OnboardingEntry.full,
       record: OnboardingRecord(termsVersion: kTermsVersion, agreed: true),
       signedIn: false,
       telemetryEnabled: true,
     );
-    addTearDown(skipped.dispose);
-    await skipped.useLocally();
+    addTearDown(consented.dispose);
+    await consented.useLocally();
     expect((await store.read()).stage, OnboardingStage.appearance);
-    expect((await store.read()).agreed, isFalse);
+    expect((await store.read()).agreed, isTrue);
     expect((await store.read()).termsVersion, kTermsVersion);
 
+    // 没有同意过的记下当前版本已经回答过、没有同意。
+    final freshDir = await Directory.systemTemp.createTemp(
+      'zhixin-onboarding-fresh-',
+    );
+    addTearDown(() async {
+      if (await freshDir.exists()) await freshDir.delete(recursive: true);
+    });
+    final freshStore = OnboardingStore(freshDir.path);
+    final fresh = OnboardingController(
+      store: freshStore,
+      entry: OnboardingEntry.full,
+      record: const OnboardingRecord(),
+      signedIn: false,
+      telemetryEnabled: true,
+    );
+    addTearDown(fresh.dispose);
+    await fresh.useLocally();
+    expect((await freshStore.read()).stage, OnboardingStage.appearance);
+    expect((await freshStore.read()).agreed, isFalse);
+    expect((await freshStore.read()).termsVersion, kTermsVersion);
+  });
+
+  test('选择不同意时没有登录这一步', () async {
+    final store = OnboardingStore(directory.path);
     final declined = OnboardingController(
       store: store,
       entry: OnboardingEntry.full,

@@ -50,6 +50,14 @@ class _OnboardingPageState extends State<OnboardingPage> {
   OnboardingController get _controller => widget.controller;
 
   @override
+  void initState() {
+    super.initState();
+    // 进入应用先问一次须知：登录、注册与找回密码都要在同意之后才能发出请求。
+    // 关掉对话框不算同意，仍可点“先在本机用”，之后再点登录会重新问一次。
+    WidgetsBinding.instance.addPostFrameCallback((_) => _askConsentOnEntry());
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     if (_loginStateChecked) return;
@@ -128,10 +136,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
     }
   }
 
+  /// 进入应用时的这一次同意：已经同意过就什么都不做。
+  Future<void> _askConsentOnEntry() async {
+    if (!mounted || _controller.stage != OnboardingStage.login) return;
+    if (_controller.record.consentCurrent) return;
+    await _ensureConsent();
+  }
+
   /// 登录、注册与找回密码之前的同意；同意过当前版本就直接放行。
   ///
-  /// 对话框里选“不同意，仅在本机使用”时与“先在本机用”同样处理：记下只在本机
-  /// 使用，直接到外观这一步。
+  /// 进入应用时先调用一次；对话框里选“仅在本机使用”时与“先在本机用”同样处理：
+  /// 记下只在本机使用，直接到外观这一步。
   Future<bool> _ensureConsent() async {
     if (_controller.record.consentCurrent) return true;
     try {
@@ -164,9 +179,12 @@ class _OnboardingPageState extends State<OnboardingPage> {
   Future<void> _useLocally() => _run(() async {
     final scope = AppScope.of(context);
     // 先把“只在本机使用”与匿名统计的说明状态写盘，再翻到外观：翻页之后用户
-    // 可能马上点下一步，写盘不能还挂在后面。
-    await _controller.declineTerms();
-    await _completeTelemetry(scope, enabled: false);
+    // 可能马上点下一步，写盘不能还挂在后面。已经同意过的用户只是这次不登录，
+    // 同意状态与匿名统计的开关都不动。
+    if (!_controller.record.consentCurrent) {
+      await _controller.declineTerms();
+      await _completeTelemetry(scope, enabled: false);
+    }
     await _controller.useLocally();
   });
 

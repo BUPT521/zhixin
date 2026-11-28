@@ -124,12 +124,13 @@ class OnboardingController extends ChangeNotifier {
   Future<void> declineTerms() =>
       _write(_record.copyWith(termsVersion: kTermsVersion, agreed: false));
 
-  /// 先在本机用：记下只在本机使用，直接到外观这一步。
+  /// 先在本机用：直接到外观这一步；没有同意过时记下只在本机使用。
   ///
-  /// 记下的是“回答过当前版本”，不是同意，所以下次启动不会再问；之后在设置的
-  /// 同意入口或登录时仍可以补上。
+  /// 已经同意过的用户点它只是这次不登录，同意状态与匿名统计的开关都不动；
+  /// 没有同意过的记下“回答过当前版本”，下次启动不再询问，之后在设置的同意
+  /// 入口或登录时仍可以补上。
   Future<void> useLocally() async {
-    await declineTerms();
+    if (!_record.consentCurrent) await declineTerms();
     await _enter(OnboardingStage.appearance);
   }
 

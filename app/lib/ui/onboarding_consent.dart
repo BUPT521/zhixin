@@ -95,16 +95,17 @@ class _ConsentDialogState extends State<_ConsentDialog> {
   Widget build(BuildContext context) {
     final theme = context.zhixin;
     return ZhixinDialogLayout(
-      title: Text(widget.update ? '用户须知有更新' : '开始使用前，先看这两份说明'),
+      title: Text(widget.update ? '用户须知与隐私政策已更新' : '用户须知与隐私政策'),
       content: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
             widget.update
-                ? '用户须知与隐私政策改过，同意之后才能继续使用登录、云同步与自动'
-                      '检查更新；本机记录、查找与导出不受影响。'
-                : '同意之后才能使用登录、云同步、模型调用与自动检查更新；'
-                      '不同意也可以只在本机使用。',
+                ? '这两份文件已有更新。同意后方可继续使用登录、云同步与自动检查'
+                      '更新；本地记录、查找与导出不受影响。'
+                : '使用登录、云同步、模型调用与自动检查更新之前，需要阅读并同意'
+                      '这两份文件；不同意时，应用仍可仅在本机使用，本地记录、'
+                      '材料、查找与导出不受影响。',
             style: theme.text.bodyMedium.copyWith(
               color: theme.colors.onSurfaceVariant,
             ),
@@ -121,22 +122,22 @@ class _ConsentDialogState extends State<_ConsentDialog> {
           forui.FTile(
             prefix: const LeadingIcon(FLucideIcons.shieldCheck),
             title: const Text('隐私政策'),
-            subtitle: const Text('收集与保存哪些信息'),
+            subtitle: const Text('收集的信息与保存期限'),
             suffix: const Icon(FLucideIcons.chevronRight),
             onPress: () => openPrivacyPolicy(context),
           ),
           SizedBox(height: theme.space.md),
           forui.FCheckbox(
             value: _checked,
-            label: const Text('我已阅读并同意《用户须知》与《隐私政策》'),
+            label: const Text('本人已阅读并同意《用户须知》与《隐私政策》'),
             onChange: (value) => setState(() => _checked = value),
           ),
           const CardDivider(),
           ZhixinSwitch(
             label: const Text('匿名使用统计'),
             description: const Text(
-              '采集范围、用途与保存期限见上面《隐私政策》第二部分；'
-              '可以随时在设置里关闭。',
+              '采集范围、用途与保存期限见《隐私政策》第二部分，'
+              '可在设置中随时关闭。',
             ),
             value: _telemetry,
             onChange: (value) => setState(() => _telemetry = value),
@@ -149,7 +150,7 @@ class _ConsentDialogState extends State<_ConsentDialog> {
           mainAxisSize: MainAxisSize.min,
           onPress: () =>
               Navigator.of(context).pop(const ConsentChoice.declined()),
-          child: const Text('不同意，仅在本机使用'),
+          child: const Text('仅在本机使用'),
         ),
         forui.FButton(
           mainAxisSize: MainAxisSize.min,
