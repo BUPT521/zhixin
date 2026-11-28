@@ -563,13 +563,17 @@ class _AccountPageState extends State<AccountPage> {
     );
   }
 
+  /// 本机空间一节是否排在账号或登录标题上方：有空间时这一节先出现，后面的标题
+  /// 因此不算页面第一节，上方要留节间的一档。
+  bool get _spacesAbove => !_focusedReset && _spaces.isNotEmpty;
+
   /// 本机空间一节：每个空间一张卡片，行与行之间留一档间隔，与其他页面竖直
   /// 排列的条目一致；只有一张卡时不加间隔。
   List<Widget> _localSpaces(BuildContext context) {
     final theme = context.zhixin;
     final scope = AppScope.of(context);
     return [
-      const SectionHeading(title: '本机空间'),
+      SectionHeading(title: '本机空间', first: _notice == null),
       for (final (index, space) in _spaces.indexed) ...[
         if (index > 0) SizedBox(height: theme.space.sm),
         forui.FTile(
@@ -613,7 +617,7 @@ class _AccountPageState extends State<AccountPage> {
     return [
       SectionHeading(
         title: _showReset ? '找回密码' : '登录或注册',
-        first: true,
+        first: !_spacesAbove && _notice == null,
         subtitle: _showReset
             ? '向已经验证的邮箱发一封六位验证码，验证之后设置新密码；其他设备会退出登录。'
             : '登录之后可以上传整库备份、在多台设备之间同步，并使用知新服务的模型额度。',
@@ -719,9 +723,9 @@ class _AccountPageState extends State<AccountPage> {
   List<Widget> _localModeOnly(BuildContext context) {
     final theme = context.zhixin;
     return [
-      const SectionHeading(
+      SectionHeading(
         title: '登录或注册',
-        first: true,
+        first: !_spacesAbove && _notice == null,
         subtitle: '首次启动时选择了仅在本机使用；同意用户须知与隐私政策之后才能登录。',
       ),
       forui.FCard(
@@ -756,7 +760,7 @@ class _AccountPageState extends State<AccountPage> {
     return [
       SectionHeading(
         title: '账号',
-        first: true,
+        first: !_spacesAbove && _notice == null,
         subtitle: '一个账号对应一个人的学习数据；退出登录不删除云端数据。',
         action: const StatusTag('已登录', tone: TagTone.accent),
       ),
@@ -842,7 +846,7 @@ class _AccountPageState extends State<AccountPage> {
                     keyboardType: TextInputType.number,
                     label: const Text('邮件里的六位验证码'),
                   ),
-                if (codeSent) SizedBox(height: theme.space.md),
+                SizedBox(height: theme.space.md),
                 Wrap(
                   spacing: theme.space.sm,
                   runSpacing: theme.space.sm,
