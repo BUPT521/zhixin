@@ -17,6 +17,10 @@ dependencies:
   path: ^1.9.1
   path_provider: ^2.1.6
 
+  # 命名版本名字的 NFC 规范化：两端按同一种形状比较名字与主键（ADR-0054）。
+  # 固定到具体版本：0.x 会随 Unicode 版本更换规范表，结果变化会改动名字的主键。
+  unorm_dart: 0.3.4
+
   # 导出/恢复：zip 数据包。
   archive: ^4.7.1
   crypto: ^3.0.8

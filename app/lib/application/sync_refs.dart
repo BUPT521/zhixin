@@ -120,7 +120,7 @@ extension SyncNamedRefs on SyncService {
       final prefix = String.fromCharCodes(
         base.runes.take(RevisionRef.maxNameLength - suffix.runes.length),
       );
-      final name = '$prefix$suffix';
+      final name = normalizeRefName('$prefix$suffix');
       if (reserved.add(name)) return name;
     }
   }

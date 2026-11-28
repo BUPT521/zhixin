@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:unorm_dart/unorm_dart.dart' as unorm;
+
 import '../rules/coded_enum.dart';
 import '../rules/revision_actions.dart';
 import '../rules/time_format.dart';
@@ -783,9 +785,9 @@ TypedRow projectColumns(TypedRow row, Set<String> columns) => {
     if (columns.contains(entry.key)) entry.key: entry.value,
 };
 
-/// 命名版本名字的规范化：去掉首尾空白。
+/// 命名版本名字的规范化：去掉首尾空白之后按 NFC 合成。
 ///
-/// 名字的比较口径要求两端一致；客户端不引 Unicode 规范化库，两端都按原样
-/// 比较并与服务端同时做 NFC，服务端负责把规范化之后的形状存下来
-/// （ADR-0054 决定第 4 条）。
-String normalizeRefName(String name) => name.trim();
+/// 名字的比较口径要求两端一致：服务端在 `NormalizeRefName` 里做 NFC，客户端
+/// 在写入、查找与删除时都经过这里，同一个名字的不同输入形式因此只有一行，
+/// 长度也按规范化之后的字符数计（ADR-0054 决定第 4 条）。
+String normalizeRefName(String name) => unorm.nfc(name.trim());

@@ -326,6 +326,35 @@ void main() {
     expect([for (final row in memories) row['content']], ['第一', '第二']);
   });
 
+  test('命名版本的名字按 NFC 规范化之后比较与计数', () async {
+    final rig = await openTestRig(
+      engine: RevisionEngine(
+        clock: MutableTestClock(DateTime(2026, 1, 1, 9)).call,
+      ),
+    );
+    addTearDown(rig.close);
+    final head = await addMemory(rig, '第一');
+    const composed = '版本 é';
+    const decomposed = '版本 e\u0301';
+    expect(normalizeRefName(decomposed), composed);
+
+    await rig.engine.nameCommit(rig.raw, head, name: composed);
+    await rig.engine.nameCommit(rig.raw, head, name: decomposed);
+    // 两种输入形式落到同一个主键，后写覆盖先写，不会多出一行。
+    expect(
+      [for (final ref in await rig.engine.refs(rig.raw)) ref.name],
+      [composed],
+    );
+
+    // 删除按同一个形状查，分解形式也能删掉合成形式写下的名字。
+    await rig.engine.deleteName(rig.raw, decomposed);
+    expect(await rig.engine.refs(rig.raw), isEmpty);
+
+    // 长度按规范化之后计：六十个码元合成三十个字，在上限之内。
+    await rig.engine.nameCommit(rig.raw, head, name: 'e\u0301' * 30);
+    expect((await rig.engine.refs(rig.raw)).single.name.runes.length, 30);
+  });
+
   test('删除命名版本只删固化后的检查点', () async {
     final clock = MutableTestClock(DateTime(2026, 1, 1, 9));
     final rig = await openTestRig(engine: RevisionEngine(clock: clock.call));
