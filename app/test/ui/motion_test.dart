@@ -402,6 +402,53 @@ void main() {
     expect(_shown(tester, '第二栏'), isFalse);
   });
 
+  testWidgets('调用方挡住的一页不跟手，放开之后可以划过去', (tester) async {
+    var allowed = false;
+    var index = 0;
+    var swipes = 0;
+    late StateSetter setHost;
+    await tester.pumpWidget(
+      _host(
+        StatefulBuilder(
+          builder: (context, setState) {
+            setHost = setState;
+            return TabSlideStack(
+              index: index,
+              canSwipeTo: (target) => allowed,
+              onSwipe: (target) {
+                swipes++;
+                setState(() => index = target);
+              },
+              children: const [Text('第一栏'), Text('第二栏')],
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final blocked = await tester.startGesture(const Offset(300, 300));
+    await blocked.moveBy(const Offset(-240, 0));
+    await tester.pump();
+    expect(_dxOf(tester, '第一栏'), 0, reason: '被挡住的方向不跟手');
+    expect(_shown(tester, '第二栏'), isFalse);
+    await blocked.up();
+    await tester.pumpAndSettle();
+    expect(swipes, 0, reason: '松手也不当成切过去');
+    expect(_shown(tester, '第一栏'), isTrue);
+
+    setHost(() => allowed = true);
+    await tester.pump();
+    final gesture = await tester.startGesture(const Offset(500, 300));
+    await gesture.moveBy(const Offset(-400, 0));
+    await tester.pump();
+    expect(_dxOf(tester, '第一栏'), lessThan(-50), reason: '放开之后跟手');
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(swipes, 1);
+    expect(_shown(tester, '第二栏'), isTrue);
+  });
+
   testWidgets('减少动态效果时划过比例直接切过去，不留在中间', (tester) async {
     await tester.pumpWidget(_host(const _SwipeHost(), reduce: true));
     await tester.pumpAndSettle();

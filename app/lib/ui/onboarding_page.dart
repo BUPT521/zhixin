@@ -23,6 +23,10 @@ import 'zhixin_segmented.dart';
 /// 这一步。当前步骤与第一页的选择都放在 [OnboardingController] 里，进入下一
 /// 步之前先写进设备文件；第一次登录换本机空间、整棵界面重建之后，新的页面按
 /// 登录态把第二步补成已完成，不会退回去重新登录。
+///
+/// 三步常驻在一个页面栈里，左右划动与底栏四栏共用 [TabSlideStack]；划动只
+/// 触发这一步的主操作，写设备文件与写完成标记仍由主操作完成。只补第一步时
+/// 没有下一页，没勾选同意时向前划不动。
 class OnboardingPage extends StatefulWidget {
   const OnboardingPage({super.key, required this.controller});
 
@@ -41,9 +45,6 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   /// 这一页装上之后是否已经读过一次登录态；重建之后新的 State 会再读一次。
   bool _loginStateChecked = false;
-
-  /// 这一趟横拖累计的位移，向右为正；松手之后归零。
-  double _dragDx = 0;
 
   OnboardingController get _controller => widget.controller;
 
@@ -231,22 +232,27 @@ class _OnboardingPageState extends State<OnboardingPage> {
     await _run(() => _controller.goTo(target));
   }
 
-  void _startSwipe(DragStartDetails details) => _dragDx = 0;
+  /// 横拖能不能划向某一页：往前与这一步的主操作同一套条件，往回只到“上一步”
+  /// 会去的那一步。不同意之后没有登录这一步，外观页往右划因此不跟手，回第一
+  /// 步仍用底部按钮。
+  bool _canSwipeTo(int index) {
+    if (_busy) return false;
+    final target = OnboardingStage.values[index];
+    if (target.index < _controller.stage.index) {
+      return target == _controller.previousStage;
+    }
+    // 只补第一步时没有下一页，往后走交给“同意并继续”。
+    return !_controller.termsOnly && _canAdvance;
+  }
 
-  void _updateSwipe(DragUpdateDetails details) => _dragDx += details.delta.dx;
-
-  /// 左划看下一步、右划回上一步：划过四分之一屏宽或同方向划得够快就切换。
-  /// 第一步没勾选时左划不生效，与“同意并继续”的禁用状态一致。
-  void _endSwipe(DragEndDetails details) {
-    final width = MediaQuery.sizeOf(context).width;
-    final velocity = details.primaryVelocity ?? 0;
-    final dx = _dragDx;
-    _dragDx = 0;
-    if (dx < -width * 0.25 || velocity < -300) {
-      unawaited(_advance());
+  /// 划到相邻的一页：往前沿用这一步的主操作，往回与“上一步”相同。写设备文件、
+  /// 换空间这类事情仍由主操作做，划动不另写一套。
+  void _swipeTo(int index) {
+    if (index < _controller.stage.index) {
+      _back();
       return;
     }
-    if (dx > width * 0.25 || velocity > 300) _back();
+    unawaited(_advance());
   }
 
   @override
@@ -268,21 +274,18 @@ class _OnboardingPageState extends State<OnboardingPage> {
                     child: _progress(context),
                   ),
                   Expanded(
-                    // 左右划动与底部按钮走同一套推进与返回；上下仍交给页面的
-                    // 滚动区。内容换页时只让新的一页淡入，旧内容不留在树里，
-                    // 登录表单的输入控制器不会同时挂在两份表单上。
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onHorizontalDragStart: _startSwipe,
-                      onHorizontalDragUpdate: _updateSwipe,
-                      onHorizontalDragEnd: _endSwipe,
-                      child: FadeIn(
-                        trigger: _controller.stage,
-                        child: KeyedSubtree(
-                          key: ValueKey(_controller.stage),
-                          child: _step(context),
-                        ),
-                      ),
+                    // 与底栏四栏同一套整页滑动：拖动途中相邻两页跟着手指走，
+                    // 松手按划过的比例或速度决定翻过去还是退回原处，不满足条件
+                    // 的一步不跟手。三步常驻，翻回来时登录表单里填过的内容还在。
+                    // 上下滚动仍由每一页自己的滚动区接走。
+                    child: TabSlideStack(
+                      index: _controller.stage.index,
+                      canSwipeTo: _canSwipeTo,
+                      onSwipe: _swipeTo,
+                      children: [
+                        for (final stage in OnboardingStage.values)
+                          _step(context, stage),
+                      ],
                     ),
                   ),
                   _navigation(context),
@@ -428,8 +431,8 @@ class _OnboardingPageState extends State<OnboardingPage> {
     );
   }
 
-  Widget _step(BuildContext context) {
-    return switch (_controller.stage) {
+  Widget _step(BuildContext context, OnboardingStage stage) {
+    return switch (stage) {
       OnboardingStage.terms => _termsStep(context),
       OnboardingStage.login => _loginStep(context),
       OnboardingStage.appearance => _appearanceStep(context),
@@ -438,13 +441,17 @@ class _OnboardingPageState extends State<OnboardingPage> {
 
   /// 一页的标题、说明与内容；底部的前后页操作固定在滚动区下面，键盘弹出时
   /// 由页面骨架让出高度，主操作仍然够得到。
+  ///
+  /// 三步常驻在页面栈里，出错说明只放在当前这一步，不跟着复制到另外两步。
   Widget _page(
     BuildContext context, {
+    required OnboardingStage stage,
     required String title,
     required String description,
     required List<Widget> children,
   }) {
     final theme = context.zhixin;
+    final error = stage == _controller.stage ? _error : null;
     return ListView(
       padding: theme.space.pageInsets(top: theme.space.section, bottom: 48),
       children: [
@@ -458,7 +465,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
         ),
         SizedBox(height: theme.space.section),
         ...children,
-        if (_error case final error?) ...[
+        if (error != null) ...[
           SizedBox(height: theme.space.md),
           InlineNotice(message: error),
         ],
@@ -470,6 +477,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     final theme = context.zhixin;
     return _page(
       context,
+      stage: OnboardingStage.terms,
       title: _controller.termsOnly ? '用户须知有更新' : '开始使用前，先看这两份说明',
       description: _controller.termsOnly
           ? '用户须知与隐私政策改过，同意之后才能继续使用登录、云同步与自动检查更新；'
@@ -526,6 +534,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     final theme = context.zhixin;
     return _page(
       context,
+      stage: OnboardingStage.login,
       title: '登录或注册',
       description:
           '登录之后可以使用知新服务的模型额度、云端备份与多设备同步；'
@@ -562,6 +571,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
     final scope = AppScope.of(context);
     return _page(
       context,
+      stage: OnboardingStage.appearance,
       title: '选择外观',
       description: '深浅色与主题色点选立即生效，也可以跳过；之后在设置里随时可以改。',
       children: [

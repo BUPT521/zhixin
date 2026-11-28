@@ -206,6 +206,8 @@ void main() {
     await tester.pump();
     await tester.tap(find.widgetWithText(forui.FButton, '同意并继续'));
     await pumpUntil(tester, find.text('登录或注册'));
+    // 第二步从右边滑进来，等它落定再让用例点第二步里的东西。
+    await settle(tester);
   }
 
   /// 在假服务端先建好一个账号，用例用“登录”而不是“注册”走第二步。
@@ -299,23 +301,95 @@ void main() {
     expect(find.text('选择外观'), findsOneWidget);
   });
 
-  testWidgets('左右划动翻页，第一步没勾选时往前划不动', (tester) async {
+  testWidgets('左右划动与底栏同一套整页滑动，没勾选同意时往前划不动', (tester) async {
     await openApp(tester);
     const termsTitle = '开始使用前，先看这两份说明';
 
-    // 没勾选时左划不切到下一步。
-    await tester.drag(find.byType(OnboardingPage), const Offset(-300, 0));
-    await settle(tester);
+    /// 在步骤内容的上缘开始一次横拖：那里只有标题，不和表单抢手势。
+    Future<TestGesture> startSwipe({double x = 60}) async {
+      final topLeft = tester.getTopLeft(find.byType(TabSlideStack));
+      return tester.startGesture(topLeft + Offset(x, 60));
+    }
+
+    // 没勾选时左划不跟手，松手也不切到下一步。
+    final resting = tester.getTopLeft(find.text(termsTitle)).dx;
+    final blocked = await startSwipe(x: 320);
+    await blocked.moveBy(const Offset(-60, 0));
+    await blocked.moveBy(const Offset(-120, 0));
+    await tester.pump();
+    expect(
+      tester.getTopLeft(find.text(termsTitle)).dx,
+      resting,
+      reason: '没勾选同意时左划不跟手',
+    );
+    await blocked.up();
+    await tester.pumpAndSettle();
     expect(find.text(termsTitle), findsOneWidget);
 
     await agreeTerms(tester);
-    await tester.drag(find.byType(OnboardingPage), const Offset(-300, 0));
+
+    // 勾选之后左划：登录这一步跟着手指往左走，松手翻到外观。
+    final loginDx = tester.getTopLeft(find.text('登录或注册')).dx;
+    final forward = await startSwipe(x: 320);
+    await forward.moveBy(const Offset(-60, 0));
+    await forward.moveBy(const Offset(-60, 0));
+    await tester.pump();
+    expect(
+      tester.getTopLeft(find.text('登录或注册')).dx,
+      lessThan(loginDx - 30),
+      reason: '拖动途中当前这一步跟着手指走',
+    );
+    await forward.moveBy(const Offset(-150, 0));
+    await forward.up();
     await pumpUntil(tester, find.text('选择外观'));
+    await settle(tester);
     expect(find.text('选择外观'), findsOneWidget, reason: '左划进入下一步');
 
-    await tester.drag(find.byType(OnboardingPage), const Offset(300, 0));
+    // 右划回到上一步；上一趟切换播完之前不接新的横拖。
+    final appearanceDx = tester.getTopLeft(find.text('选择外观')).dx;
+    final back = await startSwipe();
+    await back.moveBy(const Offset(60, 0));
+    await back.moveBy(const Offset(60, 0));
+    await tester.pump();
+    expect(
+      tester.getTopLeft(find.text('选择外观')).dx,
+      greaterThan(appearanceDx + 30),
+      reason: '右划时外观这一步跟着手指往右走',
+    );
+    await back.moveBy(const Offset(120, 0));
+    await back.up();
     await pumpUntil(tester, find.text('登录或注册'));
+    await settle(tester);
     expect(find.text('登录或注册'), findsOneWidget, reason: '右划回到上一步');
+  });
+
+  testWidgets('不同意之后外观页向右划不翻页，回第一步仍用上一步', (tester) async {
+    await openApp(tester);
+    await tester.tap(find.text('不同意，仅在本机使用'));
+    await pumpUntil(tester, find.text('选择外观'));
+    await settle(tester);
+
+    // 没有登录这一步，右划要回的那一步不挨着外观页，因此不跟手。
+    final dx = tester.getTopLeft(find.text('选择外观')).dx;
+    final gesture = await tester.startGesture(
+      tester.getTopLeft(find.byType(TabSlideStack)) + const Offset(60, 60),
+    );
+    await gesture.moveBy(const Offset(60, 0));
+    await gesture.moveBy(const Offset(120, 0));
+    await tester.pump();
+    expect(
+      tester.getTopLeft(find.text('选择外观')).dx,
+      dx,
+      reason: '不同意之后没有登录这一步，右划不跟手',
+    );
+    await gesture.up();
+    await settle(tester);
+    expect(find.text('选择外观'), findsOneWidget);
+
+    await tester.tap(find.widgetWithText(forui.FButton, '上一步'));
+    await pumpUntil(tester, find.text('开始使用前，先看这两份说明'));
+    await settle(tester);
+    expect(find.text('开始使用前，先看这两份说明'), findsOneWidget);
   });
 
   testWidgets('点步骤点可以回看，也可以跳过登录直接到外观', (tester) async {

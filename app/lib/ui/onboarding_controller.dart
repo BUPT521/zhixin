@@ -162,22 +162,27 @@ class OnboardingController extends ChangeNotifier {
     await _enter(OnboardingStage.appearance);
   }
 
+  /// 返回上一步会去的那一步；第一步没有上一步，返回空。
+  ///
+  /// 页面判断右划能不能翻时也用它：外观这一步在选过“不同意”之后没有登录这
+  /// 一步，回到第一步要越过登录页，右划因此不跟手，回第一步仍用底部按钮。
+  OnboardingStage? get previousStage {
+    if (_stage == OnboardingStage.terms) return null;
+    if (_stage == OnboardingStage.login) return OnboardingStage.terms;
+    if (termsOnly) return null;
+    return _record.agreed ? OnboardingStage.login : OnboardingStage.terms;
+  }
+
   /// 返回上一步；第一步由页面负责退出应用。
   ///
   /// 只改当前停留在哪一步，不把记下的步骤往回写：设备文件保存的是已经走到的
   /// 最远一步，返回之后重开应用仍从那里继续。
   void back() {
-    if (_stage == OnboardingStage.terms) return;
-    if (_stage == OnboardingStage.login) {
-      _stage = OnboardingStage.terms;
-      // 回到第一步时保留勾选：用户已经同意过，回来通常是改主意或看正文。
-      _termsChecked = true;
-    } else {
-      if (termsOnly) return;
-      // 主动跳过登录或不同意时没有登录这一步，回到第一步重新选。
-      _stage = _record.agreed ? OnboardingStage.login : OnboardingStage.terms;
-      _termsChecked = _record.agreed;
-    }
+    final previous = previousStage;
+    if (previous == null) return;
+    _stage = previous;
+    // 回到第一步时保留勾选：用户已经同意过，回来通常是改主意或看正文。
+    _termsChecked = previous == OnboardingStage.login || _record.agreed;
     notifyListeners();
   }
 

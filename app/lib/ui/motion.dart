@@ -500,12 +500,17 @@ class _PressScaleState extends State<PressScale> {
 /// 手指往外划时不跟着动。调用方收到 [onSwipe] 之后要把 [index] 换成传过去的
 /// 那一页，位移才能在划到的位置落定。页面里能横向滚动的内容先接走横拖，两者
 /// 之间由手势竞技场裁决。
+///
+/// 传入 [canSwipeTo] 之后，调用方还能挡住某一页：被挡住的方向不跟手，松手也
+/// 不切换，用在条件还没满足的步骤上，例如引导页第一步没勾选同意时不能划到
+/// 下一步。
 class TabSlideStack extends StatefulWidget {
   const TabSlideStack({
     super.key,
     required this.index,
     required this.children,
     this.onSwipe,
+    this.canSwipeTo,
   });
 
   final int index;
@@ -513,6 +518,10 @@ class TabSlideStack extends StatefulWidget {
 
   /// 左右划到相邻一页时要去的那一页；为空时这一层不接划动，只按 [index] 切换。
   final ValueChanged<int>? onSwipe;
+
+  /// 拖动时能不能划向某一页；为空时只看有没有相邻的一页。被挡住的方向不跟手，
+  /// 松手也不切换。
+  final bool Function(int index)? canSwipeTo;
 
   @override
   State<TabSlideStack> createState() => _TabSlideStackState();
@@ -629,6 +638,7 @@ class _TabSlideStackState extends State<TabSlideStack>
     if (dx == 0) return widget.index;
     final target = widget.index + (dx < 0 ? 1 : -1);
     if (target < 0 || target >= widget.children.length) return widget.index;
+    if (widget.canSwipeTo?.call(target) == false) return widget.index;
     return target;
   }
 
