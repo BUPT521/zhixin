@@ -1,6 +1,7 @@
 import '../data/repository/material_repository.dart';
 import '../domain/models/material.dart';
 import '../domain/rules/search_terms.dart';
+import 'paged_result.dart';
 
 /// 材料查找命中的原因；一次命中只写最靠前的一条。
 ///
@@ -35,42 +36,6 @@ class MaterialMatch {
   };
 }
 
-/// 一次材料查找的结果，按材料列表的顺序排列，一份材料只占一条。
-class MaterialSearchResults {
-  const MaterialSearchResults({
-    required this.query,
-    this.matches = const [],
-    this.hasMore = false,
-    this.nextOffset = 0,
-  });
-
-  final String query;
-  final List<MaterialMatch> matches;
-
-  /// 还有更早的命中没有取回；调用方继续用 [MaterialSearchService.searchPage]。
-  final bool hasMore;
-
-  /// 下一页从第几条开始。
-  final int nextOffset;
-
-  bool get isEmpty => matches.isEmpty;
-
-  /// 接上下一页：同一份材料只保留第一次出现的那一条。
-  MaterialSearchResults append(MaterialSearchResults next) {
-    final seen = {for (final match in matches) match.material.id};
-    return MaterialSearchResults(
-      query: next.query.isEmpty ? query : next.query,
-      matches: [
-        ...matches,
-        for (final match in next.matches)
-          if (seen.add(match.material.id)) match,
-      ],
-      hasMore: next.hasMore,
-      nextOffset: next.nextOffset,
-    );
-  }
-}
-
 /// 材料列表与材料选择器共用的本地查找。
 ///
 /// 不调用模型：标题、来源、页标签与页内正文都在本机查，断网与没有配置模型
@@ -82,18 +47,15 @@ class MaterialSearchService {
 
   final MaterialRepository materials;
 
-  /// 一页取多少份材料；列表与选择器都用这一档，翻页入口不必各写一份。
-  static const int pageSize = 20;
-
-  /// 取第 [offset] 条起的一页命中；[hasMore] 表示后面还有。
-  Future<MaterialSearchResults> searchPage(
+  /// 取第 [offset] 条起的一页命中；[PagedResult.hasMore] 表示后面还有。
+  Future<PagedResult<MaterialMatch>> searchPage(
     String query, {
     int offset = 0,
-    int pageSize = pageSize,
+    int pageSize = kSearchPageSize,
   }) async {
     final text = query.trim();
     if (text.isEmpty || pageSize <= 0) {
-      return MaterialSearchResults(query: text);
+      return const PagedResult<MaterialMatch>();
     }
     // 多取一条用来判断后面还有没有，不必再查一次总数。
     final rows = await materials.search(
@@ -103,9 +65,8 @@ class MaterialSearchService {
     );
     final hasMore = rows.length > pageSize;
     final page = hasMore ? rows.sublist(0, pageSize) : rows;
-    return MaterialSearchResults(
-      query: text,
-      matches: [for (final row in page) _match(text, row)],
+    return PagedResult(
+      items: [for (final row in page) _match(text, row)],
       hasMore: hasMore,
       nextOffset: offset + page.length,
     );

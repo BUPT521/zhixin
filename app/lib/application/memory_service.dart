@@ -6,6 +6,7 @@ import '../data/repository/task_repository.dart';
 import '../domain/models/memory.dart';
 import '../domain/models/write_result.dart';
 import '../domain/rules/time_format.dart';
+import 'paged_result.dart';
 import 'screen_tables.dart';
 import 'service_runtime.dart';
 import 'user_failure.dart';
@@ -94,44 +95,6 @@ class MemorySearchQuery {
   int get hashCode => Object.hash(text, kind, scope, status);
 }
 
-/// 记忆查找的一页结果：命中的条目、范围名字与继续翻页的位置。
-class MemorySearchResults {
-  const MemorySearchResults({
-    required this.query,
-    required this.memories,
-    required this.scopeLabels,
-    required this.matched,
-    required this.hasMore,
-    required this.nextOffset,
-  });
-
-  final MemorySearchQuery query;
-  final List<Memory> memories;
-
-  /// 范围标识到显示名的对应，与记忆页共用同一份读法。
-  final Map<String, String> scopeLabels;
-
-  /// 本次条件命中的总条数，用于在页脚说明还剩多少没有显示。
-  final int matched;
-  final bool hasMore;
-  final int nextOffset;
-
-  bool get isEmpty => memories.isEmpty;
-
-  /// 追加一页；只有同一组条件才能合并，页面换了筛选就重新取第一页。
-  MemorySearchResults append(MemorySearchResults next) {
-    assert(next.query == query);
-    return MemorySearchResults(
-      query: query,
-      memories: [...memories, ...next.memories],
-      scopeLabels: next.scopeLabels,
-      matched: next.matched,
-      hasMore: next.hasMore,
-      nextOffset: next.nextOffset,
-    );
-  }
-}
-
 /// 记忆页：列出、修改、删除；修改后只碰记忆表，回答读的是新内容。
 ///
 /// 每次保存与删除都在一条提交里完成，并返回提交编号供提示条撤销；内容没有
@@ -176,32 +139,28 @@ class MemoryService {
 
   Future<List<Memory>> list() => repository.list(includeInactive: true);
 
-  /// 记忆查找一页的条数；与记录页查找一致，翻页只取用户真正看得到的一页。
-  static const int searchPageSize = 20;
-
   /// 按正文、类别、适用范围与状态查找，全部在本机完成。
   ///
-  /// 读取沿用记忆页的整屏读法，范围名字随结果一起返回；调用方换了查询或筛选
-  /// 之后用新的 [MemorySearchQuery] 重取第一页，并用 `RequestGate` 丢弃晚到
-  /// 的旧结果。分页在过滤之后执行，因此命中超过一页时也能翻到最早一条。
-  Future<MemorySearchResults> search(
+  /// 只读记忆表：范围名字由记忆页自己的 [loadPage] 取，查找结果不再带回；调用
+  /// 方换了查询或筛选之后用新的 [MemorySearchQuery] 重取第一页，并用
+  /// `RequestGate` 丢弃晚到的旧结果。分页在过滤之后执行，因此命中超过一页时
+  /// 也能翻到最早一条；[PagedResult.total] 是本次条件下的命中总数。
+  Future<PagedResult<Memory>> search(
     MemorySearchQuery query, {
     int offset = 0,
-    int pageSize = searchPageSize,
+    int pageSize = kSearchPageSize,
   }) async {
-    final view = await loadPage();
+    final memories = await list();
     final now = runtime.policy.now;
-    final matched = view.memories
+    final matched = memories
         .where((memory) => _matches(memory, query, now))
         .toList(growable: false);
     final page = matched.skip(offset).take(pageSize).toList(growable: false);
-    return MemorySearchResults(
-      query: query,
-      memories: page,
-      scopeLabels: view.scopeLabels,
-      matched: matched.length,
+    return PagedResult(
+      items: page,
       hasMore: offset + page.length < matched.length,
       nextOffset: offset + page.length,
+      total: matched.length,
     );
   }
 

@@ -6,6 +6,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:zhixin/application/docx_import.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/application/material_service.dart';
+import 'package:zhixin/application/paged_result.dart';
 import 'package:zhixin/application/user_failure.dart';
 import 'package:zhixin/application/search_service.dart';
 import 'package:zhixin/domain/rules/schema_version.dart';
@@ -14,6 +15,7 @@ import 'package:zhixin/data/repository/evidence_repository.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/revisions/revision_package.dart';
 import 'package:zhixin/domain/models/evidence.dart';
+import 'package:zhixin/domain/models/search.dart';
 
 import '../support/docx_fixture.dart';
 import '../support/service_runtime.dart';
@@ -175,14 +177,14 @@ void main() {
       '用乘法公式检验独立性',
       scope: EvidenceScope.userMaterial(id),
     );
-    expect(hits.entries.single.hits.first.title, '《概率讲义》第 2 个片段');
-    expect(hits.entries.single.hits.first.location.pageNo, 2);
+    expect(hits.items.single.hits.first.title, '《概率讲义》第 2 个片段');
+    expect(hits.items.single.hits.first.location.pageNo, 2);
     final formulaHits = await _searchAll(
       search,
       '独立性判据',
       scope: EvidenceScope.userMaterial(id),
     );
-    expect(formulaHits.entries.single.hits.first.location.pageNo, 2);
+    expect(formulaHits.items.single.hits.first.location.pageNo, 2);
     final second = (await service.page(id, 2))!;
     expect(second.content, contains('独立性判据 P(AB)=P(A)P(B)'));
     final correction = (await service.correctPage(
@@ -214,7 +216,7 @@ void main() {
 }
 
 /// 用例要全部命中时把页大小放大，行为与原先不分页的 search 一致。
-Future<SearchResults> _searchAll(
+Future<PagedResult<SearchEntry>> _searchAll(
   SearchService service,
   String query, {
   EvidenceScope scope = const EvidenceScope.userAll(),

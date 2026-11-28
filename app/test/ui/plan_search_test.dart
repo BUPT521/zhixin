@@ -8,6 +8,7 @@ import 'package:forui_lucide/forui_lucide.dart' show FLucideIcons;
 import 'package:material_ui/material_ui.dart';
 import 'package:zhixin/app.dart';
 import 'package:zhixin/app_scope.dart';
+import 'package:zhixin/application/paged_result.dart';
 import 'package:zhixin/application/plan_search.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/domain/models/study.dart';
@@ -293,12 +294,12 @@ void main() {
 
   testWidgets('快速改关键词只显示最后一次请求的结果', (tester) async {
     // 注入一份可控制完成顺序的读法：先发起的请求晚回来，页面不能因此回退。
-    final pending = <String, Completer<PlanSearchPageResult>>{};
-    Future<PlanSearchPageResult> fakeSearch(
+    final pending = <String, Completer<PagedResult<PlanSearchHit>>>{};
+    Future<PagedResult<PlanSearchHit>> fakeSearch(
       PlanSearchQuery query, {
       int offset = 0,
     }) {
-      final completer = Completer<PlanSearchPageResult>();
+      final completer = Completer<PagedResult<PlanSearchHit>>();
       pending[query.keyword] = completer;
       return completer.future;
     }
@@ -352,9 +353,8 @@ void main() {
 
     // 后发起的请求先回来，页面显示乙的结果。
     pending['乙']!.complete(
-      PlanSearchPageResult(
-        query: const PlanSearchQuery(keyword: '乙'),
-        hits: [PlanSearchHit.item(PlanItem(id: 'b', title: '乙的结果'))],
+      PagedResult(
+        items: [PlanSearchHit.item(PlanItem(id: 'b', title: '乙的结果'))],
         nextOffset: 1,
       ),
     );
@@ -363,9 +363,8 @@ void main() {
 
     // 早发起的请求晚回来，不再覆盖已经显示的最后一次结果。
     pending['甲']!.complete(
-      PlanSearchPageResult(
-        query: const PlanSearchQuery(keyword: '甲'),
-        hits: [PlanSearchHit.item(PlanItem(id: 'a', title: '甲的结果'))],
+      PagedResult(
+        items: [PlanSearchHit.item(PlanItem(id: 'a', title: '甲的结果'))],
         nextOffset: 1,
       ),
     );

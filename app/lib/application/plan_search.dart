@@ -5,10 +5,8 @@ library;
 
 import '../domain/models/study.dart';
 import '../domain/rules/search_terms.dart';
+import 'paged_result.dart';
 import 'user_failure.dart';
-
-/// 安排查找一页的条数；记录页查找同样是二十条一页。
-const int planSearchPageSize = 20;
 
 /// 一次安排查找的条件；全部为空时页面只显示入口提示，不发起查询。
 class PlanSearchQuery {
@@ -71,37 +69,6 @@ class PlanSearchHit {
   DateTime? get at => item.dueAt;
 }
 
-/// 一页安排查找结果；还有更早的命中时按 [nextOffset] 继续读。
-class PlanSearchPageResult {
-  const PlanSearchPageResult({
-    required this.query,
-    this.hits = const [],
-    this.hasMore = false,
-    this.nextOffset = 0,
-  });
-
-  final PlanSearchQuery query;
-  final List<PlanSearchHit> hits;
-  final bool hasMore;
-  final int nextOffset;
-
-  bool get isEmpty => hits.isEmpty;
-
-  /// 接上下一页：同一个键的结果只保留一次，与记录页查找的追加规则一致。
-  PlanSearchPageResult append(PlanSearchPageResult next) {
-    final seen = {for (final hit in hits) hit.id};
-    return PlanSearchPageResult(
-      query: next.query,
-      hits: [
-        for (final hit in [...hits, ...next.hits])
-          if (seen.add(hit.id)) hit,
-      ],
-      hasMore: next.hasMore,
-      nextOffset: next.nextOffset,
-    );
-  }
-}
-
 /// 最终顺序：有时间的结果按时间从晚到早，没有时间的排在最后，同一时刻按
 /// 标题与编号定序。分页在这个总顺序上切片，翻页因此不会重复或漏掉最早的
 /// 一条（V10）。
@@ -122,8 +89,7 @@ int comparePlanSearchHits(PlanSearchHit a, PlanSearchHit b) {
 }
 
 /// 把候选排成最终顺序，切出第 [offset] 条起的一页。
-PlanSearchPageResult pagePlanSearchHits(
-  PlanSearchQuery query,
+PagedResult<PlanSearchHit> pagePlanSearchHits(
   List<PlanSearchHit> hits, {
   required int offset,
   required int pageSize,
@@ -132,16 +98,15 @@ PlanSearchPageResult pagePlanSearchHits(
   if (pageSize <= 0) throw const UserFailure('每页条数要大于零');
   final sorted = [...hits]..sort(comparePlanSearchHits);
   final page = sorted.skip(offset).take(pageSize).toList(growable: false);
-  return PlanSearchPageResult(
-    query: query,
-    hits: page,
+  return PagedResult(
+    items: page,
     hasMore: offset + page.length < sorted.length,
     nextOffset: offset + page.length,
   );
 }
 
 /// 查找入口的读法：页面默认走安排服务的 `searchPage`，测试可以换一份。
-typedef PlanSearchRunner = Future<PlanSearchPageResult> Function(
+typedef PlanSearchRunner = Future<PagedResult<PlanSearchHit>> Function(
   PlanSearchQuery query, {
   int offset,
 });

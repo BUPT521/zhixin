@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/material_search.dart';
+import 'package:zhixin/application/paged_result.dart';
 import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 
@@ -35,22 +36,22 @@ void main() {
     final service = MaterialSearchService(materials: repository);
 
     final title = await service.searchPage('概率论');
-    expect(title.matches.single.material.id, titleId);
-    expect(title.matches.single.reason, '标题命中');
+    expect(title.items.single.material.id, titleId);
+    expect(title.items.single.reason, '标题命中');
 
     final source = await service.searchPage('第 8 章');
-    expect(source.matches.single.material.id, sourceId);
-    expect(source.matches.single.reason, '来源命中');
+    expect(source.items.single.material.id, sourceId);
+    expect(source.items.single.reason, '来源命中');
 
     final label = await service.searchPage('循环结构');
-    expect(label.matches.single.material.id, labelId);
-    expect(label.matches.single.reason, '第 2 页的标签命中');
-    expect(label.matches.single.pageNo, 2);
+    expect(label.items.single.material.id, labelId);
+    expect(label.items.single.reason, '第 2 页的标签命中');
+    expect(label.items.single.pageNo, 2);
 
     final content = await service.searchPage('中序遍历');
-    expect(content.matches.single.material.id, contentId);
-    expect(content.matches.single.reason, '第 3 页的正文命中');
-    expect(content.matches.single.snippet, contains('中序遍历'));
+    expect(content.items.single.material.id, contentId);
+    expect(content.items.single.reason, '第 3 页的正文命中');
+    expect(content.items.single.snippet, contains('中序遍历'));
   });
 
   test('近似写法不命中，题号、公式与下划线按原样命中', () async {
@@ -65,13 +66,13 @@ void main() {
     final service = MaterialSearchService(materials: repository);
 
     final numbered = await service.searchPage('例 3-2');
-    expect(numbered.matches.map((match) => match.material.id), [exact]);
+    expect(numbered.items.map((match) => match.material.id), [exact]);
 
     final underscored = await service.searchPage('a_b');
-    expect(underscored.matches.map((match) => match.material.id), [underscore]);
+    expect(underscored.items.map((match) => match.material.id), [underscore]);
 
     final formulaHits = await service.searchPage('f(x)');
-    expect(formulaHits.matches.map((match) => match.material.id), [formula]);
+    expect(formulaHits.items.map((match) => match.material.id), [formula]);
   });
 
   test('同类命中超过 40 条时按材料顺序分页，能翻到最早一条', () async {
@@ -91,25 +92,27 @@ void main() {
     final service = MaterialSearchService(materials: repository);
 
     final first = await service.searchPage('验收材料');
-    expect(first.matches, hasLength(MaterialSearchService.pageSize));
+    expect(first.items, hasLength(kSearchPageSize));
     expect(first.hasMore, isTrue);
     // 最近修改的在前，与材料列表的顺序一致。
-    expect(first.matches.first.material.id, ids.last);
+    expect(first.items.first.material.id, ids.last);
 
     final second = await service.searchPage('验收材料', offset: first.nextOffset);
-    expect(second.matches, hasLength(MaterialSearchService.pageSize));
+    expect(second.items, hasLength(kSearchPageSize));
     expect(second.hasMore, isTrue);
 
     final third = await service.searchPage('验收材料', offset: second.nextOffset);
-    expect(third.matches, hasLength(5));
+    expect(third.items, hasLength(5));
     expect(third.hasMore, isFalse);
     // 最早创建的一条在最后一页的最后一行。
-    expect(third.matches.last.material.id, ids.first);
+    expect(third.items.last.material.id, ids.first);
 
     // 接上之后共 45 条，没有重复也没有漏项。
-    final all = first.append(second).append(third);
-    expect(all.matches, hasLength(45));
-    expect(all.matches.map((match) => match.material.id).toSet(), ids.toSet());
+    final all = first
+        .append(second, key: (match) => match.material.id)
+        .append(third, key: (match) => match.material.id);
+    expect(all.items, hasLength(45));
+    expect(all.items.map((match) => match.material.id).toSet(), ids.toSet());
   });
 
   test('同名材料按目标或材料区分，各占一条命中', () async {
@@ -127,7 +130,7 @@ void main() {
     final service = MaterialSearchService(materials: repository);
 
     final results = await service.searchPage('复习讲义');
-    expect(results.matches.map((match) => match.material.id).toSet(), {
+    expect(results.items.map((match) => match.material.id).toSet(), {
       algebra,
       programming,
     });

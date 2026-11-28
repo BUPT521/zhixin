@@ -2,47 +2,7 @@ import '../application/evidence_service.dart';
 import '../domain/models/evidence.dart';
 import '../domain/models/search.dart';
 import '../domain/rules/search_fusion.dart';
-
-/// 用户主动检索的结果；一条学习记录占一个 [SearchEntry]，材料页按页各占一个。
-///
-/// 查找范围单独记录：用户可以在全部记录、一个目标或一份材料里查找，这个
-/// 选择只影响本次查找，不改变回答时使用的范围。
-class SearchResults {
-  const SearchResults({
-    required this.query,
-    this.scope = const EvidenceScope.userAll(),
-    this.entries = const [],
-    this.hasMore = false,
-    this.nextOffset = 0,
-  });
-
-  final String query;
-  final EvidenceScope scope;
-  final List<SearchEntry> entries;
-
-  /// 还有更早的命中没有取回；调用方用 [SearchService.searchPage] 继续翻页。
-  final bool hasMore;
-
-  /// 下一页从融合后的第几条记录开始。
-  final int nextOffset;
-
-  bool get isEmpty => entries.isEmpty;
-
-  /// 接上下一页：按记录键去重，已经显示过的记录不再重复出现。
-  SearchResults append(SearchResults next) {
-    final seen = <String>{};
-    return SearchResults(
-      query: next.query.isEmpty ? query : next.query,
-      scope: next.scope,
-      entries: [
-        for (final entry in [...entries, ...next.entries])
-          if (seen.add(entry.key)) entry,
-      ],
-      hasMore: next.hasMore,
-      nextOffset: next.nextOffset,
-    );
-  }
-}
+import 'paged_result.dart';
 
 /// 记录页的本地检索：不联网也能完成，覆盖讨论消息、题目、已提交作答与材料页。
 ///
@@ -56,28 +16,25 @@ class SearchService {
 
   final EvidenceService evidence;
 
-  static const int defaultPageSize = 20;
-
   /// 带索引命中时字面候选的固定窗口；超过这个条数的更早记录不进入本次融合。
   static const int fusionWindow = 2000;
 
-  /// 取去重后的第 [offset] 条学习记录起的一页；[hasMore] 表示后面还有命中。
+  /// 取去重后的第 [offset] 条学习记录起的一页；[PagedResult.hasMore] 表示后面
+  /// 还有命中。
   ///
   /// [semanticHits] 为空时先读本地窗口再按需扩大，与只有字面检索时一致，索引
   /// 候选由 [EvidenceService.userSearchWindow] 一并取回。传入索引命中时本地
   /// 窗口只取字面，关键词与语义候选不再重复读取，融合之后再切片；`nextOffset`
   /// 数的是融合后的记录数。
-  Future<SearchResults> searchPage(
+  Future<PagedResult<SearchEntry>> searchPage(
     String query, {
     EvidenceScope scope = const EvidenceScope.userAll(),
     int offset = 0,
-    int pageSize = defaultPageSize,
+    int pageSize = kSearchPageSize,
     List<EvidenceHit> semanticHits = const [],
   }) async {
     final trimmed = query.trim();
-    if (trimmed.isEmpty) {
-      return SearchResults(query: '', scope: scope);
-    }
+    if (trimmed.isEmpty) return const PagedResult<SearchEntry>();
     if (semanticHits.isNotEmpty) {
       final window = await evidence.userSearchWindow(
         trimmed,
@@ -87,10 +44,8 @@ class SearchService {
       );
       final fused = fuseSearch(_entries(window.hits), semanticHits);
       final page = fused.skip(offset).take(pageSize).toList(growable: false);
-      return _results(
-        window.query,
-        scope,
-        page,
+      return PagedResult(
+        items: page,
         hasMore: offset + page.length < fused.length,
         nextOffset: offset + page.length,
       );
@@ -106,32 +61,14 @@ class SearchService {
       final filled = entries.length > offset + pageSize;
       if (filled || !window.more || maxHits >= 6400) {
         final page = entries.skip(offset).take(pageSize).toList();
-        return _results(
-          window.query,
-          scope,
-          page,
+        return PagedResult(
+          items: page,
           hasMore: filled || window.more,
           nextOffset: offset + page.length,
         );
       }
       maxHits *= 4;
     }
-  }
-
-  SearchResults _results(
-    String query,
-    EvidenceScope scope,
-    List<SearchEntry> entries, {
-    required bool hasMore,
-    required int nextOffset,
-  }) {
-    return SearchResults(
-      query: query,
-      scope: scope,
-      entries: entries,
-      hasMore: hasMore,
-      nextOffset: nextOffset,
-    );
   }
 
   /// 按学习记录去重：同一条记录的题目、消息与作答只占一个位置，消息只保留

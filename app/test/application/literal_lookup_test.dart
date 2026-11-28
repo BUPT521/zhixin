@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/evidence_service.dart';
 import 'package:zhixin/data/db/raw_executor.dart';
+import 'package:zhixin/application/paged_result.dart';
 import 'package:zhixin/application/search_service.dart';
 import 'package:zhixin/data/repository/attempt_repository.dart';
 import 'package:zhixin/data/repository/conversation_repository.dart';
@@ -9,6 +10,7 @@ import 'package:zhixin/data/repository/material_repository.dart';
 import 'package:zhixin/domain/models/material.dart';
 import 'package:zhixin/data/repository/task_repository.dart';
 import 'package:zhixin/domain/models/evidence.dart';
+import 'package:zhixin/domain/models/search.dart';
 import 'package:zhixin/domain/rules/query_shape.dart';
 
 import '../support/test_db.dart';
@@ -268,7 +270,7 @@ void main() {
     addTearDown(rig.db.close);
 
     final results = await _searchAll(rig.search, 'P(A|B)');
-    final answer = results.entries
+    final answer = results.items
         .expand((entry) => entry.hits)
         .singleWhere((hit) => hit.kind == EvidenceKind.answer);
     expect(answer.location.conversationId, rig.corpus.question);
@@ -417,7 +419,7 @@ void main() {
     final results = await _searchAll(rig.search, '例 3-2');
     expect(results.isEmpty, isFalse);
     expect(
-      results.entries.map((entry) => entry.key),
+      results.items.map((entry) => entry.key),
       contains('conversation:${rig.corpus.question}'),
     );
   });
@@ -488,7 +490,7 @@ void main() {
 }
 
 /// 用例要全部命中时把页大小放大，行为与原先不分页的 search 一致。
-Future<SearchResults> _searchAll(
+Future<PagedResult<SearchEntry>> _searchAll(
   SearchService service,
   String query, {
   EvidenceScope scope = const EvidenceScope.userAll(),

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:zhixin/application/evidence_service.dart';
+import 'package:zhixin/application/paged_result.dart';
 import 'package:zhixin/application/request_gate.dart';
 import 'package:zhixin/application/search_service.dart';
 import 'package:zhixin/application/search_index_service.dart';
@@ -24,16 +25,16 @@ import '../support/test_db.dart';
 
 import 'package:zhixin/data/db/sql.dart';
 
-List<EvidenceHit> _hits(SearchResults results) => [
-  for (final entry in results.entries) ...entry.hits,
+List<EvidenceHit> _hits(PagedResult<SearchEntry> results) => [
+  for (final entry in results.items) ...entry.hits,
 ];
 
-EvidenceHit _singleHit(SearchResults results, EvidenceKind kind) =>
+EvidenceHit _singleHit(PagedResult<SearchEntry> results, EvidenceKind kind) =>
     _hits(results).singleWhere((hit) => hit.kind == kind);
 
 String _conversationKey(String id) => 'conversation:$id';
 
-Iterable<int?> _materialPages(SearchResults results) =>
+Iterable<int?> _materialPages(PagedResult<SearchEntry> results) =>
     _hits(results)
         .where((hit) => hit.kind == EvidenceKind.materialPage)
         .map((hit) => hit.location.pageNo);
@@ -103,7 +104,7 @@ void main() {
     // 用户主动检索不按目标过滤，两个目标的记录都能找到。
     final probabilityResults = await _searchAll(search, '条件概率');
     expect(
-      probabilityResults.entries.map((entry) => entry.key),
+      probabilityResults.items.map((entry) => entry.key),
       containsAll([_conversationKey(probability), _conversationKey(question)]),
     );
     expect(
@@ -227,7 +228,7 @@ void main() {
     }
 
     final first = await search.searchPage('矩阵', pageSize: 20);
-    expect(first.entries, hasLength(20));
+    expect(first.items, hasLength(20));
     expect(first.hasMore, isTrue);
     expect(first.nextOffset, 20);
 
@@ -241,12 +242,12 @@ void main() {
       offset: second.nextOffset,
       pageSize: 20,
     );
-    expect(third.entries, hasLength(20));
+    expect(third.items, hasLength(20));
     expect(third.hasMore, isFalse);
 
     final reached = {
       for (final results in [first, second, third])
-        for (final entry in results.entries)
+        for (final entry in results.items)
           for (final hit in entry.hits) hit.location.conversationId,
     };
     expect(reached, hasLength(60));
@@ -320,7 +321,7 @@ void main() {
 
     await semantic.refresh();
     final results = await search.searchPage('矩阵 独立性', pageSize: 20);
-    expect(results.entries.first.hits.first.location.conversationId, old);
+    expect(results.items.first.hits.first.location.conversationId, old);
   });
 
   test('用户查找按原样区分近似写法', () async {
@@ -418,11 +419,9 @@ void main() {
     }
 
     final first = await search.searchPage('矩阵', pageSize: 20);
-    expect(first.entries, hasLength(20));
+    expect(first.items, hasLength(20));
     expect(
-      first.entries
-          .where((entry) => entry.key == _conversationKey(noisy))
-          .length,
+      first.items.where((entry) => entry.key == _conversationKey(noisy)).length,
       1,
       reason: '同一条记录只列出相关性最高的一条消息',
     );
@@ -433,11 +432,11 @@ void main() {
       offset: first.nextOffset,
       pageSize: 20,
     );
-    expect(second.entries, hasLength(5));
+    expect(second.items, hasLength(5));
     expect(second.hasMore, isFalse);
     final reached = {
       for (final results in [first, second])
-        for (final entry in results.entries)
+        for (final entry in results.items)
           for (final hit in entry.hits) hit.location.conversationId,
     };
     expect(reached, hasLength(ids.length));
@@ -500,7 +499,7 @@ void main() {
         ),
     ];
 
-    final pages = <SearchResults>[];
+    final pages = <PagedResult<SearchEntry>>[];
     var offset = 0;
     while (true) {
       final page = await search.searchPage(
@@ -517,7 +516,7 @@ void main() {
 
     final keys = [
       for (final page in pages)
-        for (final entry in page.entries) entry.key,
+        for (final entry in page.items) entry.key,
     ];
     expect(keys.toSet().length, keys.length, reason: '翻页不重复');
     expect(keys, hasLength(localIds.length + semanticIds.length));
@@ -529,7 +528,7 @@ void main() {
     expect(
       [
         for (final page in pages)
-          for (final entry in page.entries) entry,
+          for (final entry in page.items) entry,
       ].any((entry) => entry.semanticRank != null),
       isTrue,
     );
@@ -551,21 +550,19 @@ void main() {
       hits: [hit('conv-$id')],
       localRank: id,
     );
-    final first = SearchResults(
-      query: '矩阵',
-      entries: [entry(1), entry(2)],
+    final first = PagedResult<SearchEntry>(
+      items: [entry(1), entry(2)],
       hasMore: true,
       nextOffset: 2,
     );
-    final next = SearchResults(
-      query: '矩阵',
-      entries: [entry(2), entry(3)],
-      hasMore: false,
+    final next = PagedResult<SearchEntry>(
+      items: [entry(2), entry(3)],
       nextOffset: 3,
     );
 
-    final merged = first.append(next);
-    expect(merged.entries.map((entry) => entry.key), [
+    // 去重由页面查找状态的 key 交给 append，已经显示过的记录不再重复追加。
+    final merged = first.append(next, key: (entry) => entry.key);
+    expect(merged.items.map((entry) => entry.key), [
       'conversation:conv-1',
       'conversation:conv-2',
       'conversation:conv-3',
@@ -576,7 +573,7 @@ void main() {
 }
 
 /// 用例要全部命中时把页大小放大，行为与原先不分页的 search 一致。
-Future<SearchResults> _searchAll(
+Future<PagedResult<SearchEntry>> _searchAll(
   SearchService service,
   String query, {
   EvidenceScope scope = const EvidenceScope.userAll(),

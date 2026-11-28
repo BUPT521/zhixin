@@ -144,7 +144,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
     );
   }
 
-  /// 取一页结果：把服务返回的 `PlanSearchPageResult` 转成共用的分页结果。
+  /// 取一页结果：服务直接返回共用的分页结果。
   ///
   /// 失败时记下调用栈再抛出，页面上的说明由 [describeFailure] 生成。
   Future<PagedResult<PlanSearchHit>> _fetchPage(
@@ -152,12 +152,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
     int offset,
   ) async {
     try {
-      final result = await _runSearch(query, offset: offset);
-      return PagedResult(
-        items: result.hits,
-        hasMore: result.hasMore,
-        nextOffset: result.nextOffset,
-      );
+      return await _runSearch(query, offset: offset);
     } catch (error, stack) {
       _failureStack = stack;
       rethrow;
@@ -199,7 +194,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
     );
   }
 
-  Future<PlanSearchPageResult> _runSearch(
+  Future<PagedResult<PlanSearchHit>> _runSearch(
     PlanSearchQuery query, {
     required int offset,
   }) {

@@ -181,22 +181,17 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     );
   }
 
-  /// 取一页结果：把服务返回的 `SearchResults` 转成共用的分页结果。
+  /// 取一页结果：服务直接返回共用的分页结果。
   ///
   /// 失败时记下调用栈再抛出，页面上的说明由 [describeFailure] 生成。
   Future<PagedResult<SearchEntry>> _fetchPage(String query, int offset) async {
     try {
-      final results = await AppScope.of(context).library.search.searchPage(
+      return await AppScope.of(context).library.search.searchPage(
         query,
         scope: _scope,
         offset: offset,
         pageSize: _searchState.pageSize,
         semanticHits: _semanticHits,
-      );
-      return PagedResult(
-        items: results.entries,
-        hasMore: results.hasMore,
-        nextOffset: results.nextOffset,
       );
     } catch (error, stack) {
       _failureStack = stack;
