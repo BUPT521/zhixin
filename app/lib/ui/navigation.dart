@@ -161,9 +161,9 @@ Future<void> openDataVersion(BuildContext context) =>
 Future<void> openAbout(BuildContext context) =>
     _push<void>(context, (_) => const AboutPage());
 
-/// 打开用户须知：首次启动引导第一步、设置页“诊断与隐私”与本机模式下的账号页。
+/// 打开用户须知：首次启动的同意对话框、设置页“诊断与隐私”与本机模式下的账号页。
 ///
-/// 引导第一步自己带勾选框，打开文档时传 [allowAgree] 为假，避免在文档页里直接
+/// 同意对话框自己带勾选框，打开文档时传 [allowAgree] 为假，避免在文档页里直接
 /// 同意；设置页与账号页的同意入口把它留作真。
 Future<void> openUserTerms(BuildContext context, {bool allowAgree = true}) =>
     _push<void>(

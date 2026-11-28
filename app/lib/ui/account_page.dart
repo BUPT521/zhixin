@@ -49,7 +49,7 @@ class AccountPage extends StatefulWidget {
   /// 的内容。
   final bool initialReset;
 
-  /// 找回密码表单预填的邮箱；为空时留空。引导第二步已经填过邮箱，带过来省一次
+  /// 找回密码表单预填的邮箱；为空时留空。引导的登录页已经填过邮箱，带过来省一次
   /// 输入。
   final String initialIdentifier;
 
@@ -636,7 +636,7 @@ class _AccountPageState extends State<AccountPage> {
     ];
   }
 
-  /// 登录卡：与首次启动引导第二步共用同一个表单。
+  /// 登录卡：与首次启动引导的登录页共用同一个表单。
   Widget _loginForm(BuildContext context) => AccountLoginForm(
     identifier: _identifier,
     onSignedIn: _signedIn,

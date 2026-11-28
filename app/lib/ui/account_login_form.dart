@@ -12,7 +12,7 @@ import 'workspace_widgets.dart';
 /// 登录与注册表单：账号页与首次启动引导共用这一份。
 ///
 /// 表单只做邮箱与密码的输入、校验与提交，登录成功之后由调用方决定后面的界面；
-/// 账号页用它显示登录卡，引导第二步用它登录或注册。登录之后的同步调度由换空间
+/// 账号页用它显示登录卡，引导的登录页用它登录或注册。登录之后的同步调度由换空间
 /// 之后新建的应用根在装配时安排，表单不再自己调度一次。
 class AccountLoginForm extends StatefulWidget {
   const AccountLoginForm({
@@ -20,13 +20,14 @@ class AccountLoginForm extends StatefulWidget {
     required this.identifier,
     this.onSignedIn,
     this.onForgotPassword,
+    this.ensureConsent,
   });
 
   /// 登录方式输入框的控制器；账号页的“忘记密码”也要用同一个邮箱，所以由页面
   /// 持有，切到重设表单时输入的内容不丢。
   final TextEditingController identifier;
 
-  /// 登录或注册成功之后调用；引导据此进入第三步，账号页据此刷新账号状态。
+  /// 登录或注册成功之后调用；引导据此进入外观这一步，账号页据此刷新账号状态。
   ///
   /// 登录会触发换空间时，整棵界面子树在调用登录的过程中重建，表单所在的页面
   /// 已经卸载，这时不再调用。
@@ -38,6 +39,12 @@ class AccountLoginForm extends StatefulWidget {
 
   /// 提供时显示“忘记密码”按钮；引导里跳账号页，账号页里切到重设表单。
   final VoidCallback? onForgotPassword;
+
+  /// 提交之前先取得用户须知的同意，返回假表示这次不提交。
+  ///
+  /// 引导里第一次登录时用它弹同意对话框；账号页的登录卡在纯本机模式下已经
+  /// 换成同意入口，不传这一项。
+  final Future<bool> Function()? ensureConsent;
 
   @override
   State<AccountLoginForm> createState() => _AccountLoginFormState();
@@ -73,6 +80,12 @@ class _AccountLoginFormState extends State<AccountLoginForm> {
     });
     final scope = AppScope.of(context);
     try {
+      // 引导里第一次登录先取得用户须知的同意；不同意时这次不提交，字段里填的
+      // 内容留着。
+      if (widget.ensureConsent case final ensureConsent?) {
+        final agreed = await ensureConsent();
+        if (!mounted || !agreed) return;
+      }
       await scope.ready;
       final result = await AccountLoginFlow(
         account: scope.accountServices.account,

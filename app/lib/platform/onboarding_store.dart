@@ -7,25 +7,24 @@ import '../data/atomic_file.dart';
 /// 当前用户须知与隐私政策的版本。
 ///
 /// 正文改动（采集范围、第三方清单、权利与期限这类实质内容）之后加一；启动时
-/// 存下的版本比它旧，就只重新显示引导的第一步，用户同意之后再进首页。
+/// 存下的版本比它旧，就在首页上弹一次同意对话框，同意之后再恢复联网功能。
 const int kTermsVersion = 1;
 
-/// 首次启动引导停在哪一步。
+/// 首次启动引导停在哪一步：登录或注册、选择外观。
 ///
-/// 步骤写进设备文件：第一次登录会换本机空间、整棵界面子树重建，重建之后按
-/// 这个值继续；进程被杀掉之后重新打开也从这里接着走。
-enum OnboardingStage { terms, login, appearance }
+/// 用户须知的同意不是一步，点登录、注册或找回密码时用对话框询问。
+enum OnboardingStage { login, appearance }
 
-/// 设备级的引导状态：是否走完引导、同意过哪一版用户须知、是否同意、停在哪一步。
+/// 设备级的引导状态：是否走完引导、回答过哪一版用户须知、是否同意、停在哪一步。
 ///
 /// 四项都为空时是全新的安装；文件读不出来或内容损坏时按同样的默认值处理，
-/// 用户重新走一遍第一步，不会因为坏文件被当成已经同意过。
+/// 用户重新遇到同意对话框，不会因为坏文件被当成已经同意过。
 class OnboardingRecord {
   const OnboardingRecord({
     this.completed = false,
     this.termsVersion = 0,
     this.agreed = false,
-    this.stage = OnboardingStage.terms,
+    this.stage = OnboardingStage.login,
   });
 
   /// 已经走完引导；之后的启动直接进入首页。
@@ -107,8 +106,7 @@ class OnboardingStore {
   }
 
   static OnboardingStage _stageOf(Object? value) => switch (value) {
-    'login' => OnboardingStage.login,
     'appearance' => OnboardingStage.appearance,
-    _ => OnboardingStage.terms,
+    _ => OnboardingStage.login,
   };
 }

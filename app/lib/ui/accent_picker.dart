@@ -2,7 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'theme.dart';
 
-/// 六个主题色的色块：设置页“外观”与首次启动引导第三步共用。
+/// 六个主题色的色块：设置页“外观”与首次启动引导的外观这一步共用。
 ///
 /// 一行六个圆形色块，选中的带对勾与描边，点一下立即换色；主题色只换按钮、
 /// 链接、选中态与强调卡片的颜色，页面与卡片底色不变。
@@ -17,7 +17,7 @@ class AccentPicker extends StatelessWidget {
   final ZhixinAccent selected;
   final ValueChanged<ZhixinAccent> onSelected;
 
-  /// 是否显示“主题色”标题与一行说明；引导第三步的页面标题已经说明这件事，
+  /// 是否显示“主题色”标题与一行说明；引导外观这一步的页面标题已经说明这件事，
   /// 不再重复。
   final bool showLabel;
 

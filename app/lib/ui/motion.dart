@@ -502,7 +502,7 @@ class _PressScaleState extends State<PressScale> {
 /// 之间由手势竞技场裁决。
 ///
 /// 传入 [canSwipeTo] 之后，调用方还能挡住某一页：被挡住的方向不跟手，松手也
-/// 不切换，用在条件还没满足的步骤上，例如引导页第一步没勾选同意时不能划到
+/// 不切换，用在条件还没满足的步骤上，例如写盘还没完成时不能划到
 /// 下一步。
 class TabSlideStack extends StatefulWidget {
   const TabSlideStack({

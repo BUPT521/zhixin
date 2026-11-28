@@ -33,7 +33,7 @@ class LegalDocumentPage extends StatefulWidget {
   /// 用户须知页底部给一个跳到隐私政策的入口。
   final bool showsPrivacyLink;
 
-  /// 还没同意时是否在页底给同意入口；引导第一步自己带勾选框，打开文档时为假。
+  /// 还没同意时是否在页底给同意入口；引导的同意对话框自己带勾选框，打开文档时为假。
   final bool allowAgree;
 
   @override

@@ -15,6 +15,7 @@ import 'platform/onboarding_store.dart';
 import 'platform/theme_accent_store.dart';
 import 'platform/theme_mode_store.dart';
 import 'ui/home_shell.dart';
+import 'ui/onboarding_consent.dart';
 import 'ui/onboarding_controller.dart';
 import 'ui/onboarding_page.dart';
 import 'ui/theme.dart';
@@ -70,7 +71,7 @@ class ZhixinApp extends StatefulWidget {
   /// 启动时是否已经登录；中途退出引导之后据此直接到外观这一步。
   final bool signedIn;
 
-  /// 匿名使用统计的当前开关；引导第一步按它显示，默认开启。
+  /// 匿名使用统计的当前开关；同意对话框按它显示，默认开启。
   final bool telemetryEnabled;
 
   /// 更新检查服务；测试注入计数用的替身，为空时按当前服务地址新建。
@@ -179,7 +180,7 @@ class _ZhixinAppState extends State<ZhixinApp> {
 
   /// 引导走完之后补一次匿名上报。
   ///
-  /// 第一步只把说明状态与开关写进设备文件，不发请求；这一步要在首页接上之后
+  /// 同意时只把说明状态与开关写进设备文件，不发请求；上报要在首页接上之后
   /// 才发出第一次上报，失败由服务静默写诊断。
   void _reportAfterOnboarding() {
     final scope = _scopeKey.currentState;
@@ -230,7 +231,7 @@ class _ZhixinAppState extends State<ZhixinApp> {
       await spaces.open(id, adoptLocal: adoptLocal, label: label);
       await _showSpace(id);
       // 第一次登录把未登录空间改成账号空间，页面随整棵树重建。引导停在哪一步
-      // 已经写进设备文件，新的页面按登录态把第二步补成已完成，这里不直接推。
+      // 已经写进设备文件，新的页面按登录态把登录这一步补成已完成，这里不直接推。
     } catch (_) {
       // 文件操作失败时重新打开原目录，页面可以重试。
       await _showSpace(_spaceId);
@@ -267,7 +268,11 @@ class _ZhixinAppState extends State<ZhixinApp> {
 
   @override
   Widget build(BuildContext context) {
-    final onboardingActive = _onboarding != null && !_onboarding!.finished;
+    // 只有完整两步会遮住首页：老用户与须知改版在首页上补同意，首页照常先显示。
+    final showingOnboarding =
+        _onboarding != null &&
+        !_onboarding!.finished &&
+        _onboarding!.entry == OnboardingEntry.full;
     return ListenableBuilder(
       listenable: Listenable.merge([_themeMode, _themeAccent]),
       builder: (context, _) {
@@ -314,8 +319,9 @@ class _ZhixinAppState extends State<ZhixinApp> {
                     : _networkAllowed,
                 onAgreeTerms: _onboardingStore == null ? null : _agreeToTerms,
                 updates: widget.updates,
-                // 引导只需要本地状态：先不等开库，第一帧就能显示引导页。
-                waitForData: !onboardingActive,
+                // 完整引导只需要本地状态：先不等开库，第一帧就能显示登录页；
+                // 在首页补同意时首页本身要等数据，照常等。
+                waitForData: !showingOnboarding,
                 child: child!,
               ),
             ),
@@ -327,7 +333,8 @@ class _ZhixinAppState extends State<ZhixinApp> {
   }
 }
 
-/// 应用根部选择的首页：引导没走完时显示引导，走完直接换成现有的首页。
+/// 应用根部选择的首页：引导没走完时显示引导，走完直接换成现有的首页；老用户
+/// 与须知改版直接显示首页，再在首页上弹一次同意。
 ///
 /// 不把引导做成压在首页之上的路由：`HomeShell` 的首次说明与更新检查在页面
 /// 一建起来就会安排，做成路由会让它们在用户同意之前先跑。
@@ -342,9 +349,57 @@ class _AppHome extends StatelessWidget {
     if (controller == null) return const HomeShell();
     return ListenableBuilder(
       listenable: controller,
-      builder: (context, _) => controller.finished
-          ? const HomeShell()
-          : OnboardingPage(controller: controller),
+      builder: (context, _) {
+        if (controller.finished) return const HomeShell();
+        if (controller.termsOnly) return _ConsentOnHome(controller: controller);
+        return OnboardingPage(controller: controller);
+      },
     );
   }
+}
+
+/// 首页上的补同意：首页照常显示，首帧之后再弹同意对话框。
+///
+/// 老用户与须知改版走这一条，首页在同意之前不联网（`networkAllowed` 为假），
+/// 关掉对话框就留在纯本机模式，之后可以在设置页的同意入口补上。
+class _ConsentOnHome extends StatefulWidget {
+  const _ConsentOnHome({required this.controller});
+
+  final OnboardingController controller;
+
+  @override
+  State<_ConsentOnHome> createState() => _ConsentOnHomeState();
+}
+
+class _ConsentOnHomeState extends State<_ConsentOnHome> {
+  bool _asked = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _ask());
+  }
+
+  Future<void> _ask() async {
+    if (_asked || !mounted) return;
+    _asked = true;
+    if (widget.controller.record.consentCurrent) return;
+    try {
+      await ensureOnboardingConsent(
+        context,
+        controller: widget.controller,
+        report: true,
+      );
+      // 回答过这次询问（同意或只在本机）就写完成标记：下次启动直接进首页，
+      // 不再因为没走完引导把老用户带回登录页。
+      if (widget.controller.record.termsVersion >= kTermsVersion) {
+        await widget.controller.finish();
+      }
+    } catch (_) {
+      // 同意状态写不进去时留在纯本机模式，设置页的同意入口可以再试一次。
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => const HomeShell();
 }

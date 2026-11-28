@@ -74,7 +74,7 @@ Future<void> main() async {
           );
         });
   // 老用户升级：没有完成标记，但已经登录、本机库非空或已经看过匿名统计说明，
-  // 只补第一步。本机库按数据库文件是否已经存在判断，引导本身不读库。
+  // 只在首页补一次同意。本机库按数据库文件是否已经存在判断，引导本身不读库。
   final existingUser =
       spaces != null &&
       paths != null &&
@@ -151,7 +151,7 @@ Future<({String id, bool signedIn})> _openStartupSpace(AppSpaces spaces) async {
 /// 升级前是否已经用过知新。
 ///
 /// 引导本身不读数据库：已登录、本机库文件已经存在或已经看过匿名统计说明，都
-/// 说明这台设备以前用过应用，只让用户补第一步。全新安装时这三项都不成立。
+/// 说明这台设备以前用过应用，只让用户在首页补一次同意。全新安装时这三项都不成立。
 Future<bool> _looksLikeExistingUser(
   AppSpaces spaces,
   String spaceId, {

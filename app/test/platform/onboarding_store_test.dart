@@ -21,7 +21,7 @@ void main() {
     expect(record.completed, isFalse);
     expect(record.termsVersion, 0);
     expect(record.agreed, isFalse);
-    expect(record.stage, OnboardingStage.terms);
+    expect(record.stage, OnboardingStage.login);
     expect(record.consentCurrent, isFalse);
   });
 
@@ -59,9 +59,9 @@ void main() {
     expect(record.completed, isFalse);
     expect(record.termsVersion, 0);
     expect(record.agreed, isFalse);
-    expect(record.stage, OnboardingStage.terms);
+    expect(record.stage, OnboardingStage.login);
 
-    // 字段类型不对时同样回到默认值；步骤只认写过的三个名字。
+    // 字段类型不对时同样回到默认值；步骤只认写过的两个名字。
     await File(store.path).writeAsString(
       '{"completed": 1, "termsVersion": "三", "agreed": "yes", "stage": "外观"}',
     );
@@ -69,10 +69,10 @@ void main() {
     expect(wrongTypes.completed, isFalse);
     expect(wrongTypes.termsVersion, 0);
     expect(wrongTypes.agreed, isFalse);
-    expect(wrongTypes.stage, OnboardingStage.terms);
+    expect(wrongTypes.stage, OnboardingStage.login);
   });
 
-  test('须知版本升级之后需要重新同意，只补第一步', () async {
+  test('须知版本升级之后在首页补一次同意', () async {
     final store = OnboardingStore(directory.path);
     await store.write(
       OnboardingRecord(
@@ -110,7 +110,7 @@ void main() {
     );
   });
 
-  test('老用户没有完成标记时只补第一步，全新安装走完整引导', () async {
+  test('老用户没有完成标记时在首页补同意，全新安装走完整引导', () async {
     const fresh = OnboardingRecord();
     expect(
       OnboardingController.entryFor(fresh, existingUser: true),
@@ -122,7 +122,7 @@ void main() {
     );
   });
 
-  test('进入第二步之前先写盘，重开之后从这里继续', () async {
+  test('先在本机用之前先写盘，重开之后从外观看起', () async {
     final store = OnboardingStore(directory.path);
     final controller = OnboardingController(
       store: store,
@@ -132,14 +132,13 @@ void main() {
       telemetryEnabled: true,
     );
     addTearDown(controller.dispose);
-    expect(controller.stage, OnboardingStage.terms);
-
-    await controller.acceptTerms();
-    await controller.continueAfterTerms();
     expect(controller.stage, OnboardingStage.login);
+
+    await controller.useLocally();
+    expect(controller.stage, OnboardingStage.appearance);
     expect(
       (await store.read()).stage,
-      OnboardingStage.login,
+      OnboardingStage.appearance,
       reason: '登录会在请求途中换空间，步骤不能等登录返回再写',
     );
 
@@ -152,10 +151,10 @@ void main() {
       telemetryEnabled: true,
     );
     addTearDown(reopened.dispose);
-    expect(reopened.stage, OnboardingStage.login);
+    expect(reopened.stage, OnboardingStage.appearance);
   });
 
-  test('重建之后已经登录时从外观继续，没有登录时仍停在第二步', () async {
+  test('重建之后已经登录时从外观继续，没有登录时仍停在登录页', () async {
     final store = OnboardingStore(directory.path);
     final record = OnboardingRecord(
       termsVersion: kTermsVersion,
@@ -184,7 +183,7 @@ void main() {
     expect(signedOut.stage, OnboardingStage.login);
   });
 
-  test('跳过登录之后重开仍在外观，选择不同意时没有登录这一步', () async {
+  test('先在本机用之后重开仍在外观，选择不同意时没有登录这一步', () async {
     final store = OnboardingStore(directory.path);
     final skipped = OnboardingController(
       store: store,
@@ -194,8 +193,10 @@ void main() {
       telemetryEnabled: true,
     );
     addTearDown(skipped.dispose);
-    await skipped.skipLogin();
+    await skipped.useLocally();
     expect((await store.read()).stage, OnboardingStage.appearance);
+    expect((await store.read()).agreed, isFalse);
+    expect((await store.read()).termsVersion, kTermsVersion);
 
     final declined = OnboardingController(
       store: store,

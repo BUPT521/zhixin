@@ -9,19 +9,21 @@ enum OnboardingEntry {
   /// 已经完成引导，直接进入首页。
   home,
 
-  /// 只补第一步：老用户升级，或者用户须知版本变了要重新同意。
+  /// 首页上补一次同意：老用户升级，或者用户须知版本变了要重新同意。
   termsOnly,
 
-  /// 完整三步：用户须知、登录、外观。
+  /// 完整两步：登录或注册、选择外观。
   full,
 }
 
 /// 首次启动引导的状态与步骤推进。
 ///
-/// 控制器由应用根部持有，不放进引导页自己的 State：第一次登录会换本机空间，
-/// `MaterialApp` 整棵树按新的 `GlobalKey` 重建，页面会被重新创建，而控制器还
-/// 在。进入下一步之前先把步骤写进 [OnboardingStore]：登录会在请求途中换空间，
-/// 等登录返回再记已经来不及，重建之后按记下的步骤与当前登录态继续。
+/// 用户须知的同意不占一步：点登录、注册或找回密码时由对话框询问（见
+/// `onboarding_consent.dart`），所以这里只有登录与外观两步。控制器由应用根部
+/// 持有，不放进引导页自己的 State：第一次登录会换本机空间，`MaterialApp` 整棵树
+/// 按新的 `GlobalKey` 重建，页面会被重新创建，而控制器还在。进入下一步之前先把
+/// 步骤写进 [OnboardingStore]：登录会在请求途中换空间，等登录返回再记已经来不及，
+/// 重建之后按记下的步骤与当前登录态继续。
 class OnboardingController extends ChangeNotifier {
   OnboardingController({
     required this.store,
@@ -30,19 +32,14 @@ class OnboardingController extends ChangeNotifier {
     required bool signedIn,
     required bool telemetryEnabled,
   }) : _record = record,
-       _stage = _initialStage(record, entry, signedIn),
-       _declined =
-           entry == OnboardingEntry.full &&
-           record.termsVersion >= kTermsVersion &&
-           !record.agreed {
+       _stage = _initialStage(record, entry, signedIn) {
     _telemetryEnabled = telemetryEnabled;
-    _termsChecked = record.consentCurrent;
   }
 
-  /// 按状态决定走完整引导、只补第一步还是直接进首页。
+  /// 按状态决定走完整引导、在首页补同意还是直接进首页。
   ///
   /// [existingUser] 是升级前已经用过应用的判断：没有完成标记，但已经登录、本机
-  /// 库非空或已经看过匿名统计说明时，只让老用户补第一步。
+  /// 库非空或已经看过匿名统计说明时，按老用户处理，在首页上补一次同意。
   static OnboardingEntry entryFor(
     OnboardingRecord record, {
     required bool existingUser,
@@ -52,25 +49,25 @@ class OnboardingController extends ChangeNotifier {
           ? OnboardingEntry.home
           : OnboardingEntry.termsOnly;
     }
-    // 已经同意过当前版本但没走完：上次在登录或外观那一步退出了，按记下的
-    // 状态继续，不再让用户重读一遍须知。
+    // 回答过当前版本、只是没走完引导：接着走，不再问一次。
     if (record.termsVersion >= kTermsVersion) return OnboardingEntry.full;
     return existingUser ? OnboardingEntry.termsOnly : OnboardingEntry.full;
   }
 
   /// 重建或重开之后从哪一步继续。
   ///
-  /// 记下的步骤优先，登录态与须知状态在它之上校正：换空间重建之后账号已经
-  /// 登录，就直接到外观；选过“不同意”的设备没有登录这一步；须知版本变了，
-  /// 回到第一步重新同意。
+  /// 记下的步骤优先，登录态与须知状态在它之上校正：换空间重建之后账号已经登录，
+  /// 就直接到外观；回答过当前版本并选了只在本机的设备没有登录这一步。
   static OnboardingStage _initialStage(
     OnboardingRecord record,
     OnboardingEntry entry,
     bool signedIn,
   ) {
-    if (entry != OnboardingEntry.full) return OnboardingStage.terms;
-    if (record.termsVersion < kTermsVersion) return OnboardingStage.terms;
-    if (!record.agreed) return OnboardingStage.appearance;
+    if (entry != OnboardingEntry.full) return OnboardingStage.login;
+    // 已经回答过当前版本且选了只在本机：上一轮跳过了登录，这次也不显示。
+    if (record.termsVersion >= kTermsVersion && !record.agreed) {
+      return OnboardingStage.appearance;
+    }
     if (signedIn) return OnboardingStage.appearance;
     return record.stage == OnboardingStage.appearance
         ? OnboardingStage.appearance
@@ -83,14 +80,13 @@ class OnboardingController extends ChangeNotifier {
   OnboardingRecord _record;
   OnboardingStage _stage;
   late bool _telemetryEnabled;
-  late bool _termsChecked;
-  bool _declined;
   bool _finished = false;
+
   OnboardingRecord get record => _record;
 
   OnboardingStage get stage => _stage;
 
-  /// 只补第一步：老用户升级或者须知版本变了。
+  /// 在首页补一次同意：老用户升级或者须知版本变了。
   bool get termsOnly => entry == OnboardingEntry.termsOnly;
 
   /// 已经走完引导；应用根部据此把首页换回来。
@@ -99,29 +95,20 @@ class OnboardingController extends ChangeNotifier {
   /// 当前是否同意用户须知与隐私政策。
   bool get agreed => _record.agreed;
 
-  /// 只在本机使用：用户在这一轮引导里选了“不同意”。
-  bool get declined => _declined;
+  /// 已经回答过当前版本、选了只在本机使用。
+  bool get declined => _record.termsVersion >= kTermsVersion && !_record.agreed;
 
-  /// 联网功能是否可用：同意过之后才会启动匿名上报与更新检查。
+  /// 联网功能是否可用：同意过当前版本之后才会启动匿名上报与更新检查。
   bool get networkAllowed => _record.consentCurrent;
 
-  /// 第一页的勾选框状态；返回上一步时保留。
-  bool get termsChecked => _termsChecked;
-
-  /// 第一页的匿名使用统计开关；默认开启，与 ADR-0019 一致。
+  /// 同意对话框里匿名使用统计的初始开关；默认开启，与 ADR-0019 一致。
   bool get telemetryEnabled => _telemetryEnabled;
 
-  /// 进度点个数：只补第一步时只有一段。
-  int get progressCount => termsOnly ? 1 : 3;
+  /// 进度点个数：登录与外观两段。
+  int get progressCount => 2;
 
   /// 当前是第几段（从 0 开始）。
   int get progressIndex => _stage.index;
-
-  set termsChecked(bool value) {
-    if (value == _termsChecked) return;
-    _termsChecked = value;
-    notifyListeners();
-  }
 
   set telemetryEnabled(bool value) {
     if (value == _telemetryEnabled) return;
@@ -129,29 +116,22 @@ class OnboardingController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// 第一步同意：记下同意的版本，进入下一步。只写状态，进度交给调用方。
+  /// 同意：记下当前版本与同意，联网功能随这一条打开。
   Future<void> acceptTerms() =>
       _write(_record.copyWith(termsVersion: kTermsVersion, agreed: true));
 
-  /// 第一步不同意：记下已经看过当前版本，进入纯本机模式，直接跳到外观。
-  Future<void> declineTerms() async {
-    final next = _record.copyWith(termsVersion: kTermsVersion, agreed: false);
-    await _write(next);
-    _declined = true;
-    notifyListeners();
-  }
+  /// 不同意：记下已经回答过当前版本，联网功能保持关闭。
+  Future<void> declineTerms() =>
+      _write(_record.copyWith(termsVersion: kTermsVersion, agreed: false));
 
-  /// 第一步之后：只补第一步的直接完成，完整引导进登录。
+  /// 先在本机用：记下只在本机使用，直接到外观这一步。
   ///
-  /// 进入第二步之前先写盘：登录会换空间、整棵界面重建，成功的信号是重建本身，
-  /// 不能等登录返回之后再记这一步。
-  Future<void> continueAfterTerms() async {
-    if (termsOnly) return;
-    await _enter(OnboardingStage.login);
+  /// 记下的是“回答过当前版本”，不是同意，所以下次启动不会再问；之后在设置的
+  /// 同意入口或登录时仍可以补上。
+  Future<void> useLocally() async {
+    await declineTerms();
+    await _enter(OnboardingStage.appearance);
   }
-
-  /// 不同意之后直接跳到第三步，不显示登录步骤。
-  Future<void> skipLogin() => _enter(OnboardingStage.appearance);
 
   /// 登录成功之后进入外观这一步。
   ///
@@ -162,18 +142,11 @@ class OnboardingController extends ChangeNotifier {
     await _enter(OnboardingStage.appearance);
   }
 
-  /// 返回上一步会去的那一步；第一步没有上一步，返回空。
-  ///
-  /// 页面判断右划能不能翻时也用它：外观这一步在选过“不同意”之后没有登录这
-  /// 一步，回到第一步要越过登录页，右划因此不跟手，回第一步仍用底部按钮。
-  OnboardingStage? get previousStage {
-    if (_stage == OnboardingStage.terms) return null;
-    if (_stage == OnboardingStage.login) return OnboardingStage.terms;
-    if (termsOnly) return null;
-    return _record.agreed ? OnboardingStage.login : OnboardingStage.terms;
-  }
+  /// 返回上一步会去的那一步；登录是第一页，没有上一步，返回空。
+  OnboardingStage? get previousStage =>
+      _stage == OnboardingStage.appearance ? OnboardingStage.login : null;
 
-  /// 返回上一步；第一步由页面负责退出应用。
+  /// 返回上一步；第一页由页面负责退出应用。
   ///
   /// 只改当前停留在哪一步，不把记下的步骤往回写：设备文件保存的是已经走到的
   /// 最远一步，返回之后重开应用仍从那里继续。
@@ -181,24 +154,13 @@ class OnboardingController extends ChangeNotifier {
     final previous = previousStage;
     if (previous == null) return;
     _stage = previous;
-    // 回到第一步时保留勾选：用户已经同意过，回来通常是改主意或看正文。
-    _termsChecked = previous == OnboardingStage.login || _record.agreed;
     notifyListeners();
   }
 
-  /// 点顶部进度点直接切到某一步。
-  ///
-  /// 往后翻与按钮推进一样，先把步骤写进设备文件再改界面；往前翻只改当前停留
-  /// 的位置，不把记下的步骤往回写。回到第一步时与 [back] 一样保留勾选，用户
-  /// 已经同意过，回来通常是要改主意或看正文。
-  Future<void> goTo(OnboardingStage stage) async {
-    if (stage == _stage) return;
-    if (stage.index > _stage.index) {
-      await _enter(stage);
-      return;
-    }
+  /// 往回翻到某一步；往前走由页面按各自的动作处理，不直接改步骤。
+  void goTo(OnboardingStage stage) {
+    if (stage == _stage || stage.index > _stage.index) return;
     _stage = stage;
-    _termsChecked = _termsChecked || _record.agreed;
     notifyListeners();
   }
 
