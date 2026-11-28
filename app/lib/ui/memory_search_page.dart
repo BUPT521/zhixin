@@ -214,7 +214,7 @@ class _MemorySearchPageState extends State<MemorySearchPage> {
             Padding(
               padding: EdgeInsets.fromLTRB(
                 theme.space.page,
-                0,
+                theme.space.sm,
                 theme.space.page,
                 0,
               ),

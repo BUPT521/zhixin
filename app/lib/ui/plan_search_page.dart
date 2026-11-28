@@ -280,7 +280,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
             Padding(
               padding: EdgeInsets.fromLTRB(
                 theme.space.page,
-                0,
+                theme.space.sm,
                 theme.space.page,
                 0,
               ),
@@ -524,7 +524,7 @@ class _PlanSearchPageState extends State<PlanSearchPage> {
     // 第一页读取失败：说明占结果区。
     if (state.isFailed) {
       return SingleChildScrollView(
-        padding: theme.space.pageInsets(top: theme.space.xs),
+        padding: theme.space.pageInsets(top: theme.space.sm),
         child: InlineNotice(message: _notice ?? '查找没有完成，可以再查一次。'),
       );
     }

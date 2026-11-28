@@ -514,7 +514,7 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
               Padding(
                 padding: EdgeInsets.fromLTRB(
                   theme.space.page,
-                  0,
+                  theme.space.sm,
                   theme.space.page,
                   0,
                 ),
