@@ -6,6 +6,7 @@ import 'theme.dart';
 
 import '../app_scope.dart';
 import '../application/paged_result.dart';
+import '../application/prefetch_results.dart';
 import '../application/prefetch_service.dart';
 import '../application/search_service.dart';
 import '../application/search_index_service.dart';
@@ -127,10 +128,9 @@ class _RecordsSearchPageState extends State<RecordsSearchPage> {
     try {
       final scope = AppScope.of(context);
       // 进入“记录”时已经在后台读过范围选项，直接用这一份。
-      final prewarm = scope.prefetch
-          .peek<({List<LearningGoal> goals, List<Material> materials})>(
-            PrefetchKey.recordsSearchOptions,
-          );
+      final prewarm = scope.prefetch.peek<RecordsSearchOptionsPrewarm>(
+        PrefetchKey.recordsSearchOptions,
+      );
       final goals = prewarm?.goals ?? await scope.study.plan.activeGoals();
       final materials =
           prewarm?.materials ?? await scope.library.material.list();
